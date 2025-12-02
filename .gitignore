@@ -1,0 +1,24 @@
+# --- Mac/Windows System ---
+.DS_Store
+Thumbs.db
+
+# --- Firmware (ESP32/Arduino) ---
+firmware/src/secrets.h
+**/*.bin
+**/*.elf
+.vscode/
+.pio/
+
+# --- Mobile App (Flutter) ---
+mobile_app/build/
+mobile_app/.dart_tool/
+mobile_app/.flutter-plugins
+mobile_app/.flutter-plugins-dependencies
+mobile_app/.pub/
+mobile_app/pubspec.lock
+
+# --- Cloud/AWS ---
+**/*.pem
+**/*.key
+**/*.csv
+aws-credentials.json
