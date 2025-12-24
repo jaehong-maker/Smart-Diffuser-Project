@@ -2,7 +2,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "HX711.h"
-
+이헌영
 // ================= [설정 정보] =================
 const char* ssid     = "Jaehong_WiFi";    
 const char* password = "12345678";        
