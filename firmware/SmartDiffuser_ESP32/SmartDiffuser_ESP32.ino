@@ -7,14 +7,17 @@
 const char* ssid     = "Jaehong_WiFi";    
 const char* password = "12345678";        
 
-// AWS 함수 URL
 String serverName = "https://tgrwszo3iwurntqeq76s5rro640asnwq.lambda-url.ap-northeast-2.on.aws/";
 
+// ================= [시간 설정] =================
+const long SPRAY_TIME = 5000; // 5초 작동
+const long REST_TIME  = 5000; // 5초 휴식
+
 // ================= [핀 번호 설정] =================
-const int PIN_SUNNY  = 26; // 맑음
-const int PIN_CLOUDY = 27; // 흐림
-const int PIN_RAIN   = 14; // 비
-const int PIN_SNOW   = 13; // 눈
+const int PIN_SUNNY  = 26; // 맑음 / 기쁨
+const int PIN_CLOUDY = 27; // 흐림 / 평온
+const int PIN_RAIN   = 14; // 비   / 슬픔
+const int PIN_SNOW   = 13; // 눈   / 화남
 
 const int LOADCELL_DOUT_PIN = 16; 
 const int LOADCELL_SCK_PIN = 4;   
@@ -22,154 +25,228 @@ const int LOADCELL_SCK_PIN = 4;
 HX711 scale;
 float calibration_factor = 430.0; 
 
+// ================= [전역 변수 (상태 관리용)] =================
+int currentMode = 0;      // 0:메뉴, 1:수동, 2:감성, 3:날씨
+bool isRunning = false;   // 현재 작동 중인지 여부
+int activePin = -1;       // 현재 작동 중인 핀 번호
+bool isSpraying = false;  // 현재 분사 중(ON)인지 휴식 중(OFF)인지
+unsigned long previousMillis = 0; // 마지막으로 상태가 바뀐 시간 저장
+
 void setup() {
   Serial.begin(115200);
 
-  // 1. 핀 모드 설정
   pinMode(PIN_SUNNY, OUTPUT);
   pinMode(PIN_CLOUDY, OUTPUT);
   pinMode(PIN_RAIN, OUTPUT);
   pinMode(PIN_SNOW, OUTPUT);
 
-  // 2. 초기 상태: 모두 끄기 (Active LOW: HIGH가 꺼짐)
-  digitalWrite(PIN_SUNNY, HIGH); 
-  digitalWrite(PIN_CLOUDY, HIGH); 
-  digitalWrite(PIN_RAIN, HIGH); 
-  digitalWrite(PIN_SNOW, HIGH); 
+  allStop(); // 초기화
 
-  // 3. 와이파이 연결
   WiFi.begin(ssid, password);
   Serial.print("WiFi 연결 중");
-  int retry = 0;
-  while(WiFi.status() != WL_CONNECTED && retry < 10) {
-    delay(500); Serial.print("."); retry++;
+  while(WiFi.status() != WL_CONNECTED) {
+    delay(500); Serial.print(".");
   }
-  if(WiFi.status() == WL_CONNECTED) Serial.println("\n연결 성공!");
+  Serial.println("\n연결 성공!");
   
-  // 4. 로드셀 초기화
   scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
   scale.set_scale(calibration_factor);
   scale.tare(); 
   
-  // 5. 안내 메시지
-  Serial.println("\n=============================================");
-  Serial.println("📢 [준비 완료] 원하시는 지역 이름을 입력해주세요.");
-  Serial.println("👉 예시: 서울, 부산, 대구... (또는 테스트비, 테스트눈)");
-  Serial.println("=============================================\n");
+  printMainMenu(); 
 }
 
 void loop() {
-  // 1. 와이파이 끊김 체크 및 재접속
+  // 1. 와이파이 체크 (끊기면 재접속)
   if(WiFi.status() != WL_CONNECTED) {
-    WiFi.disconnect(); WiFi.reconnect(); delay(1000); return; 
+    WiFi.disconnect(); WiFi.reconnect(); return; 
   }
 
-  // 2. 사용자의 입력을 기다림
-  if (Serial.available() > 0) {
+  // 2. [핵심] 반복 작동 로직 (millis 사용 - 멈추지 않음)
+  if (isRunning && activePin != -1) {
+    unsigned long currentMillis = millis();
     
-    // 입력된 글자 읽기
-    String inputRegion = Serial.readStringUntil('\n');
-    inputRegion.trim(); // 공백 제거
-
-    // [중복 입력 방지] 0.1초 대기 후 찌꺼기 제거
-    delay(100); 
-    while(Serial.available() > 0) {
-      Serial.read(); 
+    // 분사 중일 때 -> 5초 지났는지 체크
+    if (isSpraying) {
+      if (currentMillis - previousMillis >= SPRAY_TIME) {
+        // 시간이 됐으면 끈다 (휴식 시작)
+        digitalWrite(activePin, HIGH); 
+        isSpraying = false;
+        previousMillis = currentMillis;
+        Serial.println("   완료 -> 💤 휴식 중...");
+      }
+    } 
+    // 휴식 중일 때 -> 5초 지났는지 체크
+    else {
+      if (currentMillis - previousMillis >= REST_TIME) {
+        // 시간이 됐으면 켠다 (분사 시작)
+        digitalWrite(activePin, LOW);
+        isSpraying = true;
+        previousMillis = currentMillis;
+        Serial.println("   💦 분사 시작 (ON)!");
+      }
     }
+  }
 
-    if (inputRegion.length() > 0) {
-      Serial.print("✅ 입력 확인: [");
-      Serial.print(inputRegion);
-      Serial.println("] 날씨를 조회합니다...");
+  // 3. 사용자 입력 처리
+  if (Serial.available() > 0) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    
+    // 버퍼 비우기 (delay 없이 빠르게 처리)
+    while(Serial.available()) Serial.read(); 
 
-      // 3. 서버 요청 시작
-      checkWeather(inputRegion);
-      
-      Serial.println("\n---------------------------------------------");
-      Serial.println("📢 다음 지역을 입력해주세요:");
-      Serial.println("---------------------------------------------\n");
+    if (input.length() > 0) {
+      // [공통] 0 입력 시 즉시 중단 및 메인 메뉴 복귀
+      if (input == "0") {
+        allStop(); // 모든 작동 멈춤 (변수 초기화)
+        currentMode = 0;
+        printMainMenu();
+        return;
+      }
+
+      // 모드 선택 및 실행 로직
+      handleInput(input);
     }
   }
 }
 
-// 날씨 조회 및 모터 제어 함수
-void checkWeather(String region) {
+// ======================================================
+// [함수 모음]
+// ======================================================
+
+void handleInput(String input) {
+  // 메인 메뉴 상태일 때
+  if (currentMode == 0) {
+    if (input == "1") {
+      currentMode = 1;
+      Serial.println("\n[1. 수동 모드] 핀 번호(1~4)를 입력하세요. (종료: 0)");
+    }
+    else if (input == "2") {
+      currentMode = 2;
+      Serial.println("\n[2. 감성 모드] 기분을 입력하세요. (종료: 0)");
+    }
+    else if (input == "3") {
+      currentMode = 3;
+      Serial.println("\n[3. 날씨 모드] 지역을 입력하세요. (종료: 0)");
+    }
+    else {
+      Serial.println("❌ 1, 2, 3 중 선택하세요.");
+      printMainMenu();
+    }
+  }
+  // 각 모드별 상세 입력 처리
+  else if (currentMode == 1) runManualMode(input);
+  else if (currentMode == 2) setupEmotionMode(input);
+  else if (currentMode == 3) setupWeatherMode(input);
+}
+
+void printMainMenu() {
+  Serial.println("\n=== 🌟 스마트 디퓨저 메뉴 ===");
+  Serial.println("[1] 수동 모드");
+  Serial.println("[2] 감성 모드 (반복)");
+  Serial.println("[3] 날씨 모드 (반복)");
+  Serial.println("👉 선택(1~3):");
+}
+
+// 모든 상태 초기화 (멈춤)
+void allStop() {
+  digitalWrite(PIN_SUNNY, HIGH);
+  digitalWrite(PIN_CLOUDY, HIGH);
+  digitalWrite(PIN_RAIN, HIGH);
+  digitalWrite(PIN_SNOW, HIGH);
+  
+  isRunning = false;
+  activePin = -1;
+  isSpraying = false;
+  Serial.println("⛔ 작동 중지. 대기 상태.");
+}
+
+// [모드 1] 수동 제어 (단발성)
+void runManualMode(String input) {
+  // 수동 모드는 반복 아니므로 기존 작동 멈춤
+  isRunning = false; 
+  int pin = -1;
+  
+  if (input == "1") pin = PIN_SUNNY;
+  else if (input == "2") pin = PIN_CLOUDY;
+  else if (input == "3") pin = PIN_RAIN;
+  else if (input == "4") pin = PIN_SNOW;
+  else { Serial.println("⚠️ 1~4 입력."); return; }
+
+  Serial.print(">>> 수동 5초 작동: "); Serial.println(input);
+  digitalWrite(pin, LOW);
+  delay(5000); // 수동은 딱 한번이니 delay 써도 무방 (간단 구현)
+  digitalWrite(pin, HIGH);
+  Serial.println(">>> 완료.");
+}
+
+// [모드 2] 감성 모드 설정 (작동 시작 X, 설정만 함)
+void setupEmotionMode(String emotion) {
+  int targetPin = -1;
+  
+  if (emotion == "기쁨" || emotion == "행복") targetPin = PIN_SUNNY;
+  else if (emotion == "평온" || emotion == "휴식") targetPin = PIN_CLOUDY;
+  else if (emotion == "슬픔" || emotion == "우울") targetPin = PIN_RAIN;
+  else if (emotion == "화남" || emotion == "스트레스") targetPin = PIN_SNOW;
+  else { Serial.println("⚠️ 알 수 없는 감정"); return; }
+
+  Serial.print("💖 감정 설정: "); Serial.println(emotion);
+  startInterval(targetPin); // 반복 작동 시작
+}
+
+// [모드 3] 날씨 모드 설정
+void setupWeatherMode(String region) {
   HTTPClient http;
+  http.setTimeout(3000);
   http.begin(serverName);
   http.addHeader("Content-Type", "application/json");
 
   float weight = 0.0;
   if (scale.is_ready()) weight = scale.get_units(5);
   
-  // 입력받은 지역(region)을 JSON에 넣어서 보냄
-  String jsonPayload = "{\"weight\": " + String(weight) + ", \"region\": \"" + region + "\", \"message\": \"User_Input\"}";
-  int httpResponseCode = http.POST(jsonPayload);
+  String jsonPayload = "{\"weight\": " + String(weight) + ", \"region\": \"" + region + "\", \"message\": \"Mode3\"}";
+  int httpCode = http.POST(jsonPayload);
 
-  if(httpResponseCode > 0){
+  if(httpCode > 0){
     String response = http.getString();
-    Serial.println("\n========== [서버 응답 원본 데이터] ==========");
-    Serial.println(response); 
-    Serial.println("===========================================");
-
-    // ==========================================================
-    // [★수정 완료] doc을 먼저 만들고 -> 그 다음에 사용합니다.
-    // ==========================================================
-    JsonDocument doc; // 1. 그릇(변수) 먼저 만들기
-    
-    DeserializationError error = deserializeJson(doc, response); // 2. 담기
-
-    if (error) {
-      Serial.print("❌ JSON 파싱 실패(형식 오류): ");
-      Serial.println(error.c_str());
-      http.end();
-      return;
-    }
+    JsonDocument doc; 
+    deserializeJson(doc, response);
 
     int command = doc["spray"]; 
-    String weatherText = doc["weather"];
+    String weather = doc["weather"];
     String regionName = doc["region"];
 
-    Serial.print(">>> 결과: ["); Serial.print(regionName); Serial.print(" / "); Serial.print(weatherText); Serial.println("]");
+    Serial.print("🌤 날씨: "); Serial.print(regionName); Serial.print("/"); Serial.println(weather);
 
-    // 핀 제어 (상태 유지 모드)
-    if (command == 1) { // 맑음
-      Serial.println("    └─ 26번(맑음) ON, 나머지 OFF");
-      digitalWrite(PIN_SUNNY, LOW);   
-      digitalWrite(PIN_CLOUDY, HIGH); 
-      digitalWrite(PIN_RAIN, HIGH);
-      digitalWrite(PIN_SNOW, HIGH);
-    }
-    else if (command == 2) { // 흐림
-      Serial.println("    └─ 27번(흐림) ON, 나머지 OFF");
-      digitalWrite(PIN_SUNNY, HIGH);
-      digitalWrite(PIN_CLOUDY, LOW);  
-      digitalWrite(PIN_RAIN, HIGH);
-      digitalWrite(PIN_SNOW, HIGH);
-    }
-    else if (command == 3) { // 비
-      Serial.println("    └─ 14번(비) ON, 나머지 OFF");
-      digitalWrite(PIN_SUNNY, HIGH);
-      digitalWrite(PIN_CLOUDY, HIGH);
-      digitalWrite(PIN_RAIN, LOW);    
-      digitalWrite(PIN_SNOW, HIGH);
-    }
-    else if (command == 4) { // 눈
-      Serial.println("    └─ 13번(눈) ON, 나머지 OFF");
-      digitalWrite(PIN_SUNNY, HIGH);
-      digitalWrite(PIN_CLOUDY, HIGH);
-      digitalWrite(PIN_RAIN, HIGH);
-      digitalWrite(PIN_SNOW, LOW);    
-    }
-    else {
-      Serial.println("⚠️ 지원하지 않는 지역이거나 에러입니다. (모두 끔)");
-      digitalWrite(PIN_SUNNY, HIGH);
-      digitalWrite(PIN_CLOUDY, HIGH);
-      digitalWrite(PIN_RAIN, HIGH);
-      digitalWrite(PIN_SNOW, HIGH);
-    }
+    int targetPin = -1;
+    if (command == 1) targetPin = PIN_SUNNY;
+    else if (command == 2) targetPin = PIN_CLOUDY;
+    else if (command == 3) targetPin = PIN_RAIN;
+    else if (command == 4) targetPin = PIN_SNOW;
+
+    if (targetPin != -1) startInterval(targetPin);
+    else Serial.println("⚠️ 작동 조건 아님");
   } else {
-    Serial.print("통신 실패 에러코드: ");
-    Serial.println(httpResponseCode);
+    Serial.println("🚨 통신 실패");
   }
   http.end();
+}
+
+// [공통] 반복 작동 시작 함수
+void startInterval(int pin) {
+  // 기존에 돌던게 있으면 끄고 새로 시작
+  digitalWrite(PIN_SUNNY, HIGH);
+  digitalWrite(PIN_CLOUDY, HIGH);
+  digitalWrite(PIN_RAIN, HIGH);
+  digitalWrite(PIN_SNOW, HIGH);
+
+  activePin = pin;
+  isRunning = true;
+  isSpraying = true; // 켜면서 시작
+  previousMillis = millis(); // 현재 시간 저장
+  
+  digitalWrite(activePin, LOW); // 즉시 켜기
+  Serial.println("🔁 반복 작동 시작 (멈추려면 0 입력)");
+  Serial.println("   💦 분사 시작 (ON)!");
 }
