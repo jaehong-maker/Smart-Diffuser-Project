@@ -1,11 +1,8 @@
 /*
  * [프로젝트명] 날씨 및 감정 기반 스마트 디퓨저 (Smart Diffuser)
- * [버전] 7.4 (Web Menu Navigation)
+ * [버전] 7.7 (Perfect Sync: Home Button Fix)
  * [작성자] 21학번 류재홍
- * [수정사항] 
- * - 웹 접속 시 '메인 메뉴'가 먼저 뜨도록 구조 변경
- * - [수동 제어] 버튼을 눌러야 컨트롤 패널로 진입
- * - [시스템 대시보드] 웹 페이지 추가
+ * [해결] 웹에서 '메인 메뉴로' 클릭 시 터미널 화면도 메인 메뉴로 동기화
  */
 
 #include <WiFi.h>
@@ -81,7 +78,7 @@ void setup() {
 
   Serial.print("\r\n\r\n");
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
-  Serial.printf(C_BOLD    "   🏆 SMART DIFFUSER V7.4 (NAV) 🏆      \r\n" C_RESET);
+  Serial.printf(C_BOLD    "   🏆 SMART DIFFUSER V7.7 (FINAL) 🏆    \r\n" C_RESET);
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
 
   prefs.begin("diffuser", false); 
@@ -104,7 +101,7 @@ void setup() {
 void loop() {
   manageWiFi();      
   systemHeartbeat(); 
-  handleWebClient(); // 웹 요청 처리
+  handleWebClient(); 
   
   if (currentMode == 5) runAutoDemoLoop(); 
   else if (isRunning) {
@@ -115,118 +112,129 @@ void loop() {
 }
 
 // ============================================================
-// [5] 핵심 기능 함수들 (웹 서버 로직 강화)
+// [5] 핵심 기능 함수들
 // ============================================================
 
 void handleWebClient() {
   WiFiClient client = webServer.available();
   if (client) {
+    unsigned long startTime = millis();
+    while (!client.available() && millis() - startTime < 1000) { delay(1); }
+
     String currentLine = "";
     String request = "";
+    
     while (client.connected()) {
       if (client.available()) {
         char c = client.read();
         request += c;
         if (c == '\n') {
           if (currentLine.length() == 0) {
-            // HTTP 헤더
-            client.println("HTTP/1.1 200 OK");
-            client.println("Content-type:text/html");
-            client.println();
             
-            // --- [1] 요청 분석 및 동작 실행 ---
-            // 모드 변경 명령
-            if (request.indexOf("GET /SET_MANUAL") >= 0) { currentMode = 1; }
-            if (request.indexOf("GET /SET_EMOTION") >= 0) { currentMode = 2; }
-            if (request.indexOf("GET /SET_WEATHER") >= 0) { currentMode = 3; }
-            if (request.indexOf("GET /SET_DEMO") >= 0) { currentMode = 5; demoStep = 0; }
-            if (request.indexOf("GET /TOGGLE_SIM") >= 0) { isSimulation = !isSimulation; }
-            
-            // 수동 제어 명령
-            if (request.indexOf("GET /RUN_SUNNY") >= 0) handleInput("1");
-            if (request.indexOf("GET /RUN_CLOUDY") >= 0) handleInput("2");
-            if (request.indexOf("GET /RUN_RAIN") >= 0) handleInput("3");
-            if (request.indexOf("GET /RUN_SNOW") >= 0) handleInput("4");
-            if (request.indexOf("GET /STOP") >= 0) { stopSystem(); currentMode=0; }
+            // [1] 명령 처리 (화면 유지 - 204 No Content)
+            if (request.indexOf("GET /RUN_") >= 0 || request.indexOf("GET /STOP") >= 0 || request.indexOf("GET /TOGGLE_SIM") >= 0) {
+                
+                if (request.indexOf("GET /RUN_SUNNY") >= 0) { Serial.println("[Web] ☀️ 맑음 실행"); runManualMode("1"); }
+                if (request.indexOf("GET /RUN_CLOUDY") >= 0) { Serial.println("[Web] ☁️ 흐림 실행"); runManualMode("2"); }
+                if (request.indexOf("GET /RUN_RAIN") >= 0) { Serial.println("[Web] ☔ 비 실행"); runManualMode("3"); }
+                if (request.indexOf("GET /RUN_SNOW") >= 0) { Serial.println("[Web] ❄️ 눈 실행"); runManualMode("4"); }
+                
+                if (request.indexOf("GET /STOP") >= 0) { stopSystem(); currentMode=0; printMainMenu(); }
+                if (request.indexOf("GET /TOGGLE_SIM") >= 0) { isSimulation = !isSimulation; Serial.printf("[Web] 시뮬레이션: %s\r\n", isSimulation?"ON":"OFF"); }
 
-            // --- [2] 페이지 라우팅 (화면 그리기) ---
-            
-            // 공통 CSS (버튼 스타일)
-            client.println("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
-            client.println("<style>");
-            client.println("body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; padding: 20px; }");
-            client.println(".btn { display: block; width: 100%; max-width: 400px; margin: 12px auto; padding: 18px; font-size: 18px; border: none; border-radius: 12px; color: white; font-weight: bold; text-decoration: none; transition: 0.2s; }");
-            client.println(".btn:active { transform: scale(0.95); opacity: 0.8; }");
-            
-            // 색상 클래스
-            client.println(".blue { background: linear-gradient(to right, #2980b9, #6dd5fa); }"); // 수동
-            client.println(".purple { background: linear-gradient(to right, #8e44ad, #c39bd3); }"); // 감성
-            client.println(".orange { background: linear-gradient(to right, #d35400, #e67e22); }"); // 날씨
-            client.println(".grey { background: linear-gradient(to right, #7f8c8d, #95a5a6); }");   // 세팅
-            client.println(".gold { background: linear-gradient(to right, #f1c40f, #f39c12); color: #333; }"); // 데모
-            client.println(".teal { background: linear-gradient(to right, #16a085, #1abc9c); }");   // 대시보드
-            client.println(".red { background: linear-gradient(to right, #c0392b, #e74c3c); }");    // 시뮬/정지
-            
-            // 수동 제어용 색상
-            client.println(".sunny { background: linear-gradient(to right, #f2994a, #f2c94c); color: #333; }");
-            client.println(".cloudy { background: linear-gradient(to right, #bdc3c7, #2c3e50); }");
-            client.println(".rain { background: linear-gradient(to right, #2980b9, #6dd5fa); }");
-            client.println(".snow { background: linear-gradient(to right, #e0eafc, #cfdef3); color: #333; }");
-            
-            client.println(".back { background: #333; border: 1px solid #555; margin-bottom: 30px; }");
-            client.println("</style></head><body>");
-
-            // --- [화면 A] 수동 제어 페이지 (/PAGE_MANUAL) ---
-            if (request.indexOf("GET /PAGE_MANUAL") >= 0 || request.indexOf("GET /RUN_") >= 0 || request.indexOf("GET /STOP") >= 0) {
-                client.println("<h1>🎮 수동 제어 (Manual)</h1>");
-                client.println("<a href='/'><button class='btn back'>🏠 메인 메뉴로 돌아가기</button></a>");
-                
-                client.println("<a href='/RUN_SUNNY'><button class='btn sunny'>☀️ 맑음 (SUNNY)</button></a>");
-                client.println("<a href='/RUN_CLOUDY'><button class='btn cloudy'>☁️ 흐림 (CLOUDY)</button></a>");
-                client.println("<a href='/RUN_RAIN'><button class='btn rain'>☔ 비 (RAIN)</button></a>");
-                client.println("<a href='/RUN_SNOW'><button class='btn snow'>❄️ 눈 (SNOW)</button></a>");
-                client.println("<br><a href='/STOP'><button class='btn red'>⛔ 긴급 정지 (STOP)</button></a>");
+                client.println("HTTP/1.1 204 No Content");
+                client.println("Connection: close");
+                client.println();
             }
-            // --- [화면 B] 대시보드 페이지 (/PAGE_DASHBOARD) ---
-            else if (request.indexOf("GET /PAGE_DASHBOARD") >= 0) {
-                client.println("<h1>📊 시스템 대시보드</h1>");
-                client.println("<a href='/'><button class='btn back'>🏠 메인 메뉴로 돌아가기</button></a>");
-                
-                client.println("<div style='text-align:left; background:#333; padding:20px; border-radius:10px;'>");
-                client.print("<p>📡 WiFi 신호: <b>"); client.print(WiFi.RSSI()); client.println(" dBm</b></p>");
-                client.print("<p>⏱️ 가동 시간: <b>"); client.print(millis()/1000); client.println(" 초</b></p>");
-                client.print("<p>⚖️ 현재 무게: <b>"); 
-                float w = isSimulation ? 500.0 : scale.get_units(5);
-                client.print(w); client.println(" g</b></p>");
-                client.print("<p>⚙️ 보정값: <b>"); client.print(calibration_factor); client.println("</b></p>");
-                client.print("<p>🔄 모드: <b>"); client.print(isSimulation ? "시뮬레이션" : "실제 센서"); client.println("</b></p>");
-                client.println("</div>");
-                
-                // 간단한 영점 조절 버튼 추가
-                // client.println("<br><a href='/TARE'><button class='btn grey'>⚖️ 영점 잡기 (Tare)</button></a>");
-            }
-            // --- [화면 C] 메인 메뉴 (기본 화면) ---
+            // [2] 페이지 렌더링
             else {
-                client.println("<h1>Smart Diffuser V7.4</h1>");
-                client.print("<p style='color:#888; margin-bottom:30px;'>IP: "); client.print(WiFi.localIP()); client.println("</p>");
+                client.println("HTTP/1.1 200 OK");
+                client.println("Content-type:text/html");
+                client.println("Connection: close");
+                client.println();
+
+                client.println("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no'>");
+                client.println("<style>");
+                client.println("body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; padding: 15px; -webkit-tap-highlight-color: transparent; }");
+                client.println(".btn { display: block; width: 100%; max-width: 400px; margin: 12px auto; padding: 20px; font-size: 19px; border: none; border-radius: 12px; color: white; font-weight: bold; text-decoration: none; cursor: pointer; touch-action: manipulation; }");
+                client.println(".btn:active { opacity: 0.6; transform: scale(0.98); }");
                 
-                client.println("<a href='/PAGE_MANUAL'><button class='btn blue'>[1] 🎮 수동 제어 (Manual)</button></a>");
-                client.println("<a href='/' onclick=\"alert('터미널에서 2 입력하세요');\"><button class='btn purple'>[2] 💜 감성 모드 (Emotion)</button></a>");
-                client.println("<a href='/' onclick=\"alert('터미널에서 3 입력하세요');\"><button class='btn orange'>[3] 🌦️ 날씨 모드 (Weather)</button></a>");
-                client.println("<a href='/PAGE_DASHBOARD'><button class='btn teal'>[9] 📊 시스템 대시보드</button></a>");
-                client.println("<a href='/SET_DEMO' onclick=\"alert('오토 데모 시작!');\"><button class='btn gold'>[5] ✨ 오토 데모 (Show)</button></a>");
+                client.println(".blue { background: #2980b9; }"); 
+                client.println(".purple { background: #8e44ad; }"); 
+                client.println(".orange { background: #d35400; }"); 
+                client.println(".grey { background: #7f8c8d; }");   
+                client.println(".gold { background: #f39c12; color: #333; }"); 
+                client.println(".teal { background: #16a085; }");   
+                client.println(".red { background: #c0392b; }");    
+                client.println(".sunny { background: #f2c94c; color: #333; }");
+                client.println(".cloudy { background: #95a5a6; }");
+                client.println(".rain { background: #3498db; }");
+                client.println(".snow { background: #ecf0f1; color: #333; }");
+                client.println(".back { background: #333; border: 1px solid #555; margin-bottom: 25px; }");
+                client.println("</style>");
                 
-                client.println("<br>");
-                // 시뮬레이션 토글 버튼 (상태에 따라 텍스트 변경)
-                if (isSimulation) {
-                   client.println("<a href='/TOGGLE_SIM'><button class='btn red'>🔄 현재: 시뮬레이션 모드 (ON)</button></a>");
-                } else {
-                   client.println("<a href='/TOGGLE_SIM'><button class='btn grey'>🔄 현재: 실제 센서 모드 (OFF)</button></a>");
+                client.println("<script>function send(url) { fetch(url); }</script>");
+                client.println("</head><body>");
+
+                // --- [화면 A] 수동 제어 ---
+                if (request.indexOf("GET /PAGE_MANUAL") >= 0) {
+                    if(currentMode != 1) { currentMode = 1; Serial.println(C_BLUE "\r\n[Web Sync] 수동 제어 모드 진입" C_RESET); }
+                    
+                    client.println("<h1>🎮 수동 제어</h1>");
+                    client.println("<a href='/'><button class='btn back'>🏠 메인 메뉴로</button></a>");
+                    
+                    client.println("<button class='btn sunny' onclick=\"send('/RUN_SUNNY')\">☀️ 맑음 (SUNNY)</button>");
+                    client.println("<button class='btn cloudy' onclick=\"send('/RUN_CLOUDY')\">☁️ 흐림 (CLOUDY)</button>");
+                    client.println("<button class='btn rain' onclick=\"send('/RUN_RAIN')\">☔ 비 (RAIN)</button>");
+                    client.println("<button class='btn snow' onclick=\"send('/RUN_SNOW')\">❄️ 눈 (SNOW)</button>");
+                    client.println("<br><button class='btn red' onclick=\"send('/STOP')\">⛔ 긴급 정지</button>");
                 }
+                // --- [화면 B] 대시보드 ---
+                else if (request.indexOf("GET /PAGE_DASHBOARD") >= 0) {
+                    client.println("<h1>📊 대시보드</h1>");
+                    client.println("<a href='/'><button class='btn back'>🏠 메인 메뉴로</button></a>");
+                    client.println("<div style='text-align:left; background:#333; padding:20px; border-radius:10px;'>");
+                    client.print("<p>📡 WiFi: <b>"); client.print(WiFi.RSSI()); client.println(" dBm</b></p>");
+                    client.print("<p>⚖️ 무게: <b>"); 
+                    float w = isSimulation ? 500.0 : scale.get_units(5);
+                    client.print(w); client.println(" g</b></p>");
+                    client.print("<p>🔄 모드: <b>"); client.print(isSimulation ? "시뮬레이션" : "실제 센서"); client.println("</b></p>");
+                    client.println("</div>");
+                }
+                // --- [화면 C] 오토 데모 ---
+                else if (request.indexOf("GET /SET_DEMO") >= 0) {
+                     if(currentMode != 5) {
+                       currentMode = 5; demoStep = 0; 
+                       Serial.println(C_MAGENTA "\r\n[Web Sync] 오토 데모 시작!" C_RESET);
+                     }
+                     client.println("<h1>✨ 오토 데모 실행 중</h1>");
+                     client.println("<p>전시회 모드가 작동 중입니다.</p>");
+                     client.println("<a href='/'><button class='btn back'>🏠 메인 메뉴로 돌아가기 (종료)</button></a>");
+                }
+                // --- [화면 D] 메인 메뉴 (루트 경로) ---
+                else {
+                    // [핵심 수정] 웹에서 메인으로 돌아왔을 때 터미널에도 메뉴 출력
+                    if (currentMode != 0) {
+                        currentMode = 0;
+                        Serial.println(C_CYAN "\r\n[Web Sync] 🏠 메인 메뉴로 복귀" C_RESET);
+                        printMainMenu(); 
+                    }
+                    
+                    client.println("<h1>Smart Diffuser V7.7</h1>");
+                    client.print("<p style='color:#888; margin-bottom:30px;'>IP: "); client.print(WiFi.localIP()); client.println("</p>");
+                    
+                    client.println("<a href='/PAGE_MANUAL'><button class='btn blue'>[1] 🎮 수동 제어 (Manual)</button></a>");
+                    client.println("<button class='btn purple' onclick=\"alert('이 기능은 터미널 입력이 필요합니다.');\">[2] 💜 감성 모드</button>");
+                    client.println("<button class='btn orange' onclick=\"alert('이 기능은 터미널 입력이 필요합니다.');\">[3] 🌦️ 날씨 모드</button>");
+                    client.println("<a href='/SET_DEMO'><button class='btn gold'>[5] ✨ 오토 데모 (Show)</button></a>");
+                    client.println("<a href='/PAGE_DASHBOARD'><button class='btn teal'>[9] 📊 시스템 대시보드</button></a>");
+                    
+                    client.println("<br>");
+                    if (isSimulation) client.println("<button class='btn red' onclick=\"send('/TOGGLE_SIM'); location.reload();\">🔄 현재: 시뮬레이션 (ON)</button>");
+                    else client.println("<button class='btn grey' onclick=\"send('/TOGGLE_SIM'); location.reload();\">🔄 현재: 실제 센서 (OFF)</button>");
+                }
+                client.println("</body></html>");
             }
-            
-            client.println("</body></html>");
-            client.println();
             break;
           } else {
             currentLine = "";
@@ -236,6 +244,7 @@ void handleWebClient() {
         }
       }
     }
+    delay(20); 
     client.stop();
   }
 }
@@ -249,11 +258,10 @@ void runSprayLogic() {
       digitalWrite(activePin, HIGH); 
       isSpraying = false;
       prevMotorMillis = currentMillis;
-      
       if (currentMode == 1) {
-          Serial.printf(C_CYAN "      └── [Manual] 동작 완료. 대기 상태로 전환.\r\n" C_RESET);
+          Serial.printf(C_CYAN "      └── [Manual] 동작 완료.\r\n" C_RESET);
           stopSystem();
-          // printMainMenu(); // 웹 제어 시 터미널 메뉴 계속 띄우면 지저분해서 주석 처리
+          // printMainMenu(); // 자동 출력 방지 (웹 동기화와 충돌 방지)
           return;
       }
       Serial.printf(C_CYAN "      └── [Idle] ⏳ 휴식 중...\r\n" C_RESET);
@@ -420,6 +428,6 @@ void sendServerRequest(String payload) {
 }
 
 void printMainMenu() {
-  Serial.printf(C_CYAN "\r\n=== 🕹️ MAIN MENU (V7.4 Nav) 🕹️ ===\r\n" C_RESET);
+  Serial.printf(C_CYAN "\r\n=== 🕹️ MAIN MENU (V7.7 Final) 🕹️ ===\r\n" C_RESET);
   Serial.printf(" [1] 수동   [2] 감성   [3] 날씨\r\n [4] 🛠️ 설정   [5] ✨ 데모   [9] 📊 대시보드\r\n [M] 🔄 시뮬레이션 전환\r\n" C_YELLOW "👉 명령 입력 >>" C_RESET);
 }
