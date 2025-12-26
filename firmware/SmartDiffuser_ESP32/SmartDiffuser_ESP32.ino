@@ -1,14 +1,17 @@
 /*
  * [프로젝트명] 날씨 및 감정 기반 스마트 디퓨저 (Smart Diffuser)
- * [버전] 5.1 (Fixed: UI Indentation & Calibration Logic)
+ * [버전] 6.1 (Fixed: Terminal Layout & Staircase Effect)
  * [작성자] 21학번 류재홍
- * [수정사항] 터미널 출력 계단 현상 수정, 보정값 조절 UI 개선
+ * [수정사항] 
+ * 1. 터미널 출력 시 '\r\n' 강제 적용으로 계단 현상 해결
+ * 2. 시스템 대시보드 정렬 깨짐 수정
  */
 
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "HX711.h"
+#include <Preferences.h> 
 
 // ============================================================
 // [0] ANSI 컬러 & UI 정의
@@ -44,13 +47,15 @@ const int LOADCELL_SCK_PIN  = 4;
 // 타이머 설정
 unsigned long sprayDuration = 3000; 
 const long REST_TIME      = 5000;   
-const long MAX_RUN_TIME   = 40000; // 안전장치
+const long MAX_RUN_TIME   = 40000; 
 
 // ============================================================
 // [2] 전역 변수
 // ============================================================
 HX711 scale;
-float calibration_factor = 430.0; // 초기값
+Preferences prefs;
+
+float calibration_factor = 430.0; 
 
 int currentMode = 0;       
 bool isRunning = false;    
@@ -79,16 +84,28 @@ void setup() {
   pinMode(PIN_RAIN, OUTPUT);
   pinMode(PIN_SNOW, OUTPUT);
   pinMode(PIN_LED, OUTPUT);
-
   forceAllOff(); 
 
-  // 멋진 부팅 로고
-  Serial.println("\n\n");
+  // [수정] 줄바꿈을 println으로 통일하여 계단 현상 방지
+  Serial.println();
+  Serial.println();
   Serial.println(C_MAGENTA "****************************************" C_RESET);
-  Serial.println(C_BOLD    "     🎓 SMART DIFFUSER SYSTEM V5.1 🎓     " C_RESET);
+  Serial.println(C_BOLD    "   🏆 SMART DIFFUSER SYSTEM V6.1 🏆     " C_RESET);
   Serial.println(C_MAGENTA "****************************************" C_RESET);
   Serial.println("Initializing System...");
+
+  prefs.begin("diffuser", false); 
+  float savedFactor = prefs.getFloat("cal_factor", 0.0);
   
+  if (savedFactor != 0.0) {
+    calibration_factor = savedFactor;
+    Serial.print(C_CYAN "[Memory] 저장된 보정값 로드됨: ");
+    Serial.println(calibration_factor);
+    Serial.print(C_RESET); // 색상 초기화
+  } else {
+    Serial.println(C_YELLOW "[Memory] 저장된 값이 없어 기본값 사용" C_RESET);
+  }
+
   connectWiFi();
   
   Serial.print(C_YELLOW "[System] Loadcell Calibrating..." C_RESET);
@@ -107,12 +124,11 @@ void loop() {
   manageWiFi();      
   systemHeartbeat(); 
   
-  // 모드별 동작 분기
   if (currentMode == 5) {
-    runAutoDemoLoop(); // 전시회용 오토 데모
+    runAutoDemoLoop(); 
   }
   else if (isRunning) {
-    runSprayLogic();   // 일반 분사 로직
+    runSprayLogic();   
     checkSafety();     
   }
 
@@ -129,34 +145,43 @@ void runSprayLogic() {
   
   if (isSpraying) {
     if (currentMillis - prevMotorMillis >= sprayDuration) {
-      digitalWrite(activePin, HIGH); // OFF
+      digitalWrite(activePin, HIGH); 
       isSpraying = false;
       prevMotorMillis = currentMillis;
+      
+      if (currentMode == 1) {
+          Serial.println(C_CYAN "      └── [Manual] 동작 완료. 대기 상태로 전환." C_RESET);
+          stopSystem();
+          printMainMenu();
+          return;
+      }
       Serial.println(C_CYAN "      └── [Idle] ⏳ 휴식 중..." C_RESET);
     }
   } 
   else {
     if (currentMillis - prevMotorMillis >= REST_TIME) {
       forceAllOff(); 
-      digitalWrite(activePin, LOW); // ON
+      digitalWrite(activePin, LOW); 
       isSpraying = true;
       prevMotorMillis = currentMillis;
-      Serial.printf(C_GREEN "      ┌── [Action] 💨 분사 시작! (%d초)\n" C_RESET, sprayDuration / 1000);
+      
+      // [수정] printf 대신 print+println 사용 (안전함)
+      Serial.print(C_GREEN "      ┌── [Action] 💨 재분사 시작! (");
+      Serial.print(sprayDuration / 1000);
+      Serial.println("초)" C_RESET);
     }
   }
 }
 
-// 전시회용 오토 데모 (순차 작동)
 void runAutoDemoLoop() {
   unsigned long currentMillis = millis();
   
-  // 5초마다 다음 단계로 넘어감
-  if (currentMillis - prevDemoMillis >= 5000) {
+  if (currentMillis - prevDemoMillis >= 4000) {
     prevDemoMillis = currentMillis;
-    forceAllOff(); // 이전꺼 끄기
+    forceAllOff(); 
     
     demoStep++;
-    if (demoStep > 4) demoStep = 1; // 1~4 반복
+    if (demoStep > 4) demoStep = 1; 
 
     int target = -1;
     String name = "";
@@ -167,11 +192,10 @@ void runAutoDemoLoop() {
     else if (demoStep == 4) { target = PIN_SNOW; name = "❄️ 눈"; }
 
     Serial.print(C_MAGENTA "[Auto Demo] " C_RESET);
-    Serial.println(name + " 모드 작동 (3초)");
+    Serial.print(name);
+    Serial.println(" 모드 작동"); // println 사용
     
-    digitalWrite(target, LOW); // 켜기
-    delay(3000); // 데모는 간단하게 delay 사용
-    digitalWrite(target, HIGH); // 끄기
+    digitalWrite(target, LOW); 
   }
 }
 
@@ -186,41 +210,33 @@ void checkSafety() {
 
 void checkSerialInput() {
   if (Serial.available() > 0) {
-    char c = Serial.peek(); // 첫 글자 살짝 보기
+    char c = Serial.peek(); 
     
-    // [New] 4번(설정) 모드일 때 실시간 키 입력 처리
     if (currentMode == 4) {
-       char inputChar = Serial.read(); // 한 글자 읽기
-       if (inputChar == '\n' || inputChar == '\r') return; // 엔터 무시
+       char inputChar = Serial.read(); 
+       if (inputChar == '\n' || inputChar == '\r') return; 
        
        if (inputChar == '+') {
          calibration_factor += 10;
          scale.set_scale(calibration_factor);
-         // [수정됨] 계단 현상 방지를 위해 print + println 사용
-         Serial.print("🔺 보정값 증가: ");
-         Serial.print(calibration_factor, 1);
-         Serial.print(" | 현재 무게: ");
-         Serial.print(scale.get_units(), 2);
-         Serial.println(" g"); 
+         printCalibrationInfo();
        }
        else if (inputChar == '-') {
          calibration_factor -= 10;
          scale.set_scale(calibration_factor);
-         // [수정됨] 계단 현상 방지를 위해 print + println 사용
-         Serial.print("🔻 보정값 감소: ");
-         Serial.print(calibration_factor, 1);
-         Serial.print(" | 현재 무게: ");
-         Serial.print(scale.get_units(), 2);
-         Serial.println(" g");
+         printCalibrationInfo();
        }
        else if (inputChar == 't') {
          scale.tare();
          Serial.println(C_GREEN "⚖️ 영점 조절 완료 (Tare)" C_RESET);
        }
-       // [추가] 디버깅용 Raw 값 확인 (r 키 누름)
        else if (inputChar == 'r') {
-         Serial.print("🔍 Raw Value: ");
+         Serial.print("🔍 Raw Value: "); 
          Serial.println(scale.read());
+       }
+       else if (inputChar == 's') { 
+         prefs.putFloat("cal_factor", calibration_factor);
+         Serial.println(C_BLUE "💾 [Save] 보정값이 내장 메모리에 저장되었습니다!" C_RESET);
        }
        else if (inputChar == '0') {
          currentMode = 0;
@@ -229,7 +245,6 @@ void checkSerialInput() {
        return; 
     }
 
-    // 일반 입력 처리
     delay(50);
     String input = Serial.readStringUntil('\n');
     input.trim();
@@ -246,6 +261,15 @@ void checkSerialInput() {
   }
 }
 
+// [수정] 보정값 출력 포맷 수정
+void printCalibrationInfo() {
+    Serial.print("📡 보정값: ");
+    Serial.print(calibration_factor, 1);
+    Serial.print(" | 현재 무게: ");
+    Serial.print(scale.get_units(5), 2); 
+    Serial.println(" g"); // 여기서 println으로 줄바꿈 확정
+}
+
 void connectWiFi() {
   Serial.print(C_YELLOW "[System] WiFi Connecting" C_RESET);
   WiFi.begin(ssid, password);
@@ -255,7 +279,8 @@ void connectWiFi() {
     retry++;
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.print(C_GREEN "\n[System] WiFi Connected! (Signal: " C_RESET);
+    Serial.println(); // 줄바꿈
+    Serial.print(C_GREEN "[System] WiFi Connected! (" C_RESET);
     Serial.print(WiFi.RSSI());
     Serial.println(" dBm)");
   } else {
@@ -277,11 +302,43 @@ void manageWiFi() {
 
 void systemHeartbeat() {
   unsigned long currentMillis = millis();
-  if (currentMillis - prevLedMillis >= 1000) { 
+  long interval = isRunning ? 200 : 1000;
+
+  if (currentMillis - prevLedMillis >= interval) { 
     prevLedMillis = currentMillis;
     ledState = !ledState;
     digitalWrite(PIN_LED, ledState);
   }
+}
+
+// [수정] 대시보드 출력 방식 전면 수정 (계단현상 방지)
+void printDashboard() {
+    Serial.println(C_CYAN "\n📊 [ SYSTEM DASHBOARD ] 📊" C_RESET);
+    
+    // 1. WiFi RSSI
+    Serial.print(" ├─ WiFi RSSI  : ");
+    Serial.print(WiFi.RSSI());
+    Serial.println(" dBm");
+
+    // 2. Uptime
+    Serial.print(" ├─ Uptime     : ");
+    Serial.print(millis() / 1000);
+    Serial.println(" sec");
+
+    // 3. Calibration Factor
+    Serial.print(" ├─ Cal.Factor : ");
+    Serial.print(calibration_factor, 1);
+    Serial.println(" (Saved)");
+    
+    // 4. Weight
+    float w = 0.0;
+    if(scale.is_ready()) w = scale.get_units(10); 
+    Serial.print(" └─ Weight     : ");
+    Serial.print(w, 2);
+    Serial.println(" g");
+    
+    Serial.println("----------------------------");
+    printMainMenu();
 }
 
 void handleInput(String input) {
@@ -294,16 +351,19 @@ void handleInput(String input) {
       currentMode = 3; Serial.println(C_BLUE "\n--- [ Mode 3: 날씨 모드 ] (지역명 입력) ---" C_RESET);
     } else if (input == "4") {
       currentMode = 4;
-      Serial.println(C_YELLOW "\n--- [ 🛠️ 실시간 정밀 세팅 ] ---" C_RESET);
-      Serial.println("👉 '+' : 보정값 증가 / '-' : 보정값 감소");
-      Serial.println("👉 't' : 영점 잡기 (Tare)");
-      Serial.println("👉 'r' : 센서 원본값 확인 (Raw Data)"); // 도움말 추가
+      Serial.println(C_YELLOW "\n--- [ 🛠️ 정밀 세팅 & 저장 ] ---" C_RESET);
+      Serial.println("👉 +/- : 보정값 조절");
+      Serial.println("👉 't' : 영점 (Tare)");
+      Serial.println("👉 's' : 저장 (Save to Memory) ★");
+      Serial.println("👉 'r' : Raw Data 확인");
       Serial.println("👉 '0' : 나가기");
     } else if (input == "5") {
       currentMode = 5;
       demoStep = 0;
       Serial.println(C_MAGENTA "\n--- [ ✨ 전시회 오토 데모 모드 ] ---" C_RESET);
       Serial.println("자동으로 모든 향기를 순환합니다. (종료: 0)");
+    } else if (input == "9") { 
+       printDashboard();
     } else {
       Serial.println(C_RED "❌ 잘못된 입력입니다." C_RESET); printMainMenu();
     }
@@ -342,11 +402,10 @@ void startInterval(int pin, unsigned long duration) {
   startTimeMillis = millis(); 
   
   digitalWrite(activePin, LOW); 
-  Serial.println(C_GREEN "[Loop] 작동 시작 (중단: '0')" C_RESET);
+  Serial.println(C_GREEN "[Loop] 분사 프로세스 시작 (중단: '0')" C_RESET);
 }
 
 void runManualMode(String input) {
-  isRunning = false; 
   int pin = -1;
   if (input == "1") pin = PIN_SUNNY;
   else if (input == "2") pin = PIN_CLOUDY;
@@ -354,12 +413,7 @@ void runManualMode(String input) {
   else if (input == "4") pin = PIN_SNOW;
   else { Serial.println(C_RED "⚠️ 1~4 입력" C_RESET); return; }
 
-  forceAllOff();
-  Serial.println(C_GREEN "[Manual] 3초간 작동..." C_RESET);
-  digitalWrite(pin, LOW);
-  delay(3000); 
-  digitalWrite(pin, HIGH);
-  Serial.println(C_CYAN "[Manual] 완료" C_RESET);
+  startInterval(pin, 3000); 
 }
 
 void runEmotionMode(String val) {
@@ -370,7 +424,7 @@ void runEmotionMode(String val) {
 
 void runWeatherMode(String region) {
   float w = 0.0;
-  if (scale.is_ready()) w = scale.get_units(5);
+  if (scale.is_ready()) w = scale.get_units(10); 
   String json = "{\"mode\": \"weather\", \"region\": \"" + region + "\", \"weight\": " + String(w) + "}";
   Serial.println(C_YELLOW "[Weather] 서버 날씨 조회..." C_RESET);
   sendServerRequest(json); 
@@ -406,15 +460,18 @@ void sendServerRequest(String payload) {
     if (target != -1) startInterval(target, dur * 1000);
     else { Serial.println(C_RED "⚠️ 명령 없음 (대기)" C_RESET); stopSystem(); }
   } else {
-    Serial.printf(C_RED "🚨 통신 에러 (Code: %d)\n" C_RESET, code);
+    Serial.print(C_RED "🚨 통신 에러 (Code: ");
+    Serial.print(code);
+    Serial.println(")" C_RESET);
   }
   http.end();
 }
 
 void printMainMenu() {
-  Serial.println(C_CYAN "\n=== 🕹️ MAIN MENU (V5.1) 🕹️ ===" C_RESET);
+  Serial.println(C_CYAN "\n=== 🕹️ MAIN MENU (V6.1 Layout Fixed) 🕹️ ===" C_RESET);
   Serial.println(" [1] 수동   [2] 감성   [3] 날씨");
-  Serial.println(" [4] 🛠️ 정밀 세팅 (Calibration)");
-  Serial.println(" [5] ✨ 오토 데모 (Auto Show)");
+  Serial.println(" [4] 🛠️ 정밀 세팅 (값 저장 가능)");
+  Serial.println(" [5] ✨ 오토 데모 (Exhibition)");
+  Serial.println(" [9] 📊 시스템 대시보드");
   Serial.println(C_YELLOW "👉 명령 입력 >>" C_RESET);
 }
