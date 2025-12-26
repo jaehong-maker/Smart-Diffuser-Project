@@ -1,11 +1,11 @@
 /*
  * [프로젝트명] 날씨 및 감정 기반 스마트 디퓨저 (Smart Diffuser)
- * [버전] 3.0 (System Stability & Modularization)
+ * [버전] 4.0 (The Master Piece)
  * [작성자] 21학번 류재홍
- * [수정내용] 
- * 1. Non-blocking WiFi 재접속 로직 적용 (끊겨도 모터는 돌아감)
- * 2. 시스템 상태 표시 LED (Heartbeat) 추가
- * 3. Loop 함수 최적화 및 모듈화
+ * [업그레이드] 
+ * 1. ANSI Color Log 적용 (시각적 디버깅 강화)
+ * 2. 로드셀 실시간 영점 조절(Tare) 메뉴 추가
+ * 3. Max Run-Time Safety (30초 강제 종료 왓치독)
  */
 
 #include <WiFi.h>
@@ -14,44 +14,55 @@
 #include "HX711.h"
 
 // ============================================================
-// [1] 설정 정보 (Configuration)
+// [0] ANSI 컬러 코드 (로그 꾸미기용)
+// ============================================================
+#define C_RESET  "\033[0m"
+#define C_RED    "\033[31m"
+#define C_GREEN  "\033[32m"
+#define C_YELLOW "\033[33m"
+#define C_BLUE   "\033[34m"
+#define C_CYAN   "\033[36m"
+#define C_BOLD   "\033[1m"
+
+// ============================================================
+// [1] 설정 정보
 // ============================================================
 const char* ssid     = "Jaehong_WiFi";      
 const char* password = "12345678";        
 
 String serverName = "https://tgrwszo3iwurntqeq76s5rro640asnwq.lambda-url.ap-northeast-2.on.aws/";
 
-// 핀 번호 설정
+// 핀 번호
 const int PIN_SUNNY  = 26; 
 const int PIN_CLOUDY = 27; 
 const int PIN_RAIN   = 14; 
 const int PIN_SNOW   = 13; 
-const int PIN_LED    = 2;  // [New] ESP32 내장 LED (상태 표시용)
+const int PIN_LED    = 2;  
 
-// 로드셀 설정
+// 로드셀
 const int LOADCELL_DOUT_PIN = 16; 
 const int LOADCELL_SCK_PIN  = 4;    
 
-// 타이머 설정
-unsigned long sprayDuration = 3000; // 가변 분사 시간
-const long REST_TIME      = 5000;   // 고정 휴식 시간
+// 타이머 및 안전 설정
+unsigned long sprayDuration = 3000; 
+const long REST_TIME      = 5000;   
+const long MAX_RUN_TIME   = 30000; // [Safety] 30초 이상 작동 시 강제 종료
 
 // ============================================================
-// [2] 전역 변수 (Global Variables)
+// [2] 전역 변수
 // ============================================================
 HX711 scale;
 float calibration_factor = 430.0; 
 
-// 상태 관리
 int currentMode = 0;       
 bool isRunning = false;    
 int activePin = -1;        
 bool isSpraying = false;   
 
-// 타이머 관리 변수
 unsigned long prevMotorMillis = 0; 
 unsigned long prevWifiMillis = 0;
 unsigned long prevLedMillis = 0;
+unsigned long startTimeMillis = 0; // [Safety] 작동 시작 시간 기록
 bool ledState = false;
 
 // ============================================================
@@ -59,90 +70,89 @@ bool ledState = false;
 // ============================================================
 void setup() {
   Serial.begin(115200);
-
-  // 핀 모드 설정
+  
   pinMode(PIN_SUNNY, OUTPUT);
   pinMode(PIN_CLOUDY, OUTPUT);
   pinMode(PIN_RAIN, OUTPUT);
   pinMode(PIN_SNOW, OUTPUT);
-  pinMode(PIN_LED, OUTPUT); // [New] LED
+  pinMode(PIN_LED, OUTPUT);
 
-  forceAllOff(); // 안전 초기화
+  forceAllOff(); 
 
-  Serial.println("\n\n========================================");
-  Serial.println("      🌿 SMART DIFFUSER V3.0 🌿        ");
-  Serial.println("========================================");
+  Serial.println("\n\n");
+  Serial.println(C_CYAN "========================================" C_RESET);
+  Serial.println(C_BOLD "      🌿 SMART DIFFUSER V4.0 🌿        " C_RESET);
+  Serial.println(C_CYAN "========================================" C_RESET);
   
-  // WiFi 연결
   connectWiFi();
   
-  // 로드셀 초기화
+  Serial.print(C_YELLOW "[System] 로드셀 초기화 중..." C_RESET);
   scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
   scale.set_scale(calibration_factor);
   scale.tare(); 
+  Serial.println(C_GREEN " 완료!" C_RESET);
   
   printMainMenu(); 
 }
 
 // ============================================================
-// [4] 메인 루프 (Loop) - 아주 깔끔해짐!
+// [4] 메인 루프 (Loop)
 // ============================================================
 void loop() {
-  // 1. WiFi 관리 (끊기면 백그라운드 재접속)
-  manageWiFi();
-
-  // 2. 시스템 상태 LED 깜빡임 (살아있음 표시)
-  systemHeartbeat();
-
-  // 3. 모터 타이머 로직 (작동 중일 때만)
+  manageWiFi();      // WiFi 관리
+  systemHeartbeat(); // LED 깜빡임
+  
   if (isRunning) {
-    runSprayLogic();
+    runSprayLogic(); // 모터 제어
+    checkSafety();   // [Safety] 왓치독 체크
   }
 
-  // 4. 사용자 입력 감지 및 처리
-  checkSerialInput();
+  checkSerialInput(); // 사용자 입력
 }
 
 // ============================================================
-// [5] 핵심 기능 함수들 (Modules)
+// [5] 핵심 기능 함수들
 // ============================================================
 
-// [기능 1] 모터 타이머 로직 (핵심)
 void runSprayLogic() {
   if (activePin == -1) return;
-
   unsigned long currentMillis = millis();
   
   if (isSpraying) {
-    // 분사 -> 휴식 전환
     if (currentMillis - prevMotorMillis >= sprayDuration) {
-      digitalWrite(activePin, HIGH); // 끄기
+      digitalWrite(activePin, HIGH); // OFF
       isSpraying = false;
       prevMotorMillis = currentMillis;
-      Serial.println("      └── [Idle] ⏳ 휴식 중...");
+      Serial.println(C_CYAN "      └── [Idle] ⏳ 휴식 중..." C_RESET);
     }
   } 
   else {
-    // 휴식 -> 분사 전환
     if (currentMillis - prevMotorMillis >= REST_TIME) {
-      forceAllOff(); // [Safety] 중복 방지
-      digitalWrite(activePin, LOW); // 켜기
+      forceAllOff(); 
+      digitalWrite(activePin, LOW); // ON
       isSpraying = true;
       prevMotorMillis = currentMillis;
-      Serial.print("      ┌── [Action] 💨 분사 시작! (");
-      Serial.print(sprayDuration / 1000);
-      Serial.println("초)");
+      Serial.printf(C_GREEN "      ┌── [Action] 💨 분사 시작! (%d초)\n" C_RESET, sprayDuration / 1000);
     }
   }
 }
 
-// [기능 2] 시리얼 입력 감지
+// [Safety] 30초 이상 연속 작동 시 강제 종료 (물리적 오류 대비)
+void checkSafety() {
+  if (millis() - startTimeMillis > MAX_RUN_TIME) {
+    Serial.println(C_RED "\n🚨 [Emergency] 최대 작동 시간 초과! 시스템 강제 정지." C_RESET);
+    stopSystem();
+    currentMode = 0;
+    printMainMenu();
+  }
+}
+
 void checkSerialInput() {
   if (Serial.available() > 0) {
-    delay(100); // 데이터 수신 대기
+    delay(100); 
     String input = Serial.readStringUntil('\n');
     input.trim();
-    while(Serial.available() > 0) Serial.read(); // 버퍼 비우기
+    while(Serial.available() > 0) Serial.read(); 
 
     if (input.length() > 0) {
       if (input == "0") {
@@ -156,9 +166,8 @@ void checkSerialInput() {
   }
 }
 
-// [기능 3] WiFi 연결 및 재접속 관리
 void connectWiFi() {
-  Serial.print("[System] WiFi Connecting");
+  Serial.print(C_YELLOW "[System] WiFi Connecting" C_RESET);
   WiFi.begin(ssid, password);
   int retry = 0;
   while(WiFi.status() != WL_CONNECTED && retry < 20) {
@@ -166,54 +175,57 @@ void connectWiFi() {
     retry++;
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[System] WiFi Connected! 📶");
+    Serial.println(C_GREEN "\n[System] WiFi Connected! 📶" C_RESET);
   } else {
-    Serial.println("\n[System] WiFi Failed. (Offline Mode)");
+    Serial.println(C_RED "\n[System] WiFi Failed. (Offline Mode)" C_RESET);
   }
 }
 
 void manageWiFi() {
-  // 30초마다 WiFi 상태 체크 (멈춤 없이)
   unsigned long currentMillis = millis();
   if (currentMillis - prevWifiMillis >= 30000) {
     prevWifiMillis = currentMillis;
     if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("\n[Warning] WiFi 끊김. 재연결 시도...");
+      Serial.println(C_RED "\n[Warning] WiFi 끊김. 재연결 시도..." C_RESET);
       WiFi.disconnect();
       WiFi.reconnect();
     }
   }
 }
 
-// [기능 4] 시스템 하트비트 (LED 깜빡임)
 void systemHeartbeat() {
   unsigned long currentMillis = millis();
-  if (currentMillis - prevLedMillis >= 1000) { // 1초마다
+  if (currentMillis - prevLedMillis >= 1000) { 
     prevLedMillis = currentMillis;
     ledState = !ledState;
     digitalWrite(PIN_LED, ledState);
   }
 }
 
-// [기능 5] 사용자 입력 처리 분배
 void handleInput(String input) {
   if (currentMode == 0) {
     if (input == "1") {
       currentMode = 1;
-      Serial.println("\n--- [ Mode 1: 수동 제어 ] (1~4 입력) ---");
+      Serial.println(C_BLUE "\n--- [ Mode 1: 수동 제어 ] (1~4 입력) ---" C_RESET);
     } else if (input == "2") {
       currentMode = 2;
-      Serial.println("\n--- [ Mode 2: 감성 모드 ] (1~4 입력) ---");
+      Serial.println(C_BLUE "\n--- [ Mode 2: 감성 모드 ] (1~4 입력) ---" C_RESET);
     } else if (input == "3") {
       currentMode = 3;
-      Serial.println("\n--- [ Mode 3: 날씨 모드 ] (지역명 입력) ---");
+      Serial.println(C_BLUE "\n--- [ Mode 3: 날씨 모드 ] (지역명 입력) ---" C_RESET);
+    } else if (input == "4") { // [New] 로드셀 설정
+      Serial.println(C_YELLOW "\n--- [ 무게 센서 설정 ] ---" C_RESET);
+      Serial.println("👉 't' 입력: 영점 조절 (Tare)");
+      Serial.println("👉 '0' 입력: 메뉴로 복귀");
+      currentMode = 4;
     } else {
-      Serial.println("❌ 잘못된 입력입니다."); printMainMenu();
+      Serial.println(C_RED "❌ 잘못된 입력입니다." C_RESET); printMainMenu();
     }
   }
   else if (currentMode == 1) runManualMode(input);
   else if (currentMode == 2) runEmotionMode(input); 
-  else if (currentMode == 3) runWeatherMode(input); 
+  else if (currentMode == 3) runWeatherMode(input);
+  else if (currentMode == 4) runScaleSetting(input); // [New]
 }
 
 // ============================================================
@@ -232,7 +244,7 @@ void stopSystem() {
   isRunning = false;
   activePin = -1;
   isSpraying = false;
-  Serial.println("\n⛔ [System] 작동 정지.");
+  Serial.println(C_RED "\n⛔ [System] 작동 정지." C_RESET);
 }
 
 void startInterval(int pin, unsigned long duration) {
@@ -242,32 +254,32 @@ void startInterval(int pin, unsigned long duration) {
   isSpraying = true; 
   sprayDuration = duration; 
   prevMotorMillis = millis(); 
+  startTimeMillis = millis(); // 안전 타이머 시작
   
   digitalWrite(activePin, LOW); 
-  Serial.println("[Loop] 반복 작동 시작 (중단: '0')");
+  Serial.println(C_GREEN "[Loop] 반복 작동 시작 (중단: '0')" C_RESET);
 }
 
 void runManualMode(String input) {
   isRunning = false; 
   int pin = -1;
-  
   if (input == "1") pin = PIN_SUNNY;
   else if (input == "2") pin = PIN_CLOUDY;
   else if (input == "3") pin = PIN_RAIN;
   else if (input == "4") pin = PIN_SNOW;
-  else { Serial.println("⚠️ 1~4 입력"); return; }
+  else { Serial.println(C_RED "⚠️ 1~4 입력" C_RESET); return; }
 
   forceAllOff();
-  Serial.println("[Manual] 3초간 작동...");
+  Serial.println(C_GREEN "[Manual] 3초간 작동..." C_RESET);
   digitalWrite(pin, LOW);
   delay(3000); 
   digitalWrite(pin, HIGH);
-  Serial.println("[Manual] 완료");
+  Serial.println(C_CYAN "[Manual] 완료" C_RESET);
 }
 
 void runEmotionMode(String val) {
   String json = "{\"mode\": \"emotion\", \"user_emotion\": \"" + val + "\"}";
-  Serial.println("[Emotion] 서버 요청...");
+  Serial.println(C_YELLOW "[Emotion] 서버 요청..." C_RESET);
   sendServerRequest(json); 
 }
 
@@ -275,13 +287,25 @@ void runWeatherMode(String region) {
   float w = 0.0;
   if (scale.is_ready()) w = scale.get_units(5);
   String json = "{\"mode\": \"weather\", \"region\": \"" + region + "\", \"weight\": " + String(w) + "}";
-  Serial.println("[Weather] 서버 요청...");
+  Serial.println(C_YELLOW "[Weather] 서버 요청..." C_RESET);
   sendServerRequest(json); 
+}
+
+// [New] 로드셀 영점 잡기 함수
+void runScaleSetting(String input) {
+  if (input == "t") {
+    Serial.print(C_YELLOW "⚖️ 영점 잡는 중..." C_RESET);
+    scale.tare();
+    Serial.println(C_GREEN " 완료! (현재 무게 0.0g)" C_RESET);
+    Serial.println("👉 종료하려면 '0'을 입력하세요.");
+  } else {
+    Serial.println("⚠️ 't'를 입력하면 영점이 조절됩니다.");
+  }
 }
 
 void sendServerRequest(String payload) {
   if(WiFi.status() != WL_CONNECTED) {
-    Serial.println("🚨 WiFi 연결 안됨!"); return;
+    Serial.println(C_RED "🚨 WiFi 연결 안됨!" C_RESET); return;
   }
   
   HTTPClient http;
@@ -298,7 +322,7 @@ void sendServerRequest(String payload) {
     int dur = doc["duration"]; 
     String txt = doc["result_text"];
 
-    Serial.println("✅ 수신 완료: " + txt);
+    Serial.println(C_GREEN "✅ 수신 완료: " + txt + C_RESET);
     
     int target = -1;
     if (cmd == 1) target = PIN_SUNNY;
@@ -307,15 +331,16 @@ void sendServerRequest(String payload) {
     else if (cmd == 4) target = PIN_SNOW;
 
     if (target != -1) startInterval(target, dur * 1000);
-    else { Serial.println("⚠️ 정지 명령 수신"); stopSystem(); }
+    else { Serial.println(C_RED "⚠️ 정지 명령 수신" C_RESET); stopSystem(); }
   } else {
-    Serial.printf("🚨 통신 실패 (Code: %d)\n", code);
+    Serial.printf(C_RED "🚨 통신 실패 (Code: %d)\n" C_RESET, code);
   }
   http.end();
 }
 
 void printMainMenu() {
-  Serial.println("\n=== 🕹️ MAIN MENU 🕹️ ===");
+  Serial.println(C_CYAN "\n=== 🕹️ MAIN MENU 🕹️ ===" C_RESET);
   Serial.println(" [1] 수동  [2] 감성  [3] 날씨");
-  Serial.println("👉 입력 >>");
+  Serial.println(" [4] 무게 센서 설정 (Tare)");
+  Serial.println(C_YELLOW "👉 입력 >>" C_RESET);
 }
