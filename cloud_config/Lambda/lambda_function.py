@@ -3,7 +3,12 @@ import json
 import requests
 import xmltodict
 import boto3
+import logging
 from datetime import datetime, timedelta, timezone
+
+# 1. 로깅 설정 (CloudWatch에 예쁘게 찍히도록 설정)
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 # DynamoDB 설정
 dynamodb = boto3.resource('dynamodb')
@@ -23,14 +28,15 @@ REGION_COORDS = {
 }
 
 # ========================================================
-# [로직 1] 날씨 모드 (기존 유지)
+# [로직 1] 날씨 모드
 # ========================================================
 def logic_weather_mode(weather, humidity):
     spray_code = 1
-    if weather == "맑음":
-        try:
-            if float(humidity) >= 75.0: weather = "흐림"
-        except: pass
+    # 습도 예외 처리
+    try:
+        if float(humidity) >= 75.0: weather = "흐림(고습도)"
+    except: 
+        logger.warning(f"습도 변환 에러: {humidity}")
 
     if any(x in weather for x in ["비", "강수"]): spray_code = 3
     elif "눈" in weather: spray_code = 4
@@ -40,59 +46,34 @@ def logic_weather_mode(weather, humidity):
     return spray_code, weather, "Weather_Mode", 3
 
 # ========================================================
-# [로직 2] 감정 모드 (★시간대별 향기 변경★)
+# [로직 2] 감정 모드
 # ========================================================
 def logic_emotion_mode(user_emotion_input):
-    # 1. 시간 확인 (KST)
     now = datetime.now(timezone(timedelta(hours=9)))
     hour = now.hour
-    
-    # 2. 낮/밤 판별 (09시~18시: 낮)
     is_daytime = (9 <= hour < 18)
     time_label = "Day" if is_daytime else "Night"
 
-    # 3. 감정 + 시간 -> 향기(모터) 매핑
     spray_code = 1
-    emotion_name = ""
+    emotion_name = "Unknown"
 
-    # (1) 신남 (Happy)
     if user_emotion_input in ["1", "신남"]:
-        emotion_name = "신남"
-        if is_daytime:
-            spray_code = 1  # 낮: 활기찬 1번 향
-        else:
-            spray_code = 2  # 밤: 은은하게 기분 좋은 2번 향
-
-    # (2) 편안함 (Relaxed)
+        emotion_name = "Happy"
+        spray_code = 1 if is_daytime else 2
     elif user_emotion_input in ["2", "편안함"]:
-        emotion_name = "편안"
-        if is_daytime:
-            spray_code = 4  # 낮: 포근한 4번 향
-        else:
-            spray_code = 4  # 밤: 숙면을 위한 4번 향 (동일하게 유지)
-
-    # (3) 화남 (Angry)
+        emotion_name = "Relaxed"
+        spray_code = 4 # 낮밤 동일
     elif user_emotion_input in ["3", "화남"]:
-        emotion_name = "화남"
-        if is_daytime:
-            spray_code = 2  # 낮: 열을 식혀주는 쿨링 2번 향
-        else:
-            spray_code = 3  # 밤: 차분하게 가라앉히는 3번 향
-
-    # (4) 슬픔 (Sad)
+        emotion_name = "Angry"
+        spray_code = 2 if is_daytime else 3
     elif user_emotion_input in ["4", "슬픔"]:
-        emotion_name = "슬픔"
-        if is_daytime:
-            spray_code = 3  # 낮: 기분 전환 리프레시 3번 향
-        else:
-            spray_code = 4  # 밤: 따뜻하게 위로하는 4번 향
+        emotion_name = "Sad"
+        spray_code = 3 if is_daytime else 4
 
-    # 4. 분사 강도 설정 (밤에는 조금 약하게)
     duration_sec = 3 if is_daytime else 2
-    
     result_text = f"{emotion_name}/{time_label}"
+    
     return spray_code, result_text, "Emotion_Mode", duration_sec
-
 
 # ========================================================
 # 공통 유틸리티
@@ -107,60 +88,99 @@ def forecast(params):
     try:
         res = requests.get(url, params=params, timeout=5)
         data = xmltodict.parse(res.text)
-        if "response" not in data or "body" not in data["response"]: return "0", "API구조에러", "0"
+        
+        # 로그에 API 응답 요약 남기기
+        logger.info(f"[API 호출] Params: {params} | Status: {res.status_code}")
+        
+        if "response" not in data or "body" not in data["response"]: 
+            logger.error(f"[API 에러] 응답 구조 이상: {res.text[:100]}")
+            return "0", "API구조에러", "0"
+            
         items = data["response"]["body"]["items"]["item"]
         if not isinstance(items, list): items = [items]
+        
         t, p, h = "0", "0", "0"
         for i in items:
             if i["category"]=="T1H": t=i["obsrValue"]
             elif i["category"]=="PTY": p=i["obsrValue"]
             elif i["category"]=="REH": h=i["obsrValue"]
+            
         w = "강수" if p!="0" else "맑음"
         return t, w, h
-    except: return "0", "통신에러", "0"
+    except Exception as e:
+        logger.error(f"[API 에러] 통신 실패: {str(e)}")
+        return "0", "통신에러", "0"
 
 def lambda_handler(event, context):
-    if "SERVICE_KEY" not in os.environ: return {"statusCode": 500, "body": "Key Error"}
+    # 1. [로그 시각화] 요청 들어옴
+    logger.info("============== [NEW REQUEST] ==============")
     
-    body = json.loads(event.get("body", "{}"))
+    if "SERVICE_KEY" not in os.environ: 
+        logger.critical("환경변수 SERVICE_KEY 누락됨")
+        return {"statusCode": 500, "body": "Key Error"}
+    
+    try:
+        body = json.loads(event.get("body", "{}"))
+        logger.info(f"[입력 데이터] {json.dumps(body, ensure_ascii=False)}")
+    except:
+        body = {}
+        logger.warning("Body가 JSON 형식이 아님")
+
     mode = body.get("mode", "weather")
     device_id = body.get("device", "unknown")
-    
-    spray_code = 0
-    result_text = ""
-    logic_name = ""
-    duration = 0
     region = body.get("region", "")
+    
+    # 변수 초기화
+    spray_code = 0; result_text = ""; logic_name = ""; duration = 0
+    temp = "0"; humidity = "0" # 로그용
 
+    # 2. 로직 수행
     if mode == "emotion":
-        # 감정 모드 실행
         user_emotion = body.get("user_emotion", "1")
         spray_code, result_text, logic_name, duration = logic_emotion_mode(user_emotion)
-    else:
-        # 날씨 모드 실행
+        logger.info(f"[감정 모드] 입력: {user_emotion} -> 결정: {result_text}")
+        
+    else: # Weather Mode
         if not region or region not in REGION_COORDS:
+            logger.warning(f"[날씨 모드] 지역 정보 없음 또는 잘못됨: {region}")
             return {"statusCode": 200, "body": json.dumps({"spray":0, "message":"지역필요"})}
+            
         nx, ny = REGION_COORDS[region]["nx"], REGION_COORDS[region]["ny"]
         bd, bt = get_kma_time()
         params = {"serviceKey": os.environ["SERVICE_KEY"], "pageNo": "1", "numOfRows": "10", 
                   "dataType": "XML", "base_date": bd, "base_time": bt, "nx": nx, "ny": ny}
+        
         temp, weather_res, humidity = forecast(params)
         spray_code, result_text, logic_name, duration = logic_weather_mode(weather_res, humidity)
+        logger.info(f"[날씨 모드] 기온:{temp}, 날씨:{weather_res}, 습도:{humidity} -> 결정:{result_text}")
 
-    # DB 저장
+    # 3. [로그 시각화] 결과 데이터 구성
+    final_log = {
+        "deviceId": device_id,
+        "timestamp": datetime.now(timezone(timedelta(hours=9))).isoformat(),
+        "mode": logic_name,
+        "inputs": {"region": region, "temp": temp, "humidity": humidity} if mode == "weather" else {"emotion": body.get("user_emotion")},
+        "output": {"spray_code": spray_code, "duration": duration, "reason": result_text}
+    }
+
+    # 4. DB 저장 및 콘솔 출력
     try:
         table.put_item(Item={
             "deviceId": device_id,
-            "timestamp": datetime.now(timezone(timedelta(hours=9))).isoformat(),
+            "timestamp": final_log["timestamp"],
             "mode": logic_name,
             "result_text": result_text,
             "spray_code": spray_code,
             "duration": duration,
             "region": region if mode == "weather" else "Emotion_Input"
         })
-    except: pass
+        logger.info("[DB 저장] DynamoDB 저장 성공")
+    except Exception as e:
+        logger.error(f"[DB 저장 실패] {str(e)}")
 
-    # 응답
+    # 5. [중요] CloudWatch에 최종 요약 로그 찍기 (JSON 형태)
+    logger.info(f"FINAL_RESULT: {json.dumps(final_log, ensure_ascii=False)}")
+    
     response = {
         "spray": spray_code,
         "result_text": result_text,
