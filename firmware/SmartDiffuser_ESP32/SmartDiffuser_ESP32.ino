@@ -1,8 +1,8 @@
 /*
  * [프로젝트명] 날씨 및 감정 기반 스마트 디퓨저 (Smart Diffuser)
- * [버전] 7.7 (Perfect Sync: Home Button Fix)
+ * [버전] 7.8 (Cool-down Log Update)
  * [작성자] 21학번 류재홍
- * [해결] 웹에서 '메인 메뉴로' 클릭 시 터미널 화면도 메인 메뉴로 동기화
+ * [수정] 서버의 쿨타임 메시지(message)를 파싱하여 시리얼에 정확한 사유 출력
  */
 
 #include <WiFi.h>
@@ -23,8 +23,8 @@
 #define C_CYAN   "\033[36m"
 #define C_BOLD   "\033[1m"
 
-const char* ssid     = "Jaehong_WiFi";      
-const char* password = "12345678";        
+const char* ssid      = "Jaehong_WiFi";       
+const char* password = "12345678";         
 String serverName = "https://tgrwszo3iwurntqeq76s5rro640asnwq.lambda-url.ap-northeast-2.on.aws/";
 
 const int PIN_SUNNY  = 26; 
@@ -37,7 +37,7 @@ const int LOADCELL_DOUT_PIN = 16;
 const int LOADCELL_SCK_PIN  = 4;    
 
 unsigned long sprayDuration = 3000; 
-const long REST_TIME      = 5000;   
+const long REST_TIME      = 5000;    
 const long MAX_RUN_TIME   = 40000; 
 
 // ============================================================
@@ -50,10 +50,10 @@ WiFiServer webServer(80);
 float calibration_factor = 430.0; 
 bool isSimulation = true; 
 
-int currentMode = 0;       
-bool isRunning = false;    
-int activePin = -1;        
-bool isSpraying = false;   
+int currentMode = 0;        
+bool isRunning = false;     
+int activePin = -1;         
+bool isSpraying = false;    
 
 int demoStep = 0;
 unsigned long prevDemoMillis = 0;
@@ -78,7 +78,7 @@ void setup() {
 
   Serial.print("\r\n\r\n");
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
-  Serial.printf(C_BOLD    "   🏆 SMART DIFFUSER V7.7 (FINAL) 🏆    \r\n" C_RESET);
+  Serial.printf(C_BOLD    "    🏆 SMART DIFFUSER V7.8 (FINAL) 🏆     \r\n" C_RESET);
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
 
   prefs.begin("diffuser", false); 
@@ -99,14 +99,14 @@ void setup() {
 // [4] 메인 루프 (Loop)
 // ============================================================
 void loop() {
-  manageWiFi();      
+  manageWiFi();       
   systemHeartbeat(); 
   handleWebClient(); 
   
   if (currentMode == 5) runAutoDemoLoop(); 
   else if (isRunning) {
-    runSprayLogic();   
-    checkSafety();     
+    runSprayLogic();    
+    checkSafety();      
   }
   checkSerialInput(); 
 }
@@ -162,10 +162,10 @@ void handleWebClient() {
                 client.println(".blue { background: #2980b9; }"); 
                 client.println(".purple { background: #8e44ad; }"); 
                 client.println(".orange { background: #d35400; }"); 
-                client.println(".grey { background: #7f8c8d; }");   
+                client.println(".grey { background: #7f8c8d; }");    
                 client.println(".gold { background: #f39c12; color: #333; }"); 
-                client.println(".teal { background: #16a085; }");   
-                client.println(".red { background: #c0392b; }");    
+                client.println(".teal { background: #16a085; }");    
+                client.println(".red { background: #c0392b; }");     
                 client.println(".sunny { background: #f2c94c; color: #333; }");
                 client.println(".cloudy { background: #95a5a6; }");
                 client.println(".rain { background: #3498db; }");
@@ -203,13 +203,13 @@ void handleWebClient() {
                 }
                 // --- [화면 C] 오토 데모 ---
                 else if (request.indexOf("GET /SET_DEMO") >= 0) {
-                     if(currentMode != 5) {
-                       currentMode = 5; demoStep = 0; 
-                       Serial.println(C_MAGENTA "\r\n[Web Sync] 오토 데모 시작!" C_RESET);
-                     }
-                     client.println("<h1>✨ 오토 데모 실행 중</h1>");
-                     client.println("<p>전시회 모드가 작동 중입니다.</p>");
-                     client.println("<a href='/'><button class='btn back'>🏠 메인 메뉴로 돌아가기 (종료)</button></a>");
+                      if(currentMode != 5) {
+                        currentMode = 5; demoStep = 0; 
+                        Serial.println(C_MAGENTA "\r\n[Web Sync] 오토 데모 시작!" C_RESET);
+                      }
+                      client.println("<h1>✨ 오토 데모 실행 중</h1>");
+                      client.println("<p>전시회 모드가 작동 중입니다.</p>");
+                      client.println("<a href='/'><button class='btn back'>🏠 메인 메뉴로 돌아가기 (종료)</button></a>");
                 }
                 // --- [화면 D] 메인 메뉴 (루트 경로) ---
                 else {
@@ -372,10 +372,10 @@ void printDashboard() {
     Serial.printf(C_CYAN "\r\n📊 [ SYSTEM DASHBOARD ] 📊\r\n" C_RESET);
     Serial.printf(" ├─ WiFi RSSI  : %d dBm\r\n", WiFi.RSSI());
     Serial.printf(" ├─ Web Server : http://%s\r\n", WiFi.localIP().toString().c_str());
-    Serial.printf(" ├─ Mode       : %s\r\n", isSimulation ? "SIMULATION" : "REAL SENSOR");
+    Serial.printf(" ├─ Mode        : %s\r\n", isSimulation ? "SIMULATION" : "REAL SENSOR");
     Serial.printf(" ├─ Cal.Factor : %.1f (Saved)\r\n", calibration_factor);
     float w = isSimulation ? 500.0 : scale.get_units(10); 
-    Serial.printf(" └─ Weight     : %.2f g\r\n", w);
+    Serial.printf(" └─ Weight      : %.2f g\r\n", w);
     Serial.printf("----------------------------\r\n");
     printMainMenu();
 }
@@ -411,23 +411,76 @@ void runManualMode(String input) {
   digitalWrite(activePin, LOW); Serial.printf(C_GREEN "[Loop] 분사 시작\r\n" C_RESET);
 }
 
+// ============================================================
+// [중요 수정] sendServerRequest: 쿨타임 메시지 파싱 추가
+// ============================================================
 void sendServerRequest(String payload) {
   if(WiFi.status() != WL_CONNECTED) { Serial.printf(C_RED "🚨 WiFi 연결 안됨!\r\n" C_RESET); return; }
-  HTTPClient http; http.setTimeout(5000); http.begin(serverName); http.addHeader("Content-Type", "application/json");
+  
+  HTTPClient http; 
+  http.setTimeout(5000); 
+  http.begin(serverName); 
+  http.addHeader("Content-Type", "application/json");
+  
   int code = http.POST(payload);
+  
   if(code > 0){
-    String res = http.getString(); JsonDocument doc; deserializeJson(doc, res);
-    int cmd = doc["spray"]; int dur = doc["duration"]; String txt = doc["result_text"];
-    Serial.printf(C_GREEN "✅ %s\r\n" C_RESET, txt.c_str());
-    int target = -1;
-    if (cmd == 1) target = PIN_SUNNY; else if (cmd == 2) target = PIN_CLOUDY; else if (cmd == 3) target = PIN_RAIN; else if (cmd == 4) target = PIN_SNOW;
-    if (target != -1) { forceAllOff(); activePin = target; isRunning = true; isSpraying = true; sprayDuration = dur * 1000; prevMotorMillis = millis(); startTimeMillis = millis(); digitalWrite(activePin, LOW); Serial.printf(C_GREEN "[Loop] 분사 시작\r\n" C_RESET); }
-    else { Serial.printf(C_RED "⚠️ 명령 없음\r\n" C_RESET); stopSystem(); }
-  } else { Serial.printf(C_RED "🚨 통신 에러: %d\r\n" C_RESET, code); }
+    String res = http.getString(); 
+    JsonDocument doc; 
+    deserializeJson(doc, res);
+    
+    int cmd = doc["spray"]; 
+    int dur = doc["duration"]; 
+    String txt = doc["result_text"];
+    
+    // ★ [핵심] 서버 메시지 꺼내기 (없으면 빈 문자열)
+    String serverMsg = "";
+    if (doc.containsKey("message")) {
+        serverMsg = doc["message"].as<String>();
+    }
+
+    // 1. 정상 명령 (cmd 1~4)
+    if (cmd >= 1 && cmd <= 4) {
+        Serial.printf(C_GREEN "✅ 분사 승인: %s\r\n" C_RESET, txt.c_str());
+        
+        int target = -1;
+        if (cmd == 1) target = PIN_SUNNY; 
+        else if (cmd == 2) target = PIN_CLOUDY; 
+        else if (cmd == 3) target = PIN_RAIN; 
+        else if (cmd == 4) target = PIN_SNOW;
+        
+        if (target != -1) { 
+            forceAllOff(); 
+            activePin = target; 
+            isRunning = true; 
+            isSpraying = true; 
+            sprayDuration = dur * 1000; 
+            prevMotorMillis = millis(); 
+            startTimeMillis = millis(); 
+            digitalWrite(activePin, LOW); 
+            Serial.printf(C_GREEN "   └─ [Actuator] %d번 카트리지 가동 시작 (%d초)\r\n" C_RESET, cmd, dur); 
+        }
+    } 
+    // 2. 명령 없음 (cmd 0) -> 쿨타임 또는 대기
+    else {
+        // 메시지가 있으면 (쿨타임 등) 해당 메시지 출력
+        if (serverMsg.length() > 0) {
+            Serial.printf(C_YELLOW "⛔ [요청 거절] %s\r\n" C_RESET, serverMsg.c_str());
+            Serial.printf(C_CYAN   "   └─ 시스템 대기 상태 유지\r\n" C_RESET);
+        } else {
+            // 진짜 아무 메시지도 없는 경우
+            Serial.printf(C_RED "⚠️ [대기] 서버 명령 없음\r\n" C_RESET); 
+        }
+        stopSystem(); 
+    }
+    
+  } else { 
+      Serial.printf(C_RED "🚨 통신 에러: %d\r\n" C_RESET, code); 
+  }
   http.end();
 }
 
 void printMainMenu() {
-  Serial.printf(C_CYAN "\r\n=== 🕹️ MAIN MENU (V7.7 Final) 🕹️ ===\r\n" C_RESET);
+  Serial.printf(C_CYAN "\r\n=== 🕹️ MAIN MENU (V7.8 Final) 🕹️ ===\r\n" C_RESET);
   Serial.printf(" [1] 수동   [2] 감성   [3] 날씨\r\n [4] 🛠️ 설정   [5] ✨ 데모   [9] 📊 대시보드\r\n [M] 🔄 시뮬레이션 전환\r\n" C_YELLOW "👉 명령 입력 >>" C_RESET);
 }
