@@ -17,11 +17,11 @@ log_table = dynamodb.Table('DiffuserLog')
 state_table = dynamodb.Table('DiffuserState')
 
 # 설정값
-COOLDOWN_MINUTES = 3       # 향 변경 쿨타임
+COOLDOWN_MINUTES = 3       # 쿨타임
 CONSUMPTION_PER_SEC = 0.5
 MAX_CAPACITY = 100.0
 
-# 지역 정보 (생략 없이 그대로 사용)
+# 지역 정보
 REGION_COORDS = {
     "서울": {"nx": "60", "ny": "127"},
     "양주": {"nx": "60", "ny": "121"},
@@ -34,26 +34,23 @@ REGION_COORDS = {
     "대전": {"nx": "67", "ny": "100"},
     "세종": {"nx": "67", "ny": "100"},
     "전주": {"nx": "63", "ny": "89"},
-    "목포": {"nx": "50", "ny": "67"},
-    "광주": {"nx": "58", "ny": "74"},
-    "여수": {"nx": "73", "ny": "66"},
+    "전라남도": {"nx": "58", "ny": "74"},
     "대구": {"nx": "89", "ny": "90"},
     "안동": {"nx": "91", "ny": "106"},
     "포항": {"nx": "102", "ny": "94"},
     "울릉도": {"nx": "102", "ny": "115"},
     "부산": {"nx": "98", "ny": "76"},
     "울산": {"nx": "102", "ny": "84"},
-    "제주": {"nx": "52", "ny": "38"}
+    "제주": {"nx": "52", "ny": "38"},
+    "시흥": {"nx": "56","ny": "122"}
 }
 
 
-# (기존 logic_weather_mode, logic_emotion_mode, 유틸 함수들... 그대로 두세요!)
-# ----- [여기부터 복사해서 기존 함수들 아래에 붙여넣으세요] -----
-
+# 로직 함수들 (그대로 유지)
 def logic_weather_mode(weather, humidity):
     spray_code = 1
     try:
-        if float(humidity) >= 50.0: weather = "흐림(고습도)"
+        if float(humidity) >= 50.0: weather = "흐림(고습도)" # 50으로 수정됨
     except: pass
     if any(x in weather for x in ["비", "강수"]): spray_code = 3
     elif "눈" in weather: spray_code = 4
@@ -67,7 +64,6 @@ def logic_emotion_mode(user_emotion_input):
     time_label = "Day" if is_daytime else "Night"
     spray_code = 1
     emotion_name = "Unknown"
-
     if user_emotion_input in ["1", "신남"]:
         emotion_name = "Happy"; spray_code = 1 if is_daytime else 2
     elif user_emotion_input in ["2", "편안함"]:
@@ -76,7 +72,6 @@ def logic_emotion_mode(user_emotion_input):
         emotion_name = "Angry"; spray_code = 2 if is_daytime else 3
     elif user_emotion_input in ["4", "슬픔"]:
         emotion_name = "Sad"; spray_code = 3 if is_daytime else 4
-
     return spray_code, f"{emotion_name}/{time_label}", "Emotion_Mode", (3 if is_daytime else 2)
 
 def get_kma_time():
@@ -85,7 +80,6 @@ def get_kma_time():
     return now.strftime("%Y%m%d"), now.strftime("%H00")
 
 def forecast(params):
-    # (기존 forecast 함수 내용 그대로 사용)
     url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst"
     try:
         res = requests.get(url, params=params, timeout=5)
@@ -102,7 +96,6 @@ def forecast(params):
         return t, w, h
     except: return "0", "통신에러", "0"
 
-# [상태 관리] 불러오기
 def get_device_state(device_id):
     try:
         res = state_table.get_item(Key={'deviceId': device_id})
@@ -110,17 +103,19 @@ def get_device_state(device_id):
         return {'deviceId': device_id, 'last_spray_time': "2000-01-01T00:00:00", 'current_capacity': Decimal(str(MAX_CAPACITY)), 'last_spray_code': 0}
     except: return None
 
-# [상태 관리] 저장하기 (향기 코드 추가됨)
 def update_device_state(device_id, last_time, new_capacity, spray_code):
     try:
         state_table.put_item(Item={
             'deviceId': device_id,
             'last_spray_time': last_time,
             'current_capacity': Decimal(str(new_capacity)),
-            'last_spray_code': int(spray_code) # ★ 마지막 뿌린 향기 저장
+            'last_spray_code': int(spray_code)
         })
     except Exception as e: logger.error(f"DB Write Error: {e}")
 
+# ========================================================
+# ★ 메인 핸들러 (수정됨)
+# ========================================================
 def lambda_handler(event, context):
     logger.info("============== [REQUEST START] ==============")
     try: body = json.loads(event.get("body", "{}"))
@@ -130,7 +125,9 @@ def lambda_handler(event, context):
     mode = body.get("mode", "weather")
     region = body.get("region", "")
     
-    # 1. 일단 로직부터 돌려서 '무슨 향을 뿌려야 하는지' 계산 (New Spray Code)
+    # ----------------------------------------------------
+    # 1. [우선 계산] 쿨타임 체크 전에 '무슨 향'인지 먼저 계산
+    # ----------------------------------------------------
     spray_code = 0; result_text = ""; logic_name = ""; duration = 0
     temp = "0"; humidity = "0"
 
@@ -145,21 +142,25 @@ def lambda_handler(event, context):
         temp, weather_res, humidity = forecast(params)
         spray_code, result_text, logic_name, duration = logic_weather_mode(weather_res, humidity)
     
-    # 2. DB에서 이전 상태 불러오기
+    # ----------------------------------------------------
+    # 2. [상태 확인] DB에서 이전 상태 불러오기
+    # ----------------------------------------------------
     state = get_device_state(device_id)
+    if not state: state = {} # 방어 코드
+    
     last_time_str = state.get('last_spray_time', "2000-01-01T00:00:00")
-    last_spray_code = int(state.get('last_spray_code', 0)) # ★ 이전에 뿌린 향기
+    last_spray_code = int(state.get('last_spray_code', 0)) 
     current_capacity = float(state.get('current_capacity', MAX_CAPACITY))
     
     now = datetime.now(timezone(timedelta(hours=9)))
     
-    # ========================================================
-    # ★ [핵심 수정] 쿨타임 로직 (향기가 다를 때만 체크!)
-    # ========================================================
+    # ----------------------------------------------------
+    # 3. [쿨타임 판별] 계산된 향기와 이전 향기 비교
+    # ----------------------------------------------------
     is_blocked = False
     log_msg = ""
     
-    # 향기가 이전과 다르면 -> 쿨타임 체크
+    # 향기가 달라졌을 때만 쿨타임 체크
     if spray_code != last_spray_code:
         try:
             last_time = datetime.fromisoformat(last_time_str)
@@ -168,38 +169,52 @@ def lambda_handler(event, context):
             if diff_minutes < COOLDOWN_MINUTES:
                 is_blocked = True
                 remaining = int(COOLDOWN_MINUTES - diff_minutes)
-                log_msg = f"[SKIP] 향 변경 쿨타임! ({remaining}분 남음)"
+                # ★ 메시지를 명확하게 만듦
+                log_msg = f"[쿨타임] 향기 변경 불가 ({remaining}분 남음)"
                 logger.warning(log_msg)
         except: pass
-    else:
-        # 향기가 같으면 -> 쿨타임 무시하고 그냥 진행 (지역 변경 등)
-        logger.info("[PASS] 향기가 동일하므로 쿨타임 없이 진행합니다.")
+    
+    # ----------------------------------------------------
+    # 4. [로그 시각화] 차단되었어도 '원래 하려던 것' 로그 남기기
+    # ----------------------------------------------------
+    final_log = {
+        "deviceId": device_id,
+        "timestamp": now.isoformat(),
+        "mode": logic_name,
+        "inputs": {"region": region, "weather": result_text, "temp": temp, "humidity": humidity} if mode == "weather" else {"emotion": body.get("user_emotion")},
+        "target_output": {"spray_code": spray_code, "reason": result_text}, # 원래 하려던 것
+        "status": "BLOCKED" if is_blocked else "SUCCESS",
+        "block_reason": log_msg if is_blocked else "N/A" # 차단 이유
+    }
+    logger.info(f"FINAL_RESULT: {json.dumps(final_log, ensure_ascii=False)}")
 
-    # 쿨타임 걸렸으면 -> 거절 응답 리턴
+    # ----------------------------------------------------
+    # 5. [응답 분기] 차단 여부에 따른 처리
+    # ----------------------------------------------------
+    
+    # [차단됨] -> spray 0 전송 (중요: 로그는 다 찍었음)
     if is_blocked:
         return {
             "statusCode": 200, "headers": {"Content-Type": "application/json"},
             "body": json.dumps({
-                "spray": 0,            # 분사 금지
+                "spray": 0,             # 분사 금지
                 "result_text": "WAIT",
-                "message": log_msg,    # ★ ESP32 화면에 띄울 메시지
+                "message": log_msg,     # ★ ESP32 화면에 띄울 메시지
                 "mode": "CoolDown"
             }, ensure_ascii=False)
         }
 
-    # ========================================================
-    # 3. 분사 처리 및 저장 (여기까지 오면 분사 승인된 것임)
-    # ========================================================
+    # [통과됨] -> 상태 업데이트 및 분사
     usage = duration * CONSUMPTION_PER_SEC
     new_capacity = current_capacity - usage
     if new_capacity < 0: new_capacity = 0.0
     new_capacity = round(new_capacity, 2)
     
-    # DB 업데이트 (시간, 잔량, 그리고 이번 향기 코드!)
+    # DB 업데이트
     if spray_code > 0:
         update_device_state(device_id, now.isoformat(), new_capacity, spray_code)
 
-    # 로그 저장
+    # 과거 로그 DB 저장
     try:
         log_table.put_item(Item={
             "deviceId": device_id, "timestamp": now.isoformat(), "mode": logic_name,
@@ -208,15 +223,7 @@ def lambda_handler(event, context):
         })
     except: pass
 
-    # CloudWatch용 로그
-    final_log = {
-        "deviceId": device_id, "timestamp": now.isoformat(), "mode": logic_name,
-        "input": {"region": region, "weather": result_text},
-        "output": {"spray": spray_code, "reason": "Scent Changed" if spray_code != last_spray_code else "Region Update"}
-    }
-    logger.info(f"FINAL_RESULT: {json.dumps(final_log, ensure_ascii=False)}")
-
-    # 최종 응답
+    # 최종 성공 응답
     return {
         "statusCode": 200, "headers": {"Content-Type": "application/json"},
         "body": json.dumps({
@@ -224,7 +231,7 @@ def lambda_handler(event, context):
             "result_text": result_text,
             "duration": duration,
             "remaining_capacity": new_capacity,
-            "message": f"분사 성공! ({result_text})", # 성공 메시지
+            "message": f"분사 성공! ({result_text})",
             "mode": logic_name
         }, ensure_ascii=False)
     }
