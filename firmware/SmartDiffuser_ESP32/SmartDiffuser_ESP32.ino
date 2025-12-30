@@ -59,7 +59,7 @@ Preferences prefs;
 WiFiServer webServer(80); 
 
 float calibration_factor = 430.0; 
-bool isSimulation = true; // 로드셀 테스트할거면 false로 변경!
+bool isSimulation = false; // 로드셀 테스트할거면 false로 변경!
 
 int currentMode = 0;       
 bool isRunning = false;    
@@ -308,16 +308,28 @@ void checkSafety() {
 void checkSerialInput() {
   if (Serial.available() > 0) {
     char c = Serial.peek(); 
+    
+    // [Mode 4: 정밀 세팅 모드]
     if (currentMode == 4) {
        char inputChar = Serial.read(); 
        if (inputChar == '\n' || inputChar == '\r') return; 
+       
        if (inputChar == '+') { calibration_factor += 10; if(!isSimulation) scale.set_scale(calibration_factor); printCalibrationInfo(); }
        else if (inputChar == '-') { calibration_factor -= 10; if(!isSimulation) scale.set_scale(calibration_factor); printCalibrationInfo(); }
-       else if (inputChar == 't') { if(!isSimulation) scale.tare(); Serial.printf(C_GREEN "⚖️ 영점 조절 완료 (Tare)\r\n" C_RESET); }
+       else if (inputChar == 't') { 
+           if(!isSimulation) scale.tare(); 
+           Serial.printf(C_GREEN "⚖️ 영점 조절 완료 (Tare)\r\n" C_RESET); 
+           printCalibrationInfo(); // 영점 잡고나서 0.0g 확인
+       }
+       else if (inputChar == 'w') { // [추가된 기능] w 누르면 무게만 확인
+           printCalibrationInfo(); 
+       }
        else if (inputChar == 's') { prefs.putFloat("cal_factor", calibration_factor); Serial.printf(C_BLUE "💾 [Save] 저장 완료!\r\n" C_RESET); }
        else if (inputChar == '0') { currentMode = 0; printMainMenu(); }
        return; 
     }
+
+    // [나머지 모드]
     delay(50);
     String input = Serial.readStringUntil('\n');
     input.trim();
@@ -382,7 +394,14 @@ void handleInput(String input) {
     if (input == "1") { currentMode = 1; Serial.printf(C_BLUE "\r\n--- [ Mode 1: 수동 제어 ] ---\r\n" C_RESET); }
     else if (input == "2") { currentMode = 2; Serial.printf(C_BLUE "\r\n--- [ Mode 2: 감성 모드 ] ---\r\n" C_RESET); }
     else if (input == "3") { currentMode = 3; Serial.printf(C_BLUE "\r\n--- [ Mode 3: 날씨 모드 ] ---\r\n" C_RESET); }
-    else if (input == "4") { currentMode = 4; Serial.printf(C_YELLOW "\r\n--- [ 🛠️ 정밀 세팅 ] ---\r\n" C_RESET); Serial.println("👉 +/-:조절, t:영점, s:저장, 0:종료"); }
+    
+    // [수정] 메뉴 설명에 'w:확인' 추가
+    else if (input == "4") { 
+        currentMode = 4; 
+        Serial.printf(C_YELLOW "\r\n--- [ 🛠️ 정밀 세팅 ] ---\r\n" C_RESET); 
+        Serial.println("👉 +/-:조절, w:무게확인, t:영점, s:저장, 0:종료"); 
+    }
+    
     else if (input == "5") { currentMode = 5; demoStep=0; Serial.printf(C_MAGENTA "\r\n--- [ ✨ 오토 데모 ] ---\r\n" C_RESET); }
     else if (input == "9") { printDashboard(); } 
     else if (input == "m" || input == "M") { isSimulation = !isSimulation; Serial.printf("\r\n🔄 모드변경: %s\r\n", isSimulation ? "SIMULATION" : "REAL"); printMainMenu(); }
