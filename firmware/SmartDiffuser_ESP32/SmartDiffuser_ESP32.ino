@@ -481,22 +481,61 @@ void runManualMode(String input) {
 
 void sendServerRequest(String payload) {
   if(WiFi.status() != WL_CONNECTED) { Serial.printf(C_RED "🚨 WiFi 연결 안됨!\r\n" C_RESET); return; }
-  HTTPClient http; http.setTimeout(5000); http.begin(serverName); http.addHeader("Content-Type", "application/json");
+  
+  HTTPClient http; 
+  http.setTimeout(5000); 
+  http.begin(serverName); 
+  http.addHeader("Content-Type", "application/json");
+  
   int code = http.POST(payload);
+  
   if(code > 0){
-    String res = http.getString(); JsonDocument doc; deserializeJson(doc, res);
-    int cmd = doc["spray"]; int dur = doc["duration"]; String txt = doc["result_text"];
-    Serial.printf(C_GREEN "✅ %s\r\n" C_RESET, txt.c_str());
+    String res = http.getString(); 
+    JsonDocument doc; 
+    deserializeJson(doc, res);
+    
+    int cmd = doc["spray"]; 
+    int dur = doc["duration"]; 
+    String txt = doc["result_text"];
+    
+    // [1] 서버 메시지 원본 출력
+    Serial.printf(C_GREEN "✅ 서버 응답: %s\r\n" C_RESET, txt.c_str());
+    
     int target = -1;
-    if (cmd == 1) target = PIN_SUNNY; else if (cmd == 2) target = PIN_CLOUDY; else if (cmd == 3) target = PIN_RAIN; else if (cmd == 4) target = PIN_SNOW;
+    if (cmd == 1) target = PIN_SUNNY; 
+    else if (cmd == 2) target = PIN_CLOUDY; 
+    else if (cmd == 3) target = PIN_RAIN; 
+    else if (cmd == 4) target = PIN_SNOW;
+    
+    // [2] 분사 명령이 있을 때
     if (target != -1) { 
-        forceAllOff(); activePin = target; isRunning = true; isSpraying = true; sprayDuration = dur * 1000; prevMotorMillis = millis(); startTimeMillis = millis(); 
+        forceAllOff(); 
+        activePin = target; 
+        isRunning = true; 
+        isSpraying = true; 
+        sprayDuration = dur * 1000; 
+        prevMotorMillis = millis(); 
+        startTimeMillis = millis(); 
+        
         digitalWrite(activePin, LOW); 
         playSound(cmd); 
-        Serial.printf(C_GREEN "[Loop] 분사 시작\r\n" C_RESET); 
+        Serial.printf(C_GREEN "[Loop] 💦 분사 시작! (%d초)\r\n" C_RESET, dur); 
     }
-    else { Serial.printf(C_RED "⚠️ 명령 없음\r\n" C_RESET); stopSystem(); }
-  } else { Serial.printf(C_RED "🚨 통신 에러: %d\r\n" C_RESET, code); }
+    // [3] 분사 명령이 없을 때 (여기가 수정됨!)
+    else { 
+        // 만약 서버 메시지에 "WAIT"가 포함되어 있다면? -> 쿨다운으로 인식
+        if (txt.indexOf("WAIT") >= 0 || txt.indexOf("wait") >= 0) {
+             Serial.printf(C_YELLOW "⏳ [Cool-down] 쿨다운 대기 중입니다.\r\n" C_RESET);
+        } else {
+             Serial.printf(C_RED "⚠️ 명령 없음 (대기 상태)\r\n" C_RESET); 
+        }
+        stopSystem(); 
+    }
+    
+  } else { 
+      Serial.printf(C_RED "🚨 통신 에러: %d\r\n" C_RESET, code); 
+  }
+  
   http.end();
 }
 
