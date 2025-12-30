@@ -1,11 +1,10 @@
 /*
  * [프로젝트명] 날씨 및 감정 기반 스마트 디퓨저 (Smart Diffuser)
- * [버전] 8.1 (Real Sensor Edition)
+ * [버전] 8.2 (Channel 4 Sensor Edition)
  * [작성자] 21학번 류재홍
  * [변경사항] 
- * - 시뮬레이션 모드 완전 삭제 (Only Real Hardware)
- * - DFPlayer Mini 오디오 연동
- * - 테라터미널 입력 안정화 (Timeout 설정)
+ * - 서버 전송 시 로드셀 값을 '4번(w4)'에만 매핑
+ * - 1, 2, 3번 무게는 null로 전송하여 데이터 구분
  */
 
 #include <WiFi.h>
@@ -75,19 +74,18 @@ unsigned long startTimeMillis = 0;
 int ledBrightness = 0;
 int ledFadeAmount = 5;
 
-// ======================= [AUTO WEATHER ADD] =======================
-// 날씨 모드 자동 호출 (1시간마다)
+// ======================= [AUTO WEATHER] =======================
 unsigned long lastWeatherCallMillis = 0;
 const unsigned long WEATHER_INTERVAL = 3600000; // 1시간
-String lastWeatherRegion = "서울";              // 마지막으로 입력한 지역 기억
-// =================================================================
+String lastWeatherRegion = "서울";              
+// ============================================================
 
 // ============================================================
 // [3] 초기화 (Setup)
 // ============================================================
 void setup() {
   Serial.begin(115200);
-  Serial.setTimeout(5000); // [중요] 테라터미널 입력 끊김 방지 (5초 대기)
+  Serial.setTimeout(5000); 
   
   // 핀 설정
   pinMode(PIN_SUNNY, OUTPUT);
@@ -99,7 +97,7 @@ void setup() {
 
   Serial.print("\r\n\r\n");
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
-  Serial.printf(C_BOLD    "   🏆 SMART DIFFUSER V8.1 (REAL) 🏆     \r\n" C_RESET);
+  Serial.printf(C_BOLD    "   🏆 SMART DIFFUSER V8.2 (CH4) 🏆      \r\n" C_RESET);
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
 
   // 오디오 초기화
@@ -110,7 +108,7 @@ void setup() {
     Serial.println(C_RED "FAILED! (Check Connection & SD Card)" C_RESET);
   } else {
     Serial.println(C_GREEN " DONE!" C_RESET);
-    myDFPlayer.volume(20); // 볼륨 0~30
+    myDFPlayer.volume(20); 
   }
 
   // 저장값 로드
@@ -124,31 +122,36 @@ void setup() {
   // 로드셀 초기화
   scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
   scale.set_scale(calibration_factor);
-  scale.tare(); // 부팅 시 영점 잡기
+  scale.tare(); 
   
   printMainMenu(); 
 }
 
 // ============================================================
-// [AUTO WEATHER ADD] 날씨 모드 자동 호출 함수 (신규 추가)
+// [AUTO WEATHER] 자동 호출 함수
 // ============================================================
 void autoWeatherScheduler() {
-  // 날씨 모드일 때만
   if (currentMode != 3) return;
-
-  // 분사 중이면 호출 안 함 (원하면 제거 가능)
   if (isRunning) return;
 
   unsigned long now = millis();
   if (now - lastWeatherCallMillis >= WEATHER_INTERVAL) {
     lastWeatherCallMillis = now;
 
-    float w = scale.get_units(10); // 실제 무게 측정
-    Serial.printf(C_YELLOW "\r\n[AUTO WEATHER] 1시간 주기 Lambda 호출 (%s, %.1fg)\r\n" C_RESET,
-                  lastWeatherRegion.c_str(), w);
+    float w = scale.get_units(10); 
+    Serial.printf(C_YELLOW "\r\n[AUTO WEATHER] 1시간 주기 자동 호출 (%s)\r\n" C_RESET, lastWeatherRegion.c_str());
 
-    // 기존 sendServerRequest 그대로 사용
-    sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\", \"weight\": " + String(w) + "}");
+    // [수정] 4번(w4)에만 실제 무게를 넣고 나머지는 null 처리
+    String json = "{";
+    json += "\"mode\": \"weather\", ";
+    json += "\"region\": \"" + lastWeatherRegion + "\", ";
+    json += "\"w1\": null, ";
+    json += "\"w2\": null, ";
+    json += "\"w3\": null, ";
+    json += "\"w4\": " + String(w); // 4번 로드셀 값만 전송
+    json += "}";
+    
+    sendServerRequest(json);
   }
 }
 
@@ -159,10 +162,7 @@ void loop() {
   manageWiFi();      
   systemHeartbeat(); 
   handleWebClient(); 
-
-  // ======================= [AUTO WEATHER ADD] =======================
   autoWeatherScheduler();
-  // ==================================================================
   
   if (currentMode == 5) runAutoDemoLoop(); 
   else if (isRunning) {
@@ -176,7 +176,6 @@ void loop() {
 // [5] 핵심 기능 함수들
 // ============================================================
 
-// 음악 재생 헬퍼 함수
 void playSound(int trackNum) {
   Serial.printf("🎵 BGM 재생: %04d.mp3\r\n", trackNum);
   myDFPlayer.play(trackNum);
@@ -200,13 +199,10 @@ void handleWebClient() {
             
             // [1] 명령 처리 (AJAX)
             if (request.indexOf("GET /RUN_") >= 0 || request.indexOf("GET /STOP") >= 0) {
-                
-                // 음악과 함께 실행
                 if (request.indexOf("GET /RUN_SUNNY") >= 0) { Serial.println("[Web] ☀️ 맑음 실행"); runManualMode("1"); }
                 if (request.indexOf("GET /RUN_CLOUDY") >= 0) { Serial.println("[Web] ☁️ 흐림 실행"); runManualMode("2"); }
                 if (request.indexOf("GET /RUN_RAIN") >= 0) { Serial.println("[Web] ☔ 비 실행"); runManualMode("3"); }
                 if (request.indexOf("GET /RUN_SNOW") >= 0) { Serial.println("[Web] ❄️ 눈 실행"); runManualMode("4"); }
-                
                 if (request.indexOf("GET /STOP") >= 0) { stopSystem(); currentMode=0; printMainMenu(); }
 
                 client.println("HTTP/1.1 204 No Content");
@@ -247,14 +243,14 @@ void handleWebClient() {
                     client.println("<a href='/'><button class='btn back'>🏠 메인 메뉴로</button></a>");
                     client.println("<div style='text-align:left; background:#333; padding:20px; border-radius:10px;'>");
                     client.print("<p>📡 WiFi: <b>"); client.print(WiFi.RSSI()); client.println(" dBm</b></p>");
-                    client.print("<p>⚖️ 무게: <b>"); 
-                    float w = scale.get_units(5); // [Real] 실제 무게만 측정
+                    client.print("<p>⚖️ 무게(CH4): <b>"); 
+                    float w = scale.get_units(5); 
                     client.print(w); client.println(" g</b></p>");
                     client.println("</div>");
                 }
                 else {
                     if (currentMode != 0) { currentMode = 0; Serial.println(C_CYAN "\r\n[Web Sync] 🏠 메인 복귀" C_RESET); printMainMenu(); }
-                    client.println("<h1>Smart Diffuser V8.1</h1>");
+                    client.println("<h1>Smart Diffuser V8.2</h1>");
                     client.print("<p style='color:#888; margin-bottom:30px;'>IP: "); client.print(WiFi.localIP()); client.println("</p>");
                     client.println("<a href='/PAGE_MANUAL'><button class='btn blue'>[1] 🎮 수동 제어 (Manual)</button></a>");
                     client.println("<button class='btn purple' onclick=\"alert('터미널 입력 필요');\">[2] 💜 감성 모드</button>");
@@ -370,7 +366,7 @@ void checkSerialInput() {
 }
 
 void printCalibrationInfo() {
-    float w = scale.get_units(5); // 실제 센서 값
+    float w = scale.get_units(5); 
     Serial.printf("📡 보정값: %.1f | 현재 무게: %.2f g\r\n", calibration_factor, w);
 }
 
@@ -412,7 +408,7 @@ void printDashboard() {
     Serial.printf(" ├─ Web Server : http://%s\r\n", WiFi.localIP().toString().c_str());
     Serial.printf(" ├─ Cal.Factor : %.1f (Saved)\r\n", calibration_factor);
     float w = scale.get_units(10); 
-    Serial.printf(" └─ Weight     : %.2f g\r\n", w);
+    Serial.printf(" └─ Weight(CH4) : %.2f g\r\n", w);
     Serial.printf("----------------------------\r\n");
     printMainMenu();
 }
@@ -431,20 +427,26 @@ void handleInput(String input) {
     
     else if (input == "5") { currentMode = 5; demoStep=0; Serial.printf(C_MAGENTA "\r\n--- [ ✨ 오토 데모 ] ---\r\n" C_RESET); }
     else if (input == "9") { printDashboard(); } 
-    // [삭제] 시뮬레이션 전환 메뉴 [M] 삭제됨
     else { Serial.printf(C_RED "❌ 잘못된 입력\r\n" C_RESET); printMainMenu(); }
   }
   else if (currentMode == 1) runManualMode(input);
   else if (currentMode == 2) { Serial.printf(C_YELLOW "[Emotion] 분석 요청...\r\n" C_RESET); sendServerRequest("{\"mode\": \"emotion\", \"user_emotion\": \"" + input + "\"}"); }
   else if (currentMode == 3) { 
-      // ======================= [AUTO WEATHER ADD] =======================
-      // 날씨모드에서 사용자가 입력한 지역을 자동 호출에서도 쓰도록 저장
       lastWeatherRegion = input;
-      // ==================================================================
-
-      float w = scale.get_units(10); // [Real] 실제 무게 측정
-      Serial.printf(C_YELLOW "[Weather] 날씨 조회 (%.1fg)\r\n" C_RESET, w);
-      sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\", \"weight\": " + String(w) + "}");
+      float w = scale.get_units(10); 
+      Serial.printf(C_YELLOW "[Weather] 날씨 조회 (%.1fg - CH4)\r\n" C_RESET, w);
+      
+      // [수정] 4번(w4)에만 실제 값 넣고 나머지는 null
+      String json = "{";
+      json += "\"mode\": \"weather\", ";
+      json += "\"region\": \"" + input + "\", ";
+      json += "\"w1\": null, ";
+      json += "\"w2\": null, ";
+      json += "\"w3\": null, ";
+      json += "\"w4\": " + String(w); 
+      json += "}";
+      
+      sendServerRequest(json);
   }
 }
 
@@ -499,6 +501,6 @@ void sendServerRequest(String payload) {
 }
 
 void printMainMenu() {
-  Serial.printf(C_CYAN "\r\n=== 🕹️ MAIN MENU (V8.1 Real) 🕹️ ===\r\n" C_RESET);
+  Serial.printf(C_CYAN "\r\n=== 🕹️ MAIN MENU (V8.2 CH4) 🕹️ ===\r\n" C_RESET);
   Serial.printf(" [1] 수동   [2] 감성   [3] 날씨\r\n [4] 🛠️ 설정   [5] ✨ 데모   [9] 📊 대시보드\r\n" C_YELLOW "👉 명령 입력 >>" C_RESET);
 }
