@@ -75,6 +75,13 @@ unsigned long startTimeMillis = 0;
 int ledBrightness = 0;
 int ledFadeAmount = 5;
 
+// ======================= [AUTO WEATHER ADD] =======================
+// 날씨 모드 자동 호출 (1시간마다)
+unsigned long lastWeatherCallMillis = 0;
+const unsigned long WEATHER_INTERVAL = 3600000; // 1시간
+String lastWeatherRegion = "서울";              // 마지막으로 입력한 지역 기억
+// =================================================================
+
 // ============================================================
 // [3] 초기화 (Setup)
 // ============================================================
@@ -123,12 +130,39 @@ void setup() {
 }
 
 // ============================================================
+// [AUTO WEATHER ADD] 날씨 모드 자동 호출 함수 (신규 추가)
+// ============================================================
+void autoWeatherScheduler() {
+  // 날씨 모드일 때만
+  if (currentMode != 3) return;
+
+  // 분사 중이면 호출 안 함 (원하면 제거 가능)
+  if (isRunning) return;
+
+  unsigned long now = millis();
+  if (now - lastWeatherCallMillis >= WEATHER_INTERVAL) {
+    lastWeatherCallMillis = now;
+
+    float w = scale.get_units(10); // 실제 무게 측정
+    Serial.printf(C_YELLOW "\r\n[AUTO WEATHER] 1시간 주기 Lambda 호출 (%s, %.1fg)\r\n" C_RESET,
+                  lastWeatherRegion.c_str(), w);
+
+    // 기존 sendServerRequest 그대로 사용
+    sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\", \"weight\": " + String(w) + "}");
+  }
+}
+
+// ============================================================
 // [4] 메인 루프 (Loop)
 // ============================================================
 void loop() {
   manageWiFi();      
   systemHeartbeat(); 
   handleWebClient(); 
+
+  // ======================= [AUTO WEATHER ADD] =======================
+  autoWeatherScheduler();
+  // ==================================================================
   
   if (currentMode == 5) runAutoDemoLoop(); 
   else if (isRunning) {
@@ -403,6 +437,11 @@ void handleInput(String input) {
   else if (currentMode == 1) runManualMode(input);
   else if (currentMode == 2) { Serial.printf(C_YELLOW "[Emotion] 분석 요청...\r\n" C_RESET); sendServerRequest("{\"mode\": \"emotion\", \"user_emotion\": \"" + input + "\"}"); }
   else if (currentMode == 3) { 
+      // ======================= [AUTO WEATHER ADD] =======================
+      // 날씨모드에서 사용자가 입력한 지역을 자동 호출에서도 쓰도록 저장
+      lastWeatherRegion = input;
+      // ==================================================================
+
       float w = scale.get_units(10); // [Real] 실제 무게 측정
       Serial.printf(C_YELLOW "[Weather] 날씨 조회 (%.1fg)\r\n" C_RESET, w);
       sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\", \"weight\": " + String(w) + "}");
