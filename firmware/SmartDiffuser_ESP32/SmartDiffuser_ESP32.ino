@@ -1,11 +1,10 @@
 /*
  * [프로젝트명] 날씨 및 감정 기반 스마트 디퓨저 (Smart Diffuser)
- * [버전] 8.3 (Interactive Dashboard Edition)
+ * [버전] 8.3 Final (Fixed Mode 4 + Input System)
  * [작성자] 21학번 류재홍
- * [변경사항] 
- * - 웹 대시보드에 '최근 서버 응답(상태 메시지)' 표시 기능 추가
- * - 부팅 완료 시 LED 깜빡임 알림 추가
- * - V8.2의 하드웨어 설정(로드셀 CH4, 오디오 등) 완벽 유지
+ * [최종 수정사항] 
+ * - 정밀 세팅 모드(4번)에서 키 입력 즉시 반응하도록 수정
+ * - 나머지 모드에서는 오타 수정(백스페이스)이 가능한 입력창 구현
  */
 
 #include <WiFi.h>
@@ -18,16 +17,16 @@
 // ============================================================
 // [0] 설정 및 핀 정의
 // ============================================================
-#define C_RESET  "\033[0m"
-#define C_RED    "\033[31m"
-#define C_GREEN  "\033[32m"
-#define C_YELLOW "\033[33m"
-#define C_BLUE   "\033[34m"
+#define C_RESET   "\033[0m"
+#define C_RED     "\033[31m"
+#define C_GREEN   "\033[32m"
+#define C_YELLOW  "\033[33m"
+#define C_BLUE    "\033[34m"
 #define C_MAGENTA "\033[35m"
-#define C_CYAN   "\033[36m"
-#define C_BOLD   "\033[1m"
+#define C_CYAN    "\033[36m"
+#define C_BOLD    "\033[1m"
 
-const char* ssid     = "Jaehong_WiFi";      
+const char* ssid     = "Jaehong_WiFi";       
 const char* password = "12345678";        
 String serverName = "https://tgrwszo3iwurntqeq76s5rro640asnwq.lambda-url.ap-northeast-2.on.aws/";
 
@@ -86,6 +85,13 @@ String lastWeatherRegion = "서울";
 
 // 함수 원형 선언
 void bootAnimation(); 
+void handleInput(String input);
+void stopSystem();
+void printMainMenu();
+void sendServerRequest(String payload);
+void printCalibrationInfo();
+void runManualMode(String input);
+void forceAllOff();
 
 // ============================================================
 // [3] 초기화 (Setup)
@@ -172,6 +178,93 @@ void autoWeatherScheduler() {
   }
 }
 
+// [핵심 기능] 화면의 입력 줄을 깔끔하게 다시 그려주는 함수
+void redrawInputLine(String &buffer) {
+  Serial.print("\r");       // 1. 커서를 맨 앞으로 이동
+  Serial.print("\033[K");   // 2. 현재 줄을 싹 지움 (ANSI 코드)
+  Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); // 3. 프롬프트 다시 그리기
+  Serial.print(buffer);     // 4. 사용자가 입력 중인 글자 다시 그리기
+}
+
+// [핵심 기능] 백스페이스 기능과 정밀 세팅 모드를 동시에 지원하는 입력 함수
+void checkSerialInput() {
+  
+  // [A] 모드 4(정밀 세팅)일 때는: 한 글자씩 바로바로 실행 (엔터 필요 없음)
+  if (currentMode == 4) {
+    if (Serial.available() > 0) {
+      char c = Serial.read();
+      
+      // 줄바꿈 문자 무시
+      if (c == '\n' || c == '\r') return; 
+
+      if (c == '+') { 
+          calibration_factor += 10; 
+          scale.set_scale(calibration_factor); 
+          printCalibrationInfo(); 
+      }
+      else if (c == '-') { 
+          calibration_factor -= 10; 
+          scale.set_scale(calibration_factor); 
+          printCalibrationInfo(); 
+      }
+      else if (c == 't') { 
+          scale.tare(); 
+          Serial.printf(C_GREEN "\r\n⚖️ 영점 조절 완료 (Tare)\r\n" C_RESET); 
+          printCalibrationInfo(); 
+      }
+      else if (c == 'w') { 
+          printCalibrationInfo(); 
+      }
+      else if (c == 's') { 
+          prefs.putFloat("cal_factor", calibration_factor); 
+          Serial.printf(C_BLUE "\r\n💾 [Save] 설정값 저장 완료!\r\n" C_RESET); 
+      }
+      else if (c == '0') { 
+          currentMode = 0; 
+          printMainMenu(); 
+      }
+    }
+    return; // 모드 4일 때는 아래쪽(문자열 버퍼) 코드를 실행하지 않고 끝냄
+  }
+
+  // [B] 나머지 모드(0, 1, 2, 3)일 때는: 글자를 모아서 처리 (백스페이스 지원)
+  static String inputBuffer = ""; 
+
+  while (Serial.available() > 0) {
+    char c = Serial.read(); 
+
+    // [1] 엔터 처리
+    if (c == '\n' || c == '\r') {
+      if (inputBuffer.length() > 0) {
+        Serial.println(); // 줄바꿈
+        
+        if (inputBuffer == "0") { 
+            stopSystem(); 
+            currentMode = 0; 
+            printMainMenu(); 
+        } 
+        else { 
+            handleInput(inputBuffer); 
+        }
+        inputBuffer = ""; 
+      }
+    }
+    // [2] 백스페이스 처리 (핵심!)
+    else if (c == '\b' || c == 0x7F) { 
+      if (inputBuffer.length() > 0) {
+        // 글자 하나 지우고, 화면 전체를 다시 그림 (프롬프트 보호)
+        inputBuffer.remove(inputBuffer.length() - 1); 
+        redrawInputLine(inputBuffer); 
+      }
+    }
+    // [3] 일반 글자 입력
+    else {
+      inputBuffer += c;
+      redrawInputLine(inputBuffer); // 글자 쓸 때마다 화면 갱신
+    }
+  }
+}
+
 // ============================================================
 // [4] 메인 루프 (Loop)
 // ============================================================
@@ -243,10 +336,10 @@ void handleWebClient() {
                 client.println(".sunny { background: #f2c94c; color: #333; } .cloudy { background: #95a5a6; } .rain { background: #3498db; } .snow { background: #ecf0f1; color: #333; }");
                 client.println(".back { background: #333; border: 1px solid #555; margin-bottom: 25px; }");
                 client.println("</style>");
-                client.println("<script>function send(url) { fetch(url); setTimeout(function(){ location.reload(); }, 500); }</script>"); // 버튼 누르면 새로고침해서 상태 업데이트
+                client.println("<script>function send(url) { fetch(url); setTimeout(function(){ location.reload(); }, 500); }</script>"); 
                 client.println("</head><body>");
 
-                // 상단 상태 메시지 박스 (모든 페이지 공통)
+                // 상단 상태 메시지 박스
                 client.print("<div class='status-box'>📢 상태: ");
                 client.print(lastWebMessage);
                 client.println("</div>");
@@ -355,41 +448,6 @@ void checkSafety() {
   }
 }
 
-void checkSerialInput() {
-  if (Serial.available() > 0) {
-    char c = Serial.peek(); 
-    
-    // [Mode 4: 정밀 세팅 모드]
-    if (currentMode == 4) {
-       char inputChar = Serial.read(); 
-       if (inputChar == '\n' || inputChar == '\r') return; 
-       
-       if (inputChar == '+') { calibration_factor += 10; scale.set_scale(calibration_factor); printCalibrationInfo(); }
-       else if (inputChar == '-') { calibration_factor -= 10; scale.set_scale(calibration_factor); printCalibrationInfo(); }
-       else if (inputChar == 't') { 
-           scale.tare(); 
-           Serial.printf(C_GREEN "⚖️ 영점 조절 완료 (Tare)\r\n" C_RESET); 
-           printCalibrationInfo(); 
-       }
-       else if (inputChar == 'w') { 
-           printCalibrationInfo(); 
-       }
-       else if (inputChar == 's') { prefs.putFloat("cal_factor", calibration_factor); Serial.printf(C_BLUE "💾 [Save] 저장 완료!\r\n" C_RESET); }
-       else if (inputChar == '0') { currentMode = 0; printMainMenu(); }
-       return; 
-    }
-
-    // [나머지 모드]
-    delay(50);
-    String input = Serial.readStringUntil('\n');
-    input.trim();
-    if (input.length() > 0) {
-      if (input == "0") { stopSystem(); currentMode = 0; printMainMenu(); } 
-      else { handleInput(input); }
-    }
-  }
-}
-
 void printCalibrationInfo() {
     float w = scale.get_units(5); 
     Serial.printf("📡 보정값: %.1f | 현재 무게: %.2f g\r\n", calibration_factor, w);
@@ -407,10 +465,42 @@ void connectWiFi() {
 }
 
 void manageWiFi() {
-  unsigned long currentMillis = millis();
-  if (currentMillis - prevWifiMillis >= 30000) {
-    prevWifiMillis = currentMillis;
-    if (WiFi.status() != WL_CONNECTED) { WiFi.disconnect(); WiFi.reconnect(); }
+  static bool wasConnected = true; // 이전 상태 기억용 변수
+  static unsigned long lastCheckTime = 0;
+
+  // 1초에 한 번만 WiFi 상태 확인 (너무 자주 확인하면 성능 저하)
+  if (millis() - lastCheckTime >= 1000) {
+    lastCheckTime = millis();
+    
+    // [상황 1] 연결이 끊겼을 때
+    if (WiFi.status() != WL_CONNECTED) {
+      if (wasConnected) { // 방금 전까지는 연결되어 있었는데, 지금 끊긴 경우
+        wasConnected = false;
+        
+        // 경고 메시지 출력
+        Serial.print("\r\n"); // 줄바꿈으로 현재 입력줄 보호
+        Serial.printf(C_RED "🚨 [System] WiFi 연결 끊김! 재연결 시도 중...\r\n" C_RESET);
+        
+        // 재연결 시도
+        WiFi.disconnect();
+        WiFi.reconnect();
+        
+        // 입력 프롬프트가 깨졌을 테니 줄바꿈 한 번 더 줌
+        Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); 
+      }
+    } 
+    // [상황 2] 다시 연결되었을 때
+    else {
+      if (!wasConnected) { // 방금 전까지 끊겨 있었는데, 지금 연결된 경우
+        wasConnected = true;
+        
+        Serial.print("\r\n");
+        Serial.printf(C_GREEN "✅ [System] WiFi 재연결 성공! (신호: %d dBm)\r\n" C_RESET, WiFi.RSSI());
+        
+        // 입력 프롬프트 복구
+        Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); 
+      }
+    }
   }
 }
 
@@ -440,9 +530,21 @@ void printDashboard() {
 
 void handleInput(String input) {
   if (currentMode == 0) {
-    if (input == "1") { currentMode = 1; Serial.printf(C_BLUE "\r\n--- [ Mode 1: 수동 제어 ] ---\r\n" C_RESET); }
-    else if (input == "2") { currentMode = 2; Serial.printf(C_BLUE "\r\n--- [ Mode 2: 감성 모드 ] ---\r\n" C_RESET); }
-    else if (input == "3") { currentMode = 3; Serial.printf(C_BLUE "\r\n--- [ Mode 3: 날씨 모드 ] ---\r\n" C_RESET); }
+    if (input == "1") { 
+        currentMode = 1; 
+        Serial.printf(C_BLUE "\r\n--- [ Mode 1: 수동 제어 ] ---\r\n" C_RESET); 
+    }
+    else if (input == "2") { 
+        currentMode = 2; 
+        Serial.printf(C_BLUE "\r\n--- [ Mode 2: 감성 모드 ] ---\r\n" C_RESET); 
+        // [수정] 감성 모드 안내 문구 추가
+        Serial.println(C_YELLOW "👉 현재 기분을 입력하세요 (예: 행복해, 우울해, 신남, 피곤)" C_RESET);
+    }
+    else if (input == "3") { 
+        currentMode = 3; 
+        Serial.printf(C_BLUE "\r\n--- [ Mode 3: 날씨 모드 ] ---\r\n" C_RESET);
+        Serial.println(C_YELLOW "👉 검색할 지역명(예: 서울, 제주, 부산)을 입력하세요." C_RESET);
+    }
     
     else if (input == "4") { 
         currentMode = 4; 
@@ -450,12 +552,19 @@ void handleInput(String input) {
         Serial.println("👉 +/-:조절, w:무게확인, t:영점, s:저장, 0:종료"); 
     }
     
-    else if (input == "5") { currentMode = 5; demoStep=0; Serial.printf(C_MAGENTA "\r\n--- [ ✨ 오토 데모 ] ---\r\n" C_RESET); }
+    else if (input == "5") { 
+        currentMode = 5; 
+        demoStep=0; 
+        Serial.printf(C_MAGENTA "\r\n--- [ ✨ 오토 데모 ] ---\r\n" C_RESET); 
+    }
     else if (input == "9") { printDashboard(); } 
     else { Serial.printf(C_RED "❌ 잘못된 입력\r\n" C_RESET); printMainMenu(); }
   }
   else if (currentMode == 1) runManualMode(input);
-  else if (currentMode == 2) { Serial.printf(C_YELLOW "[Emotion] 분석 요청...\r\n" C_RESET); sendServerRequest("{\"mode\": \"emotion\", \"user_emotion\": \"" + input + "\"}"); }
+  else if (currentMode == 2) { 
+      Serial.printf(C_YELLOW "[Emotion] 분석 요청...\r\n" C_RESET); 
+      sendServerRequest("{\"mode\": \"emotion\", \"user_emotion\": \"" + input + "\"}"); 
+  }
   else if (currentMode == 3) { 
       lastWeatherRegion = input;
       float w = scale.get_units(10); 
