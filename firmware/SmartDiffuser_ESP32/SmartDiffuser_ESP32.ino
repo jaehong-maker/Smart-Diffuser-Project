@@ -1,11 +1,11 @@
 /*
  * [프로젝트] 스마트 디퓨저 (Smart Diffuser)
- * [버  전] 9.2 Ultimate Final (Redraw System Added)
+ * [버  전] 9.3 Ultimate Final (Clean Prompt Fix)
  * [작성자] 21학번 류재홍
  * [기  능] 
  * 1. WDT(자동복구) & 볼륨 조절/저장
  * 2. 입력창 UI 완전 보호 (로그 출력 시 입력 중인 글자 복구)
- * 3. 웹 대시보드 및 전체 제어
+ * 3. 명령 실행 후에는 입력창 깔끔하게 비움 (Ghost Character Fix)
  */
 
 #include <WiFi.h>
@@ -65,7 +65,7 @@ bool isRunning = false;
 int activePin = -1;        
 bool isSpraying = false;   
 String lastWebMessage = "시스템 준비 완료 (Ready)";
-String inputBuffer = "";  // [New] 입력 버퍼를 전역으로 이동 (화면 복구용)
+String inputBuffer = "";  // 입력 버퍼
 
 // 데모 및 타이머 변수
 int demoStep = 0;
@@ -130,7 +130,7 @@ void setup() {
 
   Serial.print("\r\n\r\n");
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
-  Serial.printf(C_BOLD    " 🚀 SMART DIFFUSER V9.2 (ULTIMATE FINAL) \r\n" C_RESET);
+  Serial.printf(C_BOLD    " 🚀 SMART DIFFUSER V9.3 (ULTIMATE FINAL) \r\n" C_RESET);
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
 
   mySoftwareSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
@@ -166,7 +166,7 @@ void bootAnimation() {
 }
 
 // ============================================================
-// [2] 핵심 입력 시스템 (Redraw 적용)
+// [2] 핵심 입력 시스템
 // ============================================================
 void redrawInputLine(String &buffer) {
   Serial.print("\r");       
@@ -244,7 +244,7 @@ void manageWiFi() {
     if (WiFi.status() != WL_CONNECTED) {
       if (wasConnected) { 
         wasConnected = false;
-        // [Redraw 적용] 입력중인 글자 보호하며 경고 출력
+        // [Redraw] 비동기 알림은 입력중인 글자 복구 필요
         Serial.print("\r\033[K");
         Serial.printf(C_RED "🚨 [System] WiFi 연결 끊김! 재연결...\r\n" C_RESET);
         WiFi.disconnect(); WiFi.reconnect();
@@ -254,7 +254,7 @@ void manageWiFi() {
     } else {
       if (!wasConnected) { 
         wasConnected = true;
-        // [Redraw 적용]
+        // [Redraw]
         Serial.print("\r\033[K");
         Serial.printf(C_GREEN "✅ [System] WiFi 복구 완료! (%d dBm)\r\n" C_RESET, WiFi.RSSI());
         Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET);
@@ -270,7 +270,7 @@ void autoWeatherScheduler() {
   if (now - lastWeatherCallMillis >= WEATHER_INTERVAL) {
     lastWeatherCallMillis = now;
     float w = scale.get_units(10); 
-    // [Redraw 적용]
+    // [Redraw]
     Serial.print("\r\033[K");
     Serial.printf(C_YELLOW "\r\n[AUTO] 날씨 자동 호출 (%s)\r\n" C_RESET, lastWeatherRegion.c_str());
     Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
@@ -338,7 +338,9 @@ void changeVolume(int vol) {
     
     Serial.print("\r\033[K"); // 줄 지움
     Serial.printf(C_GREEN "🔊 볼륨 변경: %d (저장됨)\r\n" C_RESET, currentVolume);
-    Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
+    
+    // [Fix] 명령 실행 후에는 입력버퍼(inputBuffer)를 출력하지 않음 -> 깨끗한 프롬프트 유지
+    Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); 
 }
 
 void handleWebClient() {
@@ -401,7 +403,7 @@ void handleWebClient() {
                       Serial.print("\r\033[K"); Serial.println(C_CYAN "\r\n[Web] 메인 복귀" C_RESET); printMainMenu(); 
                       Serial.print(inputBuffer); // 메인메뉴 복구
                   }
-                  client.printf("<h1>Smart Diffuser V9.2</h1><p style='color:#888;'>IP: %s</p>", WiFi.localIP().toString().c_str());
+                  client.printf("<h1>Smart Diffuser V9.3</h1><p style='color:#888;'>IP: %s</p>", WiFi.localIP().toString().c_str());
                   client.println("<a href='/PAGE_MANUAL'><button class='btn blue'>[1] 🎮 수동 제어</button></a><button class='btn purple' onclick=\"alert('터미널 이용');\">[2] 💜 감성 모드</button>");
                   client.println("<button class='btn orange' onclick=\"alert('터미널 이용');\">[3] 🌦️ 날씨 모드</button><a href='/PAGE_DASHBOARD'><button class='btn teal'>[9] 📊 대시보드</button></a>");
               }
@@ -440,7 +442,6 @@ void sendServerRequest(String payload) {
     int dur = doc["duration"]; 
     String txt = doc["result_text"]; 
     
-    // [Redraw] 서버 응답 출력 시 입력창 보호
     Serial.print("\r\033[K");
     Serial.printf(C_GREEN "✅ 서버 응답: %s\r\n" C_RESET, txt.c_str());
     
@@ -485,7 +486,8 @@ void runSprayLogic() {
           Serial.print("\r\033[K");
           Serial.printf(C_CYAN "      └── [Manual] 동작 완료.\r\n" C_RESET);
           stopSystem();
-          Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
+          // [Fix] 명령 종료 후에는 깨끗한 프롬프트 출력
+          Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); 
           return;
       }
 
@@ -519,12 +521,10 @@ void runAutoDemoLoop() {
     else if (demoStep == 3) { target = PIN_RAIN; name = "☔ 비"; playSound(3); }
     else if (demoStep == 4) { target = PIN_SNOW; name = "❄️ 눈"; playSound(4); }
 
-    // [Redraw]
     Serial.print("\r\033[K");
     Serial.printf(C_MAGENTA "[Auto Demo] %s 모드\r\n" C_RESET, name.c_str());
     lastWebMessage = "데모 모드: " + name; 
     digitalWrite(target, LOW); 
-    // 데모 모드는 자동 진행이므로 입력창을 계속 띄우지는 않음 (종료하려면 0 입력)
   }
 }
 
@@ -597,10 +597,12 @@ void runManualMode(String input) {
   
   Serial.print("\r\033[K");
   Serial.printf(C_GREEN "[Loop] 분사 시작 (BGM %d)\r\n" C_RESET, track);
-  Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
+  
+  // [Fix] 명령 실행 후에는 입력버퍼를 비운 깨끗한 프롬프트 출력
+  Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); 
 }
 
 void printMainMenu() {
-  Serial.printf(C_CYAN "\r\n=== 🕹️ MAIN MENU (V9.2 Ultimate Final) 🕹️ ===\r\n" C_RESET);
+  Serial.printf(C_CYAN "\r\n=== 🕹️ MAIN MENU (V9.3 Ultimate Final) 🕹️ ===\r\n" C_RESET);
   Serial.printf(" [1] 수동   [2] 감성   [3] 날씨\r\n [4] 🛠️ 설정   [5] ✨ 데모   [9] 📊 대시보드\r\n" C_YELLOW "👉 명령 입력 >>" C_RESET);
 }
