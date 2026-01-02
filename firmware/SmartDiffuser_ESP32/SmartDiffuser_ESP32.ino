@@ -1,10 +1,11 @@
 /*
  * [프로젝트명] 날씨 및 감정 기반 스마트 디퓨저 (Smart Diffuser)
- * [버전] 8.2 (Channel 4 Sensor Edition)
+ * [버전] 8.3 (Interactive Dashboard Edition)
  * [작성자] 21학번 류재홍
  * [변경사항] 
- * - 서버 전송 시 로드셀 값을 '4번(w4)'에만 매핑
- * - 1, 2, 3번 무게는 null로 전송하여 데이터 구분
+ * - 웹 대시보드에 '최근 서버 응답(상태 메시지)' 표시 기능 추가
+ * - 부팅 완료 시 LED 깜빡임 알림 추가
+ * - V8.2의 하드웨어 설정(로드셀 CH4, 오디오 등) 완벽 유지
  */
 
 #include <WiFi.h>
@@ -65,6 +66,9 @@ bool isRunning = false;
 int activePin = -1;        
 bool isSpraying = false;   
 
+// [New] 웹 대시보드 표시용 전역 상태 메시지
+String lastWebMessage = "시스템 준비 완료 (Ready)";
+
 int demoStep = 0;
 unsigned long prevDemoMillis = 0;
 unsigned long prevMotorMillis = 0; 
@@ -79,6 +83,9 @@ unsigned long lastWeatherCallMillis = 0;
 const unsigned long WEATHER_INTERVAL = 3600000; // 1시간
 String lastWeatherRegion = "서울";              
 // ============================================================
+
+// 함수 원형 선언
+void bootAnimation(); 
 
 // ============================================================
 // [3] 초기화 (Setup)
@@ -97,7 +104,7 @@ void setup() {
 
   Serial.print("\r\n\r\n");
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
-  Serial.printf(C_BOLD    "   🏆 SMART DIFFUSER V8.2 (CH4) 🏆      \r\n" C_RESET);
+  Serial.printf(C_BOLD    "   🏆 SMART DIFFUSER V8.3 (FINAL) 🏆    \r\n" C_RESET);
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
 
   // 오디오 초기화
@@ -124,7 +131,18 @@ void setup() {
   scale.set_scale(calibration_factor);
   scale.tare(); 
   
+  // [New] 부팅 완료 알림
+  bootAnimation();
+  
   printMainMenu(); 
+}
+
+// [New] 부팅 시 LED 깜빡임 효과
+void bootAnimation() {
+    for(int i=0; i<3; i++) {
+        digitalWrite(PIN_LED, HIGH); delay(100);
+        digitalWrite(PIN_LED, LOW);  delay(100);
+    }
 }
 
 // ============================================================
@@ -141,14 +159,13 @@ void autoWeatherScheduler() {
     float w = scale.get_units(10); 
     Serial.printf(C_YELLOW "\r\n[AUTO WEATHER] 1시간 주기 자동 호출 (%s)\r\n" C_RESET, lastWeatherRegion.c_str());
 
-    // [수정] 4번(w4)에만 실제 무게를 넣고 나머지는 null 처리
     String json = "{";
     json += "\"mode\": \"weather\", ";
     json += "\"region\": \"" + lastWeatherRegion + "\", ";
     json += "\"w1\": null, ";
     json += "\"w2\": null, ";
     json += "\"w3\": null, ";
-    json += "\"w4\": " + String(w); // 4번 로드셀 값만 전송
+    json += "\"w4\": " + String(w); 
     json += "}";
     
     sendServerRequest(json);
@@ -199,11 +216,11 @@ void handleWebClient() {
             
             // [1] 명령 처리 (AJAX)
             if (request.indexOf("GET /RUN_") >= 0 || request.indexOf("GET /STOP") >= 0) {
-                if (request.indexOf("GET /RUN_SUNNY") >= 0) { Serial.println("[Web] ☀️ 맑음 실행"); runManualMode("1"); }
-                if (request.indexOf("GET /RUN_CLOUDY") >= 0) { Serial.println("[Web] ☁️ 흐림 실행"); runManualMode("2"); }
-                if (request.indexOf("GET /RUN_RAIN") >= 0) { Serial.println("[Web] ☔ 비 실행"); runManualMode("3"); }
-                if (request.indexOf("GET /RUN_SNOW") >= 0) { Serial.println("[Web] ❄️ 눈 실행"); runManualMode("4"); }
-                if (request.indexOf("GET /STOP") >= 0) { stopSystem(); currentMode=0; printMainMenu(); }
+                if (request.indexOf("GET /RUN_SUNNY") >= 0) { Serial.println("[Web] ☀️ 맑음 실행"); runManualMode("1"); lastWebMessage = "수동 명령: 맑음 실행"; }
+                if (request.indexOf("GET /RUN_CLOUDY") >= 0) { Serial.println("[Web] ☁️ 흐림 실행"); runManualMode("2"); lastWebMessage = "수동 명령: 흐림 실행"; }
+                if (request.indexOf("GET /RUN_RAIN") >= 0) { Serial.println("[Web] ☔ 비 실행"); runManualMode("3"); lastWebMessage = "수동 명령: 비 실행"; }
+                if (request.indexOf("GET /RUN_SNOW") >= 0) { Serial.println("[Web] ❄️ 눈 실행"); runManualMode("4"); lastWebMessage = "수동 명령: 눈 실행"; }
+                if (request.indexOf("GET /STOP") >= 0) { stopSystem(); currentMode=0; printMainMenu(); lastWebMessage = "⛔ 시스템 강제 정지"; }
 
                 client.println("HTTP/1.1 204 No Content");
                 client.println("Connection: close");
@@ -221,12 +238,18 @@ void handleWebClient() {
                 client.println("body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; padding: 15px; -webkit-tap-highlight-color: transparent; }");
                 client.println(".btn { display: block; width: 100%; max-width: 400px; margin: 12px auto; padding: 20px; font-size: 19px; border: none; border-radius: 12px; color: white; font-weight: bold; text-decoration: none; cursor: pointer; touch-action: manipulation; }");
                 client.println(".btn:active { opacity: 0.6; transform: scale(0.98); }");
+                client.println(".status-box { background: #333; color: #00ff00; padding: 15px; margin: 10px auto; border-radius: 10px; border: 1px solid #555; max-width: 400px; font-weight: bold; }");
                 client.println(".blue { background: #2980b9; } .purple { background: #8e44ad; } .orange { background: #d35400; } .grey { background: #7f8c8d; } .gold { background: #f39c12; color: #333; } .teal { background: #16a085; } .red { background: #c0392b; }");    
                 client.println(".sunny { background: #f2c94c; color: #333; } .cloudy { background: #95a5a6; } .rain { background: #3498db; } .snow { background: #ecf0f1; color: #333; }");
                 client.println(".back { background: #333; border: 1px solid #555; margin-bottom: 25px; }");
                 client.println("</style>");
-                client.println("<script>function send(url) { fetch(url); }</script>");
+                client.println("<script>function send(url) { fetch(url); setTimeout(function(){ location.reload(); }, 500); }</script>"); // 버튼 누르면 새로고침해서 상태 업데이트
                 client.println("</head><body>");
+
+                // 상단 상태 메시지 박스 (모든 페이지 공통)
+                client.print("<div class='status-box'>📢 상태: ");
+                client.print(lastWebMessage);
+                client.println("</div>");
 
                 if (request.indexOf("GET /PAGE_MANUAL") >= 0) {
                     if(currentMode != 1) { currentMode = 1; Serial.println(C_BLUE "\r\n[Web Sync] 수동 제어 모드" C_RESET); }
@@ -247,10 +270,11 @@ void handleWebClient() {
                     float w = scale.get_units(5); 
                     client.print(w); client.println(" g</b></p>");
                     client.println("</div>");
+                    client.println("<br><button class='btn grey' onclick='location.reload()'>🔄 값 새로고침</button>");
                 }
                 else {
                     if (currentMode != 0) { currentMode = 0; Serial.println(C_CYAN "\r\n[Web Sync] 🏠 메인 복귀" C_RESET); printMainMenu(); }
-                    client.println("<h1>Smart Diffuser V8.2</h1>");
+                    client.println("<h1>Smart Diffuser V8.3</h1>");
                     client.print("<p style='color:#888; margin-bottom:30px;'>IP: "); client.print(WiFi.localIP()); client.println("</p>");
                     client.println("<a href='/PAGE_MANUAL'><button class='btn blue'>[1] 🎮 수동 제어 (Manual)</button></a>");
                     client.println("<button class='btn purple' onclick=\"alert('터미널 입력 필요');\">[2] 💜 감성 모드</button>");
@@ -317,6 +341,7 @@ void runAutoDemoLoop() {
     else if (demoStep == 4) { target = PIN_SNOW; name = "❄️ 눈"; playSound(4); }
 
     Serial.printf(C_MAGENTA "[Auto Demo] %s 모드 작동\r\n" C_RESET, name.c_str());
+    lastWebMessage = "데모 모드 동작 중: " + name; // 웹 상태 업데이트
     digitalWrite(target, LOW); 
   }
 }
@@ -436,7 +461,6 @@ void handleInput(String input) {
       float w = scale.get_units(10); 
       Serial.printf(C_YELLOW "[Weather] 날씨 조회 (%.1fg - CH4)\r\n" C_RESET, w);
       
-      // [수정] 4번(w4)에만 실제 값 넣고 나머지는 null
       String json = "{";
       json += "\"mode\": \"weather\", ";
       json += "\"region\": \"" + input + "\", ";
@@ -480,7 +504,11 @@ void runManualMode(String input) {
 }
 
 void sendServerRequest(String payload) {
-  if(WiFi.status() != WL_CONNECTED) { Serial.printf(C_RED "🚨 WiFi 연결 안됨!\r\n" C_RESET); return; }
+  if(WiFi.status() != WL_CONNECTED) { 
+      Serial.printf(C_RED "🚨 WiFi 연결 안됨!\r\n" C_RESET); 
+      lastWebMessage = "🚨 에러: WiFi 연결 끊김";
+      return; 
+  }
   
   HTTPClient http; 
   http.setTimeout(5000); 
@@ -496,7 +524,7 @@ void sendServerRequest(String payload) {
     
     int cmd = doc["spray"]; 
     int dur = doc["duration"]; 
-    String txt = doc["result_text"];
+    String txt = doc["result_text"]; // 서버에서 온 메시지
     
     // [1] 서버 메시지 원본 출력
     Serial.printf(C_GREEN "✅ 서버 응답: %s\r\n" C_RESET, txt.c_str());
@@ -520,26 +548,31 @@ void sendServerRequest(String payload) {
         digitalWrite(activePin, LOW); 
         playSound(cmd); 
         Serial.printf(C_GREEN "[Loop] 💦 분사 시작! (%d초)\r\n" C_RESET, dur); 
+
+        // [New] 웹 메시지 업데이트 (성공)
+        lastWebMessage = "✅ 성공: " + txt + " (" + String(dur) + "초)";
     }
-    // [3] 분사 명령이 없을 때 (여기가 수정됨!)
+    // [3] 분사 명령이 없을 때 (대기/쿨다운)
     else { 
-        // 만약 서버 메시지에 "WAIT"가 포함되어 있다면? -> 쿨다운으로 인식
         if (txt.indexOf("WAIT") >= 0 || txt.indexOf("wait") >= 0) {
              Serial.printf(C_YELLOW "⏳ [Cool-down] 쿨다운 대기 중입니다.\r\n" C_RESET);
+             lastWebMessage = "⏳ 쿨다운 대기 중 (변경 불가)";
         } else {
              Serial.printf(C_RED "⚠️ 명령 없음 (대기 상태)\r\n" C_RESET); 
+             lastWebMessage = "⚠️ 명령 없음 (" + txt + ")";
         }
         stopSystem(); 
     }
     
   } else { 
       Serial.printf(C_RED "🚨 통신 에러: %d\r\n" C_RESET, code); 
+      lastWebMessage = "🚨 통신 에러 (" + String(code) + ")";
   }
   
   http.end();
 }
 
 void printMainMenu() {
-  Serial.printf(C_CYAN "\r\n=== 🕹️ MAIN MENU (V8.2 CH4) 🕹️ ===\r\n" C_RESET);
+  Serial.printf(C_CYAN "\r\n=== 🕹️ MAIN MENU (V8.3 Final) 🕹️ ===\r\n" C_RESET);
   Serial.printf(" [1] 수동   [2] 감성   [3] 날씨\r\n [4] 🛠️ 설정   [5] ✨ 데모   [9] 📊 대시보드\r\n" C_YELLOW "👉 명령 입력 >>" C_RESET);
 }
