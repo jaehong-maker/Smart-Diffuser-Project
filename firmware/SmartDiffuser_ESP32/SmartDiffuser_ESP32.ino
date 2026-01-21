@@ -1,11 +1,10 @@
 /*
  * [프로젝트] 스마트 디퓨저 (Smart Diffuser)
- * [버  전] 9.3 Ultimate Final (Clean Prompt Fix)
+ * [버  전] 9.4 Mic Integration (I2S Added)
  * [작성자] 21학번 류재홍
  * [기  능] 
- * 1. WDT(자동복구) & 볼륨 조절/저장
- * 2. 입력창 UI 완전 보호 (로그 출력 시 입력 중인 글자 복구)
- * 3. 명령 실행 후에는 입력창 깔끔하게 비움 (Ghost Character Fix)
+ * 1. 기존 기능 유지 (WiFi, 제어, 로드셀, 스피커)
+ * 2. 마이크(INMP441) 초기화 및 오디오 입력 시스템 추가 (GPIO 18, 19, 21)
  */
 
 #include <WiFi.h>
@@ -15,6 +14,7 @@
 #include <Preferences.h>
 #include "DFRobotDFPlayerMini.h" 
 #include <esp_task_wdt.h> // 왓치독 타이머
+#include <driver/i2s.h>   // [NEW] 마이크 라이브러리 추가
 
 // ============================================================
 // [0] 설정 및 핀 정의
@@ -34,18 +34,27 @@ const char* ssid     = "Jaehong_WiFi";
 const char* password = "12345678";        
 String serverName = "https://tgrwszo3iwurntqeq76s5rro640asnwq.lambda-url.ap-northeast-2.on.aws/";
 
-// 하드웨어 핀 맵핑
+// --- [하드웨어 핀 맵핑] ---
+// 1. 모터/LED
 const int PIN_SUNNY  = 26; 
 const int PIN_CLOUDY = 27; 
 const int PIN_RAIN   = 14; 
 const int PIN_SNOW   = 13; 
 const int PIN_LED    = 2;  
 
+// 2. 로드셀 (무게 센서)
 const int LOADCELL_DOUT_PIN = 16; 
 const int LOADCELL_SCK_PIN  = 4;    
 
+// 3. DFPlayer (스피커)
 const int DFPLAYER_RX_PIN = 32; 
 const int DFPLAYER_TX_PIN = 33; 
+
+// 4. [NEW] INMP441 마이크 (I2S) - 핀 충돌 방지 적용
+#define I2S_WS  19  // (구 15 -> 변경)
+#define I2S_SD  21  // (구 32 -> 변경)
+#define I2S_SCK 18  // (구 14 -> 변경)
+#define I2S_PORT I2S_NUM_0
 
 // 전역 객체 및 변수
 HardwareSerial mySoftwareSerial(2); 
@@ -104,6 +113,8 @@ void printDashboard();
 void playSound(int trackNum);
 void autoWeatherScheduler();
 void changeVolume(int vol); 
+void initMicrophone(); // [NEW] 마이크 초기화 함수
+int32_t readMicrophone(); // [NEW] 마이크 값 읽기 함수
 
 // ============================================================
 // [1] 초기화 (Setup)
@@ -130,9 +141,10 @@ void setup() {
 
   Serial.print("\r\n\r\n");
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
-  Serial.printf(C_BOLD    " 🚀 SMART DIFFUSER V9.3 (ULTIMATE FINAL) \r\n" C_RESET);
+  Serial.printf(C_BOLD    " 🚀 SMART DIFFUSER V9.4 (Mic Integrated) \r\n" C_RESET);
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
 
+  // 1. 스피커 초기화
   mySoftwareSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
   Serial.print(C_YELLOW "[System] Audio Module Init..." C_RESET);
   if (!myDFPlayer.begin(mySoftwareSerial)) {
@@ -141,6 +153,12 @@ void setup() {
     Serial.println(C_GREEN " DONE!" C_RESET);
   }
 
+  // 2. 마이크 초기화 [NEW]
+  Serial.print(C_YELLOW "[System] Microphone Init..." C_RESET);
+  initMicrophone();
+  Serial.println(C_GREEN " DONE! (I2S Started)" C_RESET);
+
+  // 3. 기타 설정
   prefs.begin("diffuser", false); 
   float savedFactor = prefs.getFloat("cal_factor", 0.0);
   if (savedFactor != 0.0) calibration_factor = savedFactor;
@@ -163,6 +181,54 @@ void bootAnimation() {
         digitalWrite(PIN_LED, HIGH); delay(100);
         digitalWrite(PIN_LED, LOW);  delay(100);
     }
+}
+
+// [NEW] 마이크 초기화 함수
+void initMicrophone() {
+  const i2s_config_t i2s_config = {
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+    .sample_rate = 44100,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
+    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+    .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB),
+    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+    .dma_buf_count = 4,
+    .dma_buf_len = 1024,
+    .use_apll = false,
+    .tx_desc_auto_clear = false,
+    .fixed_mclk = 0
+  };
+  const i2s_pin_config_t pin_config = {
+    .bck_io_num = I2S_SCK,
+    .ws_io_num = I2S_WS,
+    .data_out_num = I2S_PIN_NO_CHANGE,
+    .data_in_num = I2S_SD
+  };
+  i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
+  i2s_set_pin(I2S_PORT, &pin_config);
+}
+
+// [수정된 마이크 읽기 함수] 노이즈 필터 추가
+int32_t readMicrophone() {
+  int32_t sample = 0;
+  size_t bytes_read = 0;
+  
+  // 마이크 값 읽기 (비동기)
+  i2s_read(I2S_PORT, &sample, sizeof(sample), &bytes_read, 0); 
+  
+  if (bytes_read > 0) {
+      // 1. 절댓값으로 변환하고 크기 줄이기
+      int32_t rawValue = abs(sample) / 10000;
+
+      // 2. [노이즈 필터] 300보다 작으면 그냥 조용한 걸로 침 (0 반환)
+      if (rawValue < 300) { 
+        return 0; 
+      }
+      
+      // 3. 300보다 크면 진짜 소리로 인정!
+      return rawValue; 
+  }
+  return 0;
 }
 
 // ============================================================
@@ -394,6 +460,7 @@ void handleWebClient() {
                   client.println("<h1>📊 대시보드</h1><a href='/'><button class='btn back'>🏠 메인 메뉴</button></a>");
                   client.printf("<div style='text-align:left;background:#333;padding:20px;border-radius:10px;'><p>📡 WiFi: <b>%d dBm</b></p>", WiFi.RSSI());
                   client.printf("<p>⚖️ 무게(CH4): <b>%.2f g</b></p>", scale.get_units(5));
+                  client.printf("<p>🎤 소리 센서: <b>%d</b> (Noise)</p>", readMicrophone()); // [NEW] 대시보드에 소리값 추가
                   client.printf("<p>🔊 볼륨: <b>%d</b> (Saved)</p></div>", currentVolume);
                   client.println("<br><button class='btn grey' onclick='location.reload()'>🔄 새로고침</button>");
               }
@@ -403,7 +470,7 @@ void handleWebClient() {
                       Serial.print("\r\033[K"); Serial.println(C_CYAN "\r\n[Web] 메인 복귀" C_RESET); printMainMenu(); 
                       Serial.print(inputBuffer); // 메인메뉴 복구
                   }
-                  client.printf("<h1>Smart Diffuser V9.3</h1><p style='color:#888;'>IP: %s</p>", WiFi.localIP().toString().c_str());
+                  client.printf("<h1>Smart Diffuser V9.4</h1><p style='color:#888;'>IP: %s</p>", WiFi.localIP().toString().c_str());
                   client.println("<a href='/PAGE_MANUAL'><button class='btn blue'>[1] 🎮 수동 제어</button></a><button class='btn purple' onclick=\"alert('터미널 이용');\">[2] 💜 감성 모드</button>");
                   client.println("<button class='btn orange' onclick=\"alert('터미널 이용');\">[3] 🌦️ 날씨 모드</button><a href='/PAGE_DASHBOARD'><button class='btn teal'>[9] 📊 대시보드</button></a>");
               }
@@ -571,6 +638,7 @@ void printDashboard() {
     Serial.printf(" ├─ Web Server  : http://%s\r\n", WiFi.localIP().toString().c_str());
     Serial.printf(" ├─ Cal.Factor  : %.1f\r\n", calibration_factor);
     Serial.printf(" ├─ Weight(CH4) : %.2f g\r\n", scale.get_units(10));
+    Serial.printf(" ├─ Sound Level : %d (Noise)\r\n", readMicrophone()); // [NEW] 시리얼 대시보드에도 추가
     Serial.printf(" └─ Volume      : %d\r\n", currentVolume);
     Serial.printf("----------------------------\r\n");
     printMainMenu();
@@ -603,6 +671,6 @@ void runManualMode(String input) {
 }
 
 void printMainMenu() {
-  Serial.printf(C_CYAN "\r\n=== 🕹️ MAIN MENU (V9.3 Ultimate Final) 🕹️ ===\r\n" C_RESET);
+  Serial.printf(C_CYAN "\r\n=== 🕹️ MAIN MENU (V9.4 Ultimate Final) 🕹️ ===\r\n" C_RESET);
   Serial.printf(" [1] 수동   [2] 감성   [3] 날씨\r\n [4] 🛠️ 설정   [5] ✨ 데모   [9] 📊 대시보드\r\n" C_YELLOW "👉 명령 입력 >>" C_RESET);
 }
