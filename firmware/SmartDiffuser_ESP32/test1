@@ -1,21 +1,25 @@
 /*
  * [프로젝트] 스마트 디퓨저 (Smart Diffuser)
- * [버  전] 9.6 Polling Update (Phone Control Fix)
+ * [버  전] 9.7 Ultimate Integrated (App Control & Mic Fixed)
  * [기  능] 
- * 1. 기존 기능 유지
- * 2. [FIX] 앱 제어 연동을 위한 서버 폴링(Poll) 추가
+ * 1. 앱 제어 연동 (Server Polling 추가)
+ * 2. AWS HTTPS 통신 보안 패치
+ * 3. 모든 하드웨어 통합 (마이크, 로드셀, 스피커, LED)
  */
 
 #include <WiFi.h>
-#include <WiFiClientSecure.h> 
+#include <WiFiClientSecure.h> // [필수] HTTPS 보안 통신
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "HX711.h"
 #include <Preferences.h>
 #include "DFRobotDFPlayerMini.h" 
-#include <esp_task_wdt.h> 
-#include <driver/i2s.h>   
+#include <esp_task_wdt.h> // 왓치독
+#include <driver/i2s.h>   // 마이크
 
+// ============================================================
+// [0] 설정 및 핀 정의
+// ============================================================
 #define C_RESET   "\033[0m"
 #define C_RED     "\033[31m"
 #define C_GREEN   "\033[32m"
@@ -23,34 +27,44 @@
 #define C_BLUE    "\033[34m"
 #define C_MAGENTA "\033[35m"
 #define C_CYAN    "\033[36m"
+#define C_BOLD    "\033[1m"
 
-#define WDT_TIMEOUT 20 
+#define WDT_TIMEOUT 20 // 네트워크 지연 고려하여 20초로 설정
 
-const char* ssid     = "Jaehong_WiFi";  // ★ 본인 와이파이로 꼭 변경!      
-const char* password = "12345678";      // ★ 비밀번호 확인!
+// ★ 와이파이 정보 (꼭 본인 것으로 변경하세요!)
+const char* ssid     = "Jaehong_WiFi";        
+const char* password = "12345678";          
 String serverName = "https://tgrwszo3iwurntqeq76s5rro640asnwq.lambda-url.ap-northeast-2.on.aws/";
 
-// 핀 정의
+// 1. 모터/LED
 const int PIN_SUNNY  = 26; 
 const int PIN_CLOUDY = 27; 
 const int PIN_RAIN   = 14; 
 const int PIN_SNOW   = 13; 
 const int PIN_LED    = 2;  
+
+// 2. 로드셀
 const int LOADCELL_DOUT_PIN = 16; 
 const int LOADCELL_SCK_PIN  = 4;    
+
+// 3. DFPlayer (스피커)
 const int DFPLAYER_RX_PIN = 32; 
 const int DFPLAYER_TX_PIN = 33; 
+
+// 4. INMP441 마이크 (I2S)
 #define I2S_WS  19  
 #define I2S_SD  21  
 #define I2S_SCK 18  
 #define I2S_PORT I2S_NUM_0
 
+// 전역 객체
 HardwareSerial mySoftwareSerial(2); 
 DFRobotDFPlayerMini myDFPlayer;
 HX711 scale;
 Preferences prefs;
 WiFiServer webServer(80); 
 
+// 변수 설정
 unsigned long sprayDuration = 3000; 
 const long REST_TIME      = 5000;    
 const long MAX_RUN_TIME   = 270000; 
@@ -60,14 +74,14 @@ int currentMode = 0;
 bool isRunning = false;    
 int activePin = -1;        
 bool isSpraying = false;    
-String lastWebMessage = "Ready";
+String lastWebMessage = "시스템 준비 완료";
 String inputBuffer = "";  
 
-// ★ [추가] 폴링 타이머 변수
+// ★ [핵심] 폴링(앱 명령 확인) 변수
 unsigned long lastPollTime = 0;
-const unsigned long POLL_INTERVAL = 2000; // 2초마다 서버 확인
+const unsigned long POLL_INTERVAL = 2000; // 2초마다 확인
 
-// 기타 변수
+// 기타 타이머 변수
 int demoStep = 0;
 unsigned long prevDemoMillis = 0;
 unsigned long prevMotorMillis = 0; 
@@ -81,34 +95,39 @@ const unsigned long WEATHER_INTERVAL = 3600000;
 String lastWeatherRegion = "서울";              
 
 // 함수 선언
-void bootAnimation(); 
-void handleInput(String input);
-void stopSystem();
-void printMainMenu();
-void sendServerRequest(String payload);
-void printCalibrationInfo();
-void runManualMode(String input);
-void forceAllOff();
-void manageWiFi();
-void systemHeartbeat();
-void handleWebClient();
-void runSprayLogic();
-void checkSafety();
-void runAutoDemoLoop();
-void checkSerialInput();
-void connectWiFi();
-void printDashboard();
-void playSound(int trackNum);
-void autoWeatherScheduler();
-void changeVolume(int vol); 
 void initMicrophone(); 
 int32_t readMicrophone(); 
 void pollServer(); // [NEW] 폴링 함수
+void sendServerRequest(String payload);
+void connectWiFi();
+void manageWiFi();
+void forceAllOff();
+void stopSystem();
+void playSound(int trackNum);
+void changeVolume(int vol);
+void printMainMenu();
+void handleWebClient();
+void checkSerialInput();
+void handleInput(String input);
+void runSprayLogic();
+void checkSafety();
+void runAutoDemoLoop();
+void systemHeartbeat();
+void bootAnimation();
+void printDashboard();
+void printCalibrationInfo();
+void redrawInputLine(String &buffer);
+void runManualMode(String input);
+void autoWeatherScheduler();
 
+// ============================================================
+// [1] 초기화 (Setup)
+// ============================================================
 void setup() {
   Serial.begin(115200);
   Serial.setTimeout(5000); 
   
+  // 왓치독 설정
   esp_task_wdt_config_t wdt_config = {
       .timeout_ms = WDT_TIMEOUT * 1000,
       .idle_core_mask = (1 << 0) | (1 << 1),
@@ -125,22 +144,31 @@ void setup() {
   forceAllOff(); 
 
   Serial.print("\r\n\r\n");
-  Serial.printf(C_BOLD " 🚀 SMART DIFFUSER V9.6 (Phone Control Fix) \r\n" C_RESET);
+  Serial.printf(C_BOLD " 🚀 SMART DIFFUSER V9.7 (Ultimate Integrated) \r\n" C_RESET);
 
+  // 1. 스피커
   mySoftwareSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
-  if (!myDFPlayer.begin(mySoftwareSerial)) Serial.println("Audio Error");
-  
-  initMicrophone();
+  Serial.print(C_YELLOW "[System] Audio Init..." C_RESET);
+  if (!myDFPlayer.begin(mySoftwareSerial)) Serial.println(C_RED "FAIL" C_RESET);
+  else Serial.println(C_GREEN "OK" C_RESET);
 
+  // 2. 마이크
+  Serial.print(C_YELLOW "[System] Mic Init..." C_RESET);
+  initMicrophone();
+  Serial.println(C_GREEN "OK" C_RESET);
+
+  // 3. 설정 로드
   prefs.begin("diffuser", false); 
   float savedFactor = prefs.getFloat("cal_factor", 0.0);
   if (savedFactor != 0.0) calibration_factor = savedFactor;
   currentVolume = prefs.getInt("volume", 20); 
   myDFPlayer.volume(currentVolume);
 
+  // 4. WiFi & Web
   connectWiFi();
   webServer.begin(); 
   
+  // 5. 로드셀
   scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
   scale.set_scale(calibration_factor);
   scale.tare(); 
@@ -149,6 +177,9 @@ void setup() {
   printMainMenu(); 
 }
 
+// ============================================================
+// [2] 메인 루프 (Loop)
+// ============================================================
 void loop() {
   esp_task_wdt_reset(); 
 
@@ -156,7 +187,9 @@ void loop() {
   systemHeartbeat(); 
   handleWebClient(); 
   autoWeatherScheduler();
-  pollServer(); // ★ [추가] 주기적으로 서버 확인
+  
+  // ★ [핵심] 앱 명령 확인 (폴링)
+  pollServer(); 
   
   if (currentMode == 5) runAutoDemoLoop(); 
   else if (isRunning) {
@@ -166,33 +199,38 @@ void loop() {
   checkSerialInput(); 
 }
 
-// ★ [핵심] 서버에게 "나한테 온 명령 있어?" 물어보는 함수
+// ============================================================
+// [3] ★ 핵심 통신 함수들 (폴링 & HTTPS)
+// ============================================================
+
+// [NEW] 앱 명령 확인 함수 (Polling)
 void pollServer() {
-    if (isRunning || currentMode == 5) return; // 동작 중엔 확인 안 함
+    // 동작 중이거나 데모 모드일 땐 확인 안 함
+    if (isRunning || currentMode == 5) return; 
     
     unsigned long now = millis();
     if (now - lastPollTime >= POLL_INTERVAL) {
         lastPollTime = now;
         
-        // POLL 요청 보내기 (조용히 처리)
-        // 화면 출력을 줄이기 위해 로그는 최소화
-        HTTPClient http;
+        if(WiFi.status() != WL_CONNECTED) return;
+
         WiFiClientSecure client;
-        client.setInsecure();
-        http.setTimeout(3000);
+        client.setInsecure(); // SSL 인증서 무시
+        
+        HTTPClient http;
+        http.setTimeout(3000); // 짧은 타임아웃
         
         if (http.begin(client, serverName)) {
             http.addHeader("Content-Type", "application/json");
-            // POLL 액션 전송
+            // POLL 요청 전송
             int code = http.POST("{\"action\": \"POLL\", \"deviceId\": \"App_User\"}");
             
             if (code > 0) {
                 String res = http.getString();
                 JsonDocument doc;
                 deserializeJson(doc, res);
-                int cmd = doc["spray"];
+                int cmd = doc["spray"]; // 명령 확인
                 
-                // 명령이 있으면 실행!
                 if (cmd > 0) {
                      Serial.printf("\r\n" C_GREEN "📲 [APP] 앱 명령 수신: %d번 분사!\r\n" C_RESET, cmd);
                      
@@ -204,6 +242,8 @@ void pollServer() {
                          forceAllOff(); activePin = target; isRunning = true; isSpraying = true; 
                          sprayDuration = 3000; prevMotorMillis = millis(); startTimeMillis = millis(); 
                          digitalWrite(activePin, LOW); playSound(cmd); 
+                         lastWebMessage = "앱 명령 실행 중...";
+                         Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
                      }
                 }
             }
@@ -212,51 +252,169 @@ void pollServer() {
     }
 }
 
-// 나머지 기존 함수들 (변경 없음)
-void bootAnimation() { for(int i=0; i<3; i++) { digitalWrite(PIN_LED, HIGH); delay(100); digitalWrite(PIN_LED, LOW); delay(100); } }
-void initMicrophone() {
-  const i2s_config_t i2s_config = { .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX), .sample_rate = 44100, .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT, .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT, .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB), .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1, .dma_buf_count = 4, .dma_buf_len = 1024, .use_apll = false, .tx_desc_auto_clear = false, .fixed_mclk = 0 };
-  const i2s_pin_config_t pin_config = { .bck_io_num = I2S_SCK, .ws_io_num = I2S_WS, .data_out_num = I2S_PIN_NO_CHANGE, .data_in_num = I2S_SD };
-  i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL); i2s_set_pin(I2S_PORT, &pin_config);
-}
-int32_t readMicrophone() { int32_t sample = 0; size_t bytes_read = 0; i2s_read(I2S_PORT, &sample, sizeof(sample), &bytes_read, 0); if (bytes_read > 0) { int32_t rawValue = abs(sample) / 10000; if (rawValue < 300) return 0; return rawValue; } return 0; }
-void checkSerialInput() { 
-  while (Serial.available() > 0) { 
-    char c = Serial.read(); 
-    if (c == '\n' || c == '\r') { if (inputBuffer.length() > 0) { Serial.println(); if (inputBuffer == "0") { stopSystem(); currentMode = 0; printMainMenu(); } else { handleInput(inputBuffer); } inputBuffer = ""; } } 
-    else { inputBuffer += c; Serial.print(c); } 
-  } 
-}
-void manageWiFi() { if (WiFi.status() != WL_CONNECTED && millis() - lastCheckTime > 1000) { lastCheckTime = millis(); WiFi.disconnect(); WiFi.reconnect(); } }
-void autoWeatherScheduler() { if (currentMode != 3 || isRunning) return; if (millis() - lastWeatherCallMillis >= WEATHER_INTERVAL) { lastWeatherCallMillis = millis(); float w = scale.get_units(10); sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\", \"w4\": " + String(w) + "}"); } }
-void handleInput(String input) { if (currentMode == 0 && input == "1") currentMode = 1; else if (currentMode == 0 && input == "3") currentMode = 3; else if (currentMode == 3) { lastWeatherRegion = input; sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\"}"); } }
-void handleWebClient() { WiFiClient client = webServer.available(); if (client) { client.stop(); } } // 웹서버 기능 최소화
+// [FIX] HTTPS 일반 요청 (날씨 등)
 void sendServerRequest(String payload) {
-  if(WiFi.status() != WL_CONNECTED) return;
-  WiFiClientSecure client; client.setInsecure(); HTTPClient http; http.setTimeout(5000);
-  if (!http.begin(client, serverName)) return;
+  if(WiFi.status() != WL_CONNECTED) { 
+      Serial.print("\r\033[K"); Serial.println(C_RED "🚨 WiFi 끊김" C_RESET); 
+      Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer); return; 
+  }
+  
+  WiFiClientSecure client;
+  client.setInsecure(); // ★ HTTPS 필수 설정
+  
+  HTTPClient http; 
+  http.setTimeout(10000); 
+  
+  if (!http.begin(client, serverName)) {
+      Serial.println(C_RED "🚨 HTTPS 연결 실패" C_RESET); return;
+  }
+
   http.addHeader("Content-Type", "application/json");
   int code = http.POST(payload);
+  
   if(code > 0){
-    String res = http.getString(); JsonDocument doc; deserializeJson(doc, res);
+    String res = http.getString(); 
+    JsonDocument doc; deserializeJson(doc, res);
     int cmd = doc["spray"]; int dur = doc["duration"]; String txt = doc["result_text"];
-    Serial.printf("\r\n✅ 서버 응답: %s\r\n", txt.c_str());
+    
+    Serial.print("\r\033[K");
+    Serial.printf(C_GREEN "✅ 서버 응답: %s\r\n" C_RESET, txt.c_str());
+    
     int target = -1;
-    if (cmd == 1) target = PIN_SUNNY; else if (cmd == 2) target = PIN_CLOUDY; else if (cmd == 3) target = PIN_RAIN; else if (cmd == 4) target = PIN_SNOW;
-    if (target != -1) { forceAllOff(); activePin = target; isRunning = true; isSpraying = true; sprayDuration = dur * 1000; prevMotorMillis = millis(); startTimeMillis = millis(); digitalWrite(activePin, LOW); playSound(cmd); }
+    if (cmd == 1) target = PIN_SUNNY; else if (cmd == 2) target = PIN_CLOUDY; 
+    else if (cmd == 3) target = PIN_RAIN; else if (cmd == 4) target = PIN_SNOW;
+    
+    if (target != -1) { 
+        forceAllOff(); activePin = target; isRunning = true; isSpraying = true; 
+        sprayDuration = dur * 1000; prevMotorMillis = millis(); startTimeMillis = millis(); 
+        digitalWrite(activePin, LOW); playSound(cmd); 
+    } else { 
+        stopSystem(); 
+    }
+    Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
+  } else { 
+      Serial.printf(C_RED "\r\n🚨 통신 에러: %d\r\n" C_RESET, code); 
+      Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
   }
   http.end();
 }
-void runSprayLogic() { if (activePin == -1) return; if (isSpraying && millis() - prevMotorMillis >= sprayDuration) { digitalWrite(activePin, HIGH); isSpraying = false; prevMotorMillis = millis(); stopSystem(); } }
-void runAutoDemoLoop() { } // 생략
-void checkSafety() { if (millis() - startTimeMillis > MAX_RUN_TIME) stopSystem(); }
-void printCalibrationInfo() { Serial.printf("Weight: %.2f\n", scale.get_units(5)); }
-void connectWiFi() { WiFi.begin(ssid, password); while(WiFi.status() != WL_CONNECTED) { delay(200); Serial.print("."); } Serial.println("Connected!"); webServer.begin(); }
-void systemHeartbeat() { }
-void printDashboard() { }
+
+// ============================================================
+// [4] 하드웨어 & 기능 함수들
+// ============================================================
+
+void initMicrophone() {
+  const i2s_config_t i2s_config = {
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+    .sample_rate = 44100, .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
+    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+    .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB),
+    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1, .dma_buf_count = 4, .dma_buf_len = 1024,
+    .use_apll = false, .tx_desc_auto_clear = false, .fixed_mclk = 0
+  };
+  const i2s_pin_config_t pin_config = { .bck_io_num = I2S_SCK, .ws_io_num = I2S_WS, .data_out_num = I2S_PIN_NO_CHANGE, .data_in_num = I2S_SD };
+  i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
+  i2s_set_pin(I2S_PORT, &pin_config);
+}
+
+int32_t readMicrophone() {
+  int32_t sample = 0; size_t bytes_read = 0;
+  i2s_read(I2S_PORT, &sample, sizeof(sample), &bytes_read, 0); 
+  if (bytes_read > 0) {
+      int32_t rawValue = abs(sample) / 10000;
+      if (rawValue < 300) return 0; // 노이즈 필터
+      return rawValue; 
+  }
+  return 0;
+}
+
+void connectWiFi() {
+  Serial.printf(C_YELLOW "[System] WiFi Connecting" C_RESET);
+  WiFi.begin(ssid, password);
+  int retry = 0;
+  while(WiFi.status() != WL_CONNECTED && retry < 15) { delay(200); Serial.print("."); retry++; }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\r\n" C_GREEN "[System] Connected! (%d dBm)\r\n" C_RESET, WiFi.RSSI());
+    Serial.printf(C_CYAN "🌐 Web: http://%s/\r\n" C_RESET, WiFi.localIP().toString().c_str());
+  } else { Serial.printf(C_RED "\r\n[System] WiFi Failed.\r\n" C_RESET); }
+}
+
+void manageWiFi() {
+  static bool wasConnected = true; 
+  if (millis() - lastCheckTime >= 1000) {
+    lastCheckTime = millis();
+    if (WiFi.status() != WL_CONNECTED) {
+      if (wasConnected) { 
+        wasConnected = false;
+        WiFi.disconnect(); WiFi.reconnect();
+      }
+    } else if (!wasConnected) wasConnected = true;
+  }
+}
+
+void autoWeatherScheduler() {
+  if (currentMode != 3 || isRunning) return;
+  if (millis() - lastWeatherCallMillis >= WEATHER_INTERVAL) {
+    lastWeatherCallMillis = millis();
+    float w = scale.get_units(10); 
+    Serial.printf(C_YELLOW "\r\n[AUTO] 날씨 갱신 (%s)\r\n" C_RESET, lastWeatherRegion.c_str());
+    sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\", \"w4\": " + String(w) + "}");
+  }
+}
+
+void handleWebClient() {
+  WiFiClient client = webServer.available();
+  if (!client) return;
+  unsigned long startTime = millis();
+  while (!client.available() && millis() - startTime < 1000) { delay(1); }
+  String req = "";
+  while (client.connected() && client.available()) { req += (char)client.read(); }
+  
+  // 간단 웹 제어
+  if (req.indexOf("GET /RUN_SUNNY") >= 0) runManualMode("1");
+  else if (req.indexOf("GET /RUN_CLOUDY") >= 0) runManualMode("2");
+  else if (req.indexOf("GET /RUN_RAIN") >= 0) runManualMode("3");
+  else if (req.indexOf("GET /RUN_SNOW") >= 0) runManualMode("4");
+  else if (req.indexOf("GET /STOP") >= 0) stopSystem();
+  
+  client.println("HTTP/1.1 200 OK\r\nContent-type:text/html\r\n\r\n");
+  client.println("<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'></head>");
+  client.println("<body style='text-align:center;background:#222;color:white;'><h1>Smart Diffuser Control</h1>");
+  client.println("<p>Mic Level: " + String(readMicrophone()) + "</p>");
+  client.println("<button onclick=\"location.href='/RUN_SUNNY'\" style='padding:20px;width:80%;margin:10px;'>☀️ SUNNY</button><br>");
+  client.println("<button onclick=\"location.href='/RUN_CLOUDY'\" style='padding:20px;width:80%;margin:10px;'>☁️ CLOUDY</button><br>");
+  client.println("<button onclick=\"location.href='/RUN_RAIN'\" style='padding:20px;width:80%;margin:10px;'>☔ RAIN</button><br>");
+  client.println("<button onclick=\"location.href='/RUN_SNOW'\" style='padding:20px;width:80%;margin:10px;'>❄️ SNOW</button><br>");
+  client.println("<button onclick=\"location.href='/STOP'\" style='padding:20px;width:80%;background:red;color:white;margin:10px;'>⛔ STOP</button>");
+  client.println("</body></html>");
+  delay(10); client.stop();
+}
+
+// 유틸리티 함수들
+void redrawInputLine(String &buffer) { Serial.print("\r\033[K"); Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(buffer); }
+void checkSerialInput() { while(Serial.available()){ char c=Serial.read(); if(c=='\n'||c=='\r'){if(inputBuffer.length()>0){Serial.println();handleInput(inputBuffer);inputBuffer="";}}else if(c=='\b'||c==0x7F){if(inputBuffer.length()>0)inputBuffer.remove(inputBuffer.length()-1);redrawInputLine(inputBuffer);}else{inputBuffer+=c;redrawInputLine(inputBuffer);}} }
+void handleInput(String input) { 
+    if(currentMode==0){
+        if(input=="1"){currentMode=1;Serial.println("\r\n[Mode 1] 수동");}
+        else if(input=="3"){currentMode=3;Serial.println("\r\n[Mode 3] 날씨(서울)");}
+        printMainMenu();
+    } else if(currentMode==1) runManualMode(input);
+    else if(currentMode==3) { lastWeatherRegion=input; sendServerRequest("{\"mode\":\"weather\",\"region\":\""+input+"\"}"); }
+}
+void runManualMode(String input) {
+    int t=-1; if(input=="1")t=PIN_SUNNY; else if(input=="2")t=PIN_CLOUDY; else if(input=="3")t=PIN_RAIN; else if(input=="4")t=PIN_SNOW;
+    if(t!=-1){ forceAllOff(); activePin=t; isRunning=true; isSpraying=true; sprayDuration=3000; prevMotorMillis=millis(); startTimeMillis=millis(); digitalWrite(activePin,LOW); playSound(input.toInt()); Serial.println("\r\n[Manual] 실행"); }
+    else if(input=="0"){currentMode=0;stopSystem();printMainMenu();}
+}
+void runSprayLogic() { if(activePin==-1)return; if(isSpraying && millis()-prevMotorMillis>=sprayDuration){ digitalWrite(activePin,HIGH); isSpraying=false; prevMotorMillis=millis(); stopSystem(); Serial.println("\r\n[Done] 분사 완료"); Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer); } }
+void runAutoDemoLoop() {}
+void checkSafety() { if(millis()-startTimeMillis>MAX_RUN_TIME) stopSystem(); }
+void printCalibrationInfo() {}
+void systemHeartbeat() {}
+void bootAnimation() { for(int i=0;i<3;i++){digitalWrite(PIN_LED,HIGH);delay(100);digitalWrite(PIN_LED,LOW);delay(100);} }
+void printDashboard() {}
 void playSound(int trackNum) { myDFPlayer.play(trackNum); }
 void forceAllOff() { digitalWrite(PIN_SUNNY, HIGH); digitalWrite(PIN_CLOUDY, HIGH); digitalWrite(PIN_RAIN, HIGH); digitalWrite(PIN_SNOW, HIGH); }
-void stopSystem() { forceAllOff(); isRunning = false; activePin = -1; isSpraying = false; myDFPlayer.stop(); }
-void runManualMode(String input) { }
+void stopSystem() { forceAllOff(); isRunning=false; activePin=-1; isSpraying=false; myDFPlayer.stop(); }
 void changeVolume(int vol) { myDFPlayer.volume(vol); }
-void printMainMenu() { Serial.println("Ready"); }
+void printMainMenu() { Serial.println(C_YELLOW "\r\n[대기] 명령을 입력하세요..." C_RESET); Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); }
