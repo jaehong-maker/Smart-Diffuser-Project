@@ -403,76 +403,86 @@ void changeVolume(int vol) {
 void handleWebClient() {
   WiFiClient client = webServer.available();
   if (!client) return;
+  
+  // 데이터가 들어올 때까지 잠시 대기 (안정성 확보)
   unsigned long startTime = millis();
   while (!client.available() && millis() - startTime < 1000) { delay(1); }
 
-  String currentLine = "";
   String request = "";
-  
-  while (client.connected()) {
-    if (client.available()) {
+  while (client.connected() && client.available()) {
       char c = client.read();
       request += c;
-      if (c == '\n') {
-        if (currentLine.length() == 0) {
-          if (request.indexOf("GET /RUN_") >= 0 || request.indexOf("GET /STOP") >= 0 || request.indexOf("GET /VOL_") >= 0) {
-              if (request.indexOf("GET /RUN_SUNNY") >= 0) { runManualMode("1"); lastWebMessage = "수동: 맑음 실행"; }
-              if (request.indexOf("GET /RUN_CLOUDY") >= 0) { runManualMode("2"); lastWebMessage = "수동: 흐림 실행"; }
-              if (request.indexOf("GET /RUN_RAIN") >= 0) { runManualMode("3"); lastWebMessage = "수동: 비 실행"; }
-              if (request.indexOf("GET /RUN_SNOW") >= 0) { runManualMode("4"); lastWebMessage = "수동: 눈 실행"; }
-              if (request.indexOf("GET /STOP") >= 0) { stopSystem(); currentMode=0; printMainMenu(); lastWebMessage = "⛔ 시스템 정지"; }
-              if (request.indexOf("GET /VOL_UP") >= 0) { changeVolume(currentVolume + 2); lastWebMessage = "🔊 볼륨 업 (" + String(currentVolume) + ")"; }
-              if (request.indexOf("GET /VOL_DOWN") >= 0) { changeVolume(currentVolume - 2); lastWebMessage = "🔉 볼륨 다운 (" + String(currentVolume) + ")"; }
-              client.println("HTTP/1.1 204 No Content\r\nConnection: close\r\n");
-          }
-          else {
-              client.println("HTTP/1.1 200 OK\r\nContent-type:text/html\r\nConnection: close\r\n");
-              client.println("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no'>");
-              client.println("<style>body{font-family:sans-serif;text-align:center;background:#1a1a1a;color:white;padding:15px;}.btn{display:block;width:100%;max-width:400px;margin:12px auto;padding:18px;font-size:18px;border-radius:12px;border:none;color:white;font-weight:bold;cursor:pointer;}.vol{display:inline-block;width:48%;margin:5px 1%;padding:15px;}.status-box{background:#333;color:#00ff00;padding:15px;margin:10px auto;border-radius:10px;border:1px solid #555;max-width:400px;}</style>");
-              client.println("<style>.blue{background:#2980b9}.purple{background:#8e44ad}.orange{background:#d35400}.grey{background:#7f8c8d}.teal{background:#16a085}.red{background:#c0392b}.sunny{background:#f2c94c;color:#333}.cloudy{background:#95a5a6}.rain{background:#3498db}.snow{background:#ecf0f1;color:#333}.back{background:#333;border:1px solid #555;margin-bottom:25px}</style>");
-              client.println("<script>function send(url){fetch(url);setTimeout(function(){location.reload();},500);}</script></head><body>");
-
-              client.print("<div class='status-box'>📢 상태: "); client.print(lastWebMessage); client.println("</div>");
-
-              if (request.indexOf("GET /PAGE_MANUAL") >= 0) {
-                  if(currentMode != 1) { 
-                      currentMode = 1; 
-                      Serial.print("\r\033[K"); Serial.println(C_BLUE "\r\n[Web] 수동 모드 진입" C_RESET); 
-                      Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
-                  }
-                  client.println("<h1>🎮 수동 제어</h1><a href='/'><button class='btn back'>🏠 메인 메뉴</button></a>");
-                  client.println("<button class='btn sunny' onclick=\"send('/RUN_SUNNY')\">☀️ 맑음</button><button class='btn cloudy' onclick=\"send('/RUN_CLOUDY')\">☁️ 흐림</button>");
-                  client.println("<button class='btn rain' onclick=\"send('/RUN_RAIN')\">☔ 비</button><button class='btn snow' onclick=\"send('/RUN_SNOW')\">❄️ 눈</button>");
-                  client.printf("<div style='margin-top:20px;'><p>🔊 현재 볼륨: <b>%d</b></p>", currentVolume);
-                  client.println("<button class='btn vol grey' onclick=\"send('/VOL_DOWN')\">➖ Down</button><button class='btn vol blue' onclick=\"send('/VOL_UP')\">➕ Up</button></div>");
-                  client.println("<br><button class='btn red' onclick=\"send('/STOP')\">⛔ 정지</button>");
-              }
-              else if (request.indexOf("GET /PAGE_DASHBOARD") >= 0) {
-                  client.println("<h1>📊 대시보드</h1><a href='/'><button class='btn back'>🏠 메인 메뉴</button></a>");
-                  client.printf("<div style='text-align:left;background:#333;padding:20px;border-radius:10px;'><p>📡 WiFi: <b>%d dBm</b></p>", WiFi.RSSI());
-                  client.printf("<p>⚖️ 무게(CH4): <b>%.2f g</b></p>", scale.get_units(5));
-                  client.printf("<p>🎤 소리 센서: <b>%d</b> (Noise)</p>", readMicrophone());
-                  client.printf("<p>🔊 볼륨: <b>%d</b> (Saved)</p></div>", currentVolume);
-                  client.println("<br><button class='btn grey' onclick='location.reload()'>🔄 새로고침</button>");
-              }
-              else {
-                  if (currentMode != 0) { 
-                      currentMode = 0; 
-                      Serial.print("\r\033[K"); Serial.println(C_CYAN "\r\n[Web] 메인 복귀" C_RESET); printMainMenu(); 
-                      Serial.print(inputBuffer); 
-                  }
-                  client.printf("<h1>Smart Diffuser V9.4</h1><p style='color:#888;'>IP: %s</p>", WiFi.localIP().toString().c_str());
-                  client.println("<a href='/PAGE_MANUAL'><button class='btn blue'>[1] 🎮 수동 제어</button></a><button class='btn purple' onclick=\"alert('터미널 이용');\">[2] 💜 감성 모드</button>");
-                  client.println("<button class='btn orange' onclick=\"alert('터미널 이용');\">[3] 🌦️ 날씨 모드</button><a href='/PAGE_DASHBOARD'><button class='btn teal'>[9] 📊 대시보드</button></a>");
-              }
-              client.println("</body></html>");
-          }
-          break;
-        } else { currentLine = ""; }
-      } else if (c != '\r') { currentLine += c; }
-    }
   }
-  delay(20); client.stop();
+
+  // 요청 내용이 비어있으면 무시 (오류 방지)
+  if (request.length() == 0) { client.stop(); return; }
+
+  // 1. 명령 처리 (GET /RUN_..., /STOP 등) -> [즉시 실행]
+  if (request.indexOf("GET /RUN_") >= 0 || request.indexOf("GET /STOP") >= 0 || request.indexOf("GET /VOL_") >= 0) {
+      if (request.indexOf("GET /RUN_SUNNY") >= 0) { runManualMode("1"); lastWebMessage = "수동: 맑음 실행"; }
+      if (request.indexOf("GET /RUN_CLOUDY") >= 0) { runManualMode("2"); lastWebMessage = "수동: 흐림 실행"; }
+      if (request.indexOf("GET /RUN_RAIN") >= 0) { runManualMode("3"); lastWebMessage = "수동: 비 실행"; }
+      if (request.indexOf("GET /RUN_SNOW") >= 0) { runManualMode("4"); lastWebMessage = "수동: 눈 실행"; }
+      if (request.indexOf("GET /STOP") >= 0) { stopSystem(); currentMode=0; printMainMenu(); lastWebMessage = "⛔ 시스템 정지"; }
+      if (request.indexOf("GET /VOL_UP") >= 0) { changeVolume(currentVolume + 2); lastWebMessage = "🔊 볼륨 업 (" + String(currentVolume) + ")"; }
+      if (request.indexOf("GET /VOL_DOWN") >= 0) { changeVolume(currentVolume - 2); lastWebMessage = "🔉 볼륨 다운 (" + String(currentVolume) + ")"; }
+      
+      // 명령만 처리하고 페이지 이동 없음 (204 No Content)
+      client.println("HTTP/1.1 204 No Content\r\nConnection: close\r\n");
+  } 
+  // 2. 페이지 이동 처리
+  else {
+      // 페이지 HTML 헤더 공통 출력
+      client.println("HTTP/1.1 200 OK\r\nContent-type:text/html\r\nConnection: close\r\n");
+      client.println("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no'>");
+      client.println("<style>body{font-family:sans-serif;text-align:center;background:#1a1a1a;color:white;padding:15px;}.btn{display:block;width:100%;max-width:400px;margin:12px auto;padding:18px;font-size:18px;border-radius:12px;border:none;color:white;font-weight:bold;cursor:pointer;}.vol{display:inline-block;width:48%;margin:5px 1%;padding:15px;}.status-box{background:#333;color:#00ff00;padding:15px;margin:10px auto;border-radius:10px;border:1px solid #555;max-width:400px;}</style>");
+      client.println("<style>.blue{background:#2980b9}.purple{background:#8e44ad}.orange{background:#d35400}.grey{background:#7f8c8d}.teal{background:#16a085}.red{background:#c0392b}.sunny{background:#f2c94c;color:#333}.cloudy{background:#95a5a6}.rain{background:#3498db}.snow{background:#ecf0f1;color:#333}.back{background:#333;border:1px solid #555;margin-bottom:25px}</style>");
+      client.println("<script>function send(url){fetch(url);setTimeout(function(){location.reload();},500);}</script></head><body>");
+      
+      client.print("<div class='status-box'>📢 상태: "); client.print(lastWebMessage); client.println("</div>");
+
+      // A. 수동 제어 페이지
+      if (request.indexOf("GET /PAGE_MANUAL") >= 0) {
+          if(currentMode != 1) { 
+              currentMode = 1; 
+              Serial.print("\r\033[K"); Serial.println(C_BLUE "\r\n[Web] 수동 모드 진입" C_RESET); 
+              Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
+          }
+          client.println("<h1>🎮 수동 제어</h1><a href='/'><button class='btn back'>🏠 메인 메뉴</button></a>");
+          client.println("<button class='btn sunny' onclick=\"send('/RUN_SUNNY')\">☀️ 맑음</button><button class='btn cloudy' onclick=\"send('/RUN_CLOUDY')\">☁️ 흐림</button>");
+          client.println("<button class='btn rain' onclick=\"send('/RUN_RAIN')\">☔ 비</button><button class='btn snow' onclick=\"send('/RUN_SNOW')\">❄️ 눈</button>");
+          client.printf("<div style='margin-top:20px;'><p>🔊 현재 볼륨: <b>%d</b></p>", currentVolume);
+          client.println("<button class='btn vol grey' onclick=\"send('/VOL_DOWN')\">➖ Down</button><button class='btn vol blue' onclick=\"send('/VOL_UP')\">➕ Up</button></div>");
+          client.println("<br><button class='btn red' onclick=\"send('/STOP')\">⛔ 정지</button>");
+      }
+      // B. 대시보드 페이지
+      else if (request.indexOf("GET /PAGE_DASHBOARD") >= 0) {
+          client.println("<h1>📊 대시보드</h1><a href='/'><button class='btn back'>🏠 메인 메뉴</button></a>");
+          client.printf("<div style='text-align:left;background:#333;padding:20px;border-radius:10px;'><p>📡 WiFi: <b>%d dBm</b></p>", WiFi.RSSI());
+          client.printf("<p>⚖️ 무게(CH4): <b>%.2f g</b></p>", scale.get_units(5));
+          client.printf("<p>🎤 소리 센서: <b>%d</b> (Noise)</p>", readMicrophone());
+          client.printf("<p>🔊 볼륨: <b>%d</b> (Saved)</p></div>", currentVolume);
+          client.println("<br><button class='btn grey' onclick='location.reload()'>🔄 새로고침</button>");
+      }
+      // C. 메인 메뉴 (딱 이 주소일 때만!)
+      // [중요 수정] "GET / " (공백 포함)으로 메인 페이지 요청을 엄격하게 구분
+      else if (request.indexOf("GET / ") >= 0) {
+          if (currentMode != 0) { 
+              currentMode = 0; 
+              Serial.print("\r\033[K"); Serial.println(C_CYAN "\r\n[Web] 메인 복귀" C_RESET); printMainMenu(); 
+              Serial.print(inputBuffer); 
+          }
+          client.printf("<h1>Smart Diffuser V9.9</h1><p style='color:#888;'>IP: %s</p>", WiFi.localIP().toString().c_str());
+          client.println("<a href='/PAGE_MANUAL'><button class='btn blue'>[1] 🎮 수동 제어</button></a><button class='btn purple' onclick=\"alert('터미널 이용');\">[2] 💜 감성 모드</button>");
+          client.println("<button class='btn orange' onclick=\"alert('터미널 이용');\">[3] 🌦️ 날씨 모드</button><a href='/PAGE_DASHBOARD'><button class='btn teal'>[9] 📊 대시보드</button></a>");
+      }
+      // D. 나머지 (favicon.ico 등 쓸데없는 요청) -> 무시
+      else {
+          client.println("HTTP/1.1 404 Not Found\r\nConnection: close\r\n");
+      }
+      client.println("</body></html>");
+  }
+  delay(10); client.stop();
 }
 
 // [FIX] HTTPS 보안 요청으로 수정된 함수
