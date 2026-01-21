@@ -72,7 +72,7 @@ unsigned long sprayDuration = 3000;
 const long REST_TIME      = 5000;    
 const long MAX_RUN_TIME   = 270000; 
 
-float calibration_factor = 430.0; 
+float calibration_factor = 300.0; 
 int currentVolume = 20;    
 int currentMode = 0;        
 bool isRunning = false;    
