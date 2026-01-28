@@ -424,37 +424,100 @@ void recordAndSendVoice() {
 }
 
 void pollServer() {
-    if (isRunning || currentMode == 5) return; 
+    if (isRunning || currentMode == 5) return; // 실행 중엔 대기
+
     unsigned long now = millis();
     if (now - lastPollTime >= POLL_INTERVAL) {
         lastPollTime = now;
         if(WiFi.status() != WL_CONNECTED) return;
-        WiFiClientSecure client; client.setInsecure();
-        HTTPClient http; http.setTimeout(3000);
+
+        WiFiClientSecure client; 
+        client.setInsecure();
+        HTTPClient http; 
+        http.setTimeout(3000);
+
         if (http.begin(client, serverName)) {
             http.addHeader("Content-Type", "application/json");
+            // ESP32가 "나한테 온 명령 있어?" 하고 물어봄
             int code = http.POST("{\"action\": \"POLL\", \"deviceId\": \"App_User\"}");
-            if (code > 0) {
+            
+if (code > 0) {
                 String res = http.getString();
-                JsonDocument doc; deserializeJson(doc, res);
-                int cmd = doc["spray"];
-                if (cmd > 0) {
-                      Serial.printf("\r\n" C_GREEN "📲 [APP] 명령 수신: %d번\r\n" C_RESET, cmd);
-                      forceAllOff(); 
-                      if (cmd == 1) activePin = PIN_SUNNY; else if (cmd == 2) activePin = PIN_CLOUDY;
-                      else if (cmd == 3) activePin = PIN_RAIN; else if (cmd == 4) activePin = PIN_SNOW;
-                      isRunning = true; isSpraying = true; sprayDuration = 3000;
-                      prevMotorMillis = millis(); startTimeMillis = millis();
-                      digitalWrite(activePin, LOW); playSound(cmd); 
-                      lastWebMessage = "앱 제어 중...";
-                      Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
+                JsonDocument doc; 
+                deserializeJson(doc, res);
+                int cmd = doc["spray"]; // 서버에서 받은 숫자
+                const char* svrRegion = doc["target_region"];
+
+                if (cmd > 0) { 
+                    
+                    // [Case 0] 메뉴 복귀 (Reset)
+                    if (cmd == 90) {
+                        currentMode = 0;
+                        stopSystem(); // 동작 정지
+                        Serial.print("\r\033[K");
+                        Serial.println(C_CYAN "\r\n📲 [APP] 메인 메뉴로 복귀합니다." C_RESET);
+                        printMainMenu(); // 메뉴판 다시 그리기
+                        Serial.print(inputBuffer); // 입력 버퍼 복구
+                        return;
+                    }
+
+                    // [Case A] 모드 전환 (10, 30번)
+                    else if (cmd == 10) { 
+                        currentMode = 1; 
+                        Serial.print("\r\033[K");
+                        Serial.println(C_BLUE "\r\n📲 [APP] 수동 모드 전환!" C_RESET);
+                        Serial.println(C_YELLOW "👉 1:맑음 2:흐림 3:비 4:눈" C_RESET);
+                        Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
+                        return; 
+                    }
+                    else if (cmd == 30) {
+                        currentMode = 3;
+                        Serial.print("\r\033[K");
+                        Serial.println(C_BLUE "\r\n📲 [APP] 날씨 모드 전환!" C_RESET);
+                        
+                        // ★ [핵심] 앱에서 보낸 지역이 있으면 ESP32 설정값 업데이트
+                        if (svrRegion && strlen(svrRegion) > 0) {
+                             lastWeatherRegion = String(svrRegion);
+                             Serial.printf(C_GREEN "📍 지역 설정: %s\r\n" C_RESET, lastWeatherRegion.c_str());
+                        }
+
+                        Serial.println(C_YELLOW "👉 잠시 후 날씨를 불러옵니다..." C_RESET);
+                        
+                        // 즉시 날씨 갱신 트리거
+                        lastWeatherCallMillis = millis() - WEATHER_INTERVAL; 
+                        
+                        Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
+                        return;
+                    }
+
+                    // [Case B] 일반 분사 명령 (1~4번)
+                    Serial.printf("\r\n" C_GREEN "📲 [APP] 분사 명령 수신: %d번\r\n" C_RESET, cmd);
+                    
+                    // 만약 명령이 왔는데 현재 모드가 0이면, 강제로 수동모드 UI로 변경
+                    if(currentMode == 0) currentMode = 1; 
+                    
+                    forceAllOff(); 
+                    if (cmd == 1) activePin = PIN_SUNNY; 
+                    else if (cmd == 2) activePin = PIN_CLOUDY;
+                    else if (cmd == 3) activePin = PIN_RAIN; 
+                    else if (cmd == 4) activePin = PIN_SNOW;
+                    
+                    isRunning = true; 
+                    isSpraying = true; 
+                    sprayDuration = 3000;
+                    prevMotorMillis = millis(); 
+                    startTimeMillis = millis();
+                    digitalWrite(activePin, LOW); 
+                    playSound(cmd); 
+                    
+                    lastWebMessage = "앱 제어 실행됨";
+                    Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
                 }
             }
             http.end();
         }
     }
 }
-
 void manageWiFi() {
   static bool wasConnected = true; 
   if (millis() - lastCheckTime >= 1000) {
