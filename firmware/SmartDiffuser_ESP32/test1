@@ -441,36 +441,41 @@ void pollServer() {
             // ESP32가 "나한테 온 명령 있어?" 하고 물어봄
             int code = http.POST("{\"action\": \"POLL\", \"deviceId\": \"App_User\"}");
             
-            if (code > 0) {
+if (code > 0) {
                 String res = http.getString();
                 JsonDocument doc; 
                 deserializeJson(doc, res);
                 int cmd = doc["spray"]; // 서버에서 받은 숫자
 
-                if (cmd > 0) {
-                    // ==========================================
-                    // ★ [수정됨] 모드 전환 로직 추가
-                    // ==========================================
+                if (cmd >= 0) { 
                     
-                    // [Case A] 모드 변경 명령인 경우
-                    if (cmd == 10) { 
+                    // [Case 0] 메뉴 복귀 (Reset)
+                    if (cmd == 0) {
+                        currentMode = 0;
+                        stopSystem(); // 동작 정지
+                        Serial.print("\r\033[K");
+                        Serial.println(C_CYAN "\r\n📲 [APP] 메인 메뉴로 복귀합니다." C_RESET);
+                        printMainMenu(); // 메뉴판 다시 그리기
+                        Serial.print(inputBuffer); // 입력 버퍼 복구
+                        return;
+                    }
+
+                    // [Case A] 모드 전환 (10, 30번)
+                    else if (cmd == 10) { 
                         currentMode = 1; 
-                        Serial.print("\r\033[K"); // 줄 지우기
-                        Serial.printf(C_BLUE "\r\n📲 [APP] 수동 모드 전환!\r\n" C_RESET);
+                        Serial.print("\r\033[K");
+                        Serial.println(C_BLUE "\r\n📲 [APP] 수동 모드 전환!" C_RESET);
                         Serial.println(C_YELLOW "👉 1:맑음 2:흐림 3:비 4:눈" C_RESET);
                         Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
-                        return; // 분사 없이 종료
+                        return; 
                     }
                     else if (cmd == 30) {
                         currentMode = 3;
                         Serial.print("\r\033[K");
-                        Serial.printf(C_BLUE "\r\n📲 [APP] 날씨 모드 전환!\r\n" C_RESET);
+                        Serial.println(C_BLUE "\r\n📲 [APP] 날씨 모드 전환!" C_RESET);
                         Serial.println(C_YELLOW "👉 지역명 입력 대기중..." C_RESET);
-                        
-                        // 날씨 모드 진입 즉시 한 번 갱신 실행
-                        lastWeatherRegion = "서울"; // 기본값
+                        lastWeatherRegion = "서울"; 
                         autoWeatherScheduler(); 
-                        
                         Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
                         return;
                     }
