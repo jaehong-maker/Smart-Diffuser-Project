@@ -446,6 +446,7 @@ if (code > 0) {
                 JsonDocument doc; 
                 deserializeJson(doc, res);
                 int cmd = doc["spray"]; // 서버에서 받은 숫자
+                const char* svrRegion = doc["target_region"];
 
                 if (cmd > 0) { 
                     
@@ -473,8 +474,18 @@ if (code > 0) {
                         currentMode = 3;
                         Serial.print("\r\033[K");
                         Serial.println(C_BLUE "\r\n📲 [APP] 날씨 모드 전환!" C_RESET);
-                        Serial.println(C_YELLOW "👉 잠시 후 날씨를 불러 옵니다..." C_RESET);
-                        lastWeatherCallMillis = millis() - WEATHER_INTERVAL;
+                        
+                        // ★ [핵심] 앱에서 보낸 지역이 있으면 ESP32 설정값 업데이트
+                        if (svrRegion && strlen(svrRegion) > 0) {
+                             lastWeatherRegion = String(svrRegion);
+                             Serial.printf(C_GREEN "📍 지역 설정: %s\r\n" C_RESET, lastWeatherRegion.c_str());
+                        }
+
+                        Serial.println(C_YELLOW "👉 잠시 후 날씨를 불러옵니다..." C_RESET);
+                        
+                        // 즉시 날씨 갱신 트리거
+                        lastWeatherCallMillis = millis() - WEATHER_INTERVAL; 
+                        
                         Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
                         return;
                     }
