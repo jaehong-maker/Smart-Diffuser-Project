@@ -423,38 +423,56 @@ void recordAndSendVoice() {
     Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET);
 }
 
+// ★ [수정됨] 앱 명령 수신 시 화면과 모드를 동기화하는 함수
 void pollServer() {
+    // 동작 중이거나 데모 모드일 땐 확인 안 함 (충돌 방지)
     if (isRunning || currentMode == 5) return; 
+    
     unsigned long now = millis();
     if (now - lastPollTime >= POLL_INTERVAL) {
         lastPollTime = now;
+        
         if(WiFi.status() != WL_CONNECTED) return;
-        WiFiClientSecure client; client.setInsecure();
-        HTTPClient http; http.setTimeout(3000);
+
+        WiFiClientSecure client;
+        client.setInsecure(); // SSL 무시
+        
+        HTTPClient http;
+        http.setTimeout(3000);
+        
+        // 서버에 "나한테 온 명령 있어?" (POLL) 요청
         if (http.begin(client, serverName)) {
             http.addHeader("Content-Type", "application/json");
             int code = http.POST("{\"action\": \"POLL\", \"deviceId\": \"App_User\"}");
+            
             if (code > 0) {
                 String res = http.getString();
-                JsonDocument doc; deserializeJson(doc, res);
-                int cmd = doc["spray"];
+                JsonDocument doc;
+                deserializeJson(doc, res);
+                int cmd = doc["spray"]; 
+                
+                // ★ 앱에서 명령이 왔다면!
                 if (cmd > 0) {
-                      Serial.printf("\r\n" C_GREEN "📲 [APP] 명령 수신: %d번\r\n" C_RESET, cmd);
-                      forceAllOff(); 
-                      if (cmd == 1) activePin = PIN_SUNNY; else if (cmd == 2) activePin = PIN_CLOUDY;
-                      else if (cmd == 3) activePin = PIN_RAIN; else if (cmd == 4) activePin = PIN_SNOW;
-                      isRunning = true; isSpraying = true; sprayDuration = 3000;
-                      prevMotorMillis = millis(); startTimeMillis = millis();
-                      digitalWrite(activePin, LOW); playSound(cmd); 
-                      lastWebMessage = "앱 제어 중...";
-                      Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(inputBuffer);
+                     // 1. [핵심] 현재 모드가 수동이 아니라면 강제로 '수동 모드'로 변경
+                     if (currentMode != 1) {
+                         currentMode = 1; 
+                         Serial.print("\r\033[K"); // 줄 지움
+                         Serial.printf(C_BLUE "\r\n--- [ Mode 1: 수동 제어 (앱 동기화) ] ---\r\n" C_RESET); 
+                         Serial.println(C_YELLOW "👉 앱에서 제어 중입니다..." C_RESET);
+                     }
+
+                     // 2. 명령 실행 로그 출력 (노트북 화면에 뜸)
+                     Serial.print("\r\033[K");
+                     Serial.printf(C_GREEN "📲 [APP] 앱 명령 수신: %d번 분사 시작!\r\n" C_RESET, cmd);
+                     
+                     // 3. 실제 하드웨어 동작 실행
+                     runManualMode(String(cmd));
                 }
             }
             http.end();
         }
     }
 }
-
 void manageWiFi() {
   static bool wasConnected = true; 
   if (millis() - lastCheckTime >= 1000) {
