@@ -1,3 +1,4 @@
+// db에서 저장항목 추가. 온도 습도
 import os
 import json
 import base64
