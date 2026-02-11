@@ -1,4 +1,4 @@
-// db에서 저장항목 추가. 온도 습도
+// db에서 저장항목 추가. 온도 습도  // ai추가 항목 하기전
 import os
 import json
 import base64
