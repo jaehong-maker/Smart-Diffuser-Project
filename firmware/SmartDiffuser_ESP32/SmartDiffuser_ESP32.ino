@@ -928,7 +928,7 @@ void pollServer() {
           digitalWrite(activePin, LOW);
           playSound(cmd);
 
-          updateDisplay(cmd, "App Control");
+          updateDisplay(cmd-1, "App Control");
           lastWebMessage = "앱 제어 중...";
 
           showPrompt();
@@ -1110,7 +1110,7 @@ void sendServerRequest(String payload) {
       playSound(cmd);
 
       lastWebMessage = "성공: " + txt;
-      updateDisplay(cmd, txt);
+      updateDisplay(cmd-1, txt);
     } else {
       Serial.printf(C_YELLOW "⚠️ 대기: %s\r\n" C_RESET, txt.c_str());
       lastWebMessage = txt;
@@ -1223,10 +1223,10 @@ void runSprayLogic() {
       Serial.print(inputBuffer);
 
       int icon = 0;
-      if (activePin == PIN_SUNNY) icon = 1;
-      else if (activePin == PIN_CLOUDY) icon = 2;
-      else if (activePin == PIN_RAIN) icon = 3;
-      else if (activePin == PIN_SNOW) icon = 4;
+      if (activePin == PIN_SUNNY) icon = 0;
+      else if (activePin == PIN_CLOUDY) icon = 1;
+      else if (activePin == PIN_RAIN) icon = 2;
+      else if (activePin == PIN_SNOW) icon = 3;
 
       updateDisplay(icon, "Spraying...");
     }
