@@ -1,0 +1,691 @@
+import os
+import json
+import base64
+import time
+import uuid
+import logging
+import random
+import boto3
+import urllib.request
+import urllib.parse
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+
+# 로깅 설정
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# DynamoDB
+dynamodb = boto3.resource('dynamodb')
+log_table = dynamodb.Table('DiffuserLog')
+state_table = dynamodb.Table('DiffuserState')
+pref_table = dynamodb.Table('DiffuserPref') 
+
+# AWS 클라이언트
+s3 = boto3.client("s3")
+transcribe = boto3.client("transcribe")
+
+# 설정값
+COOLDOWN_MINUTES = 0.30       
+CONSUMPTION_PER_SEC = 0.5
+MAX_CAPACITY = 100.0
+OPENAI_API_KEY = "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"
+
+# 지역 정보
+REGION_COORDS = {
+    "서울": {"nx": "60", "ny": "127"},
+    
+    # [경기도 주요 도시 추가]
+    "수원": {"nx": "60", "ny": "121"},
+    "성남": {"nx": "61", "ny": "120"},
+    "안양": {"nx": "60", "ny": "125"},
+    "고양": {"nx": "57", "ny": "128"},
+    "용인": {"nx": "62", "ny": "121"},
+    "부천": {"nx": "55", "ny": "125"},
+    "안산": {"nx": "58", "ny": "121"},
+    "남양주": {"nx": "64", "ny": "128"},
+    "화성": {"nx": "57", "ny": "119"},
+    "평택": {"nx": "62", "ny": "114"},
+    "의정부": {"nx": "61", "ny": "129"},
+    "파주": {"nx": "56", "ny": "131"},
+    "김포": {"nx": "55", "ny": "128"},
+    "광명": {"nx": "58", "ny": "125"},
+    "광주": {"nx": "65", "ny": "123"},
+    "이천": {"nx": "68", "ny": "121"},
+    "양주": {"nx": "60", "ny": "121"},
+    "구리": {"nx": "61", "ny": "127"},
+    "포천": {"nx": "64", "ny": "134"},
+    "양평": {"nx": "60", "ny": "121"}, # 기존 양평
+    "가평": {"nx": "69", "ny": "133"},
+    "시흥": {"nx": "56", "ny": "122"}, # 기존 시흥
+
+    # [기존 광역시/도 유지]
+    "인천": {"nx": "55", "ny": "124"},
+    "강원": {"nx": "73", "ny": "134"},
+    "충북": {"nx": "69", "ny": "107"},
+    "충남": {"nx": "67", "ny": "100"},
+    "대전": {"nx": "67", "ny": "100"},
+    "세종": {"nx": "67", "ny": "100"},
+    "전북": {"nx": "63", "ny": "89"},
+    "광주": {"nx": "58", "ny": "74"}, # 전라도 광주
+    "전남": {"nx": "58", "ny": "74"},
+    "대구": {"nx": "89", "ny": "90"},
+    "경북": {"nx": "102", "ny": "94"},
+    "울릉도": {"nx": "102", "ny": "115"},
+    "경남": {"nx": "98", "ny": "76"},
+    "부산": {"nx": "98", "ny": "76"},
+    "울산": {"nx": "102", "ny": "84"},
+    "제주": {"nx": "52", "ny": "38"}
+}
+def save_feedback(device_id, context, scent_code, is_like):
+    try:
+        resp = pref_table.get_item(Key={'deviceId': device_id, 'context': context})
+        item = resp.get('Item', {})
+        
+        blocked = set(map(int, item.get('blocked_scents', []))) 
+        best = int(item.get('best_scent', 0))
+
+        if is_like:
+            best = int(scent_code)
+            if best in blocked: blocked.remove(best)
+        else:
+            blocked.add(int(scent_code))
+            if best == int(scent_code): best = 0
+
+        pref_table.put_item(Item={
+            'deviceId': device_id,
+            'context': context,
+            'best_scent': best,
+            'blocked_scents': list(blocked)
+        })
+        return True
+    except Exception as e:
+        logger.error(f"Feedback Save Error: {e}")
+        return False
+
+def get_personalized_scent(device_id, context, default_scent):
+    try:
+        resp = pref_table.get_item(Key={'deviceId': device_id, 'context': context})
+        item = resp.get('Item')
+        
+        if not item: return default_scent, "기본 추천"
+
+        best = int(item.get('best_scent', 0))
+        blocked = set(map(int, item.get('blocked_scents', [])))
+
+        if best > 0: return best, "사용자 선호(고정)"
+
+        if int(default_scent) in blocked:
+            candidates = [s for s in [1, 2, 3, 4] if s not in blocked]
+            if candidates:
+                new_scent = random.choice(candidates)
+                return new_scent, "싫은 향 회피(AI 추천)"
+            else:
+                return default_scent, "모든 향을 싫어함(기본값)"
+
+        return default_scent, "기본 추천"
+
+    except Exception as e:
+        logger.error(f"Personalization Error: {e}")
+        return default_scent, "에러(기본값)"
+
+def manage_mailbox(device_id, save_cmd=None, save_region=None):
+    try:
+        if save_cmd is not None:
+            update_exp = "set pending_cmd = :c"
+            exp_vals = {':c': int(save_cmd)}
+            if save_region:
+                update_exp += ", pending_region = :r"
+                exp_vals[':r'] = str(save_region)
+
+            state_table.update_item(
+                Key={'deviceId': device_id},
+                UpdateExpression=update_exp,
+                ExpressionAttributeValues=exp_vals
+            )
+            return int(save_cmd)
+        else:
+            res = state_table.get_item(Key={'deviceId': device_id})
+            if 'Item' in res:
+                cmd = int(res['Item'].get('pending_cmd', 0))
+                saved_region = res['Item'].get('pending_region', "") 
+
+                if cmd > 0:
+                    state_table.update_item(
+                        Key={'deviceId': device_id},
+                        UpdateExpression="set pending_cmd = :z, pending_region = :e",
+                        ExpressionAttributeValues={':z': 0, ':e': ""}
+                    )
+                    return cmd, saved_region 
+            return 0, "" 
+    except Exception as e:
+        logger.error(f"Mailbox Error: {e}")
+        return 0, ""
+
+def logic_weather_mode(weather, humidity):
+    spray_code = 1
+    try:
+        if float(humidity) >= 50.0:
+            weather = "흐림(고습도)"
+    except: pass
+    
+    if any(x in weather for x in ["비", "강수"]): spray_code = 3
+    elif "눈" in weather: spray_code = 4
+    elif "흐림" in weather or "구름" in weather: spray_code = 2
+    else: spray_code = 1
+    return spray_code, weather, "Weather_Mode", 3
+
+def logic_emotion_mode(user_emotion_input):
+    now = datetime.now(timezone(timedelta(hours=9)))
+    is_daytime = (9 <= now.hour < 18)
+    time_label = "Day" if is_daytime else "Night"
+    spray_code = 1
+    emotion_name = "Unknown"
+    if user_emotion_input in ["1", "신남"]:
+        emotion_name = "Happy"
+        spray_code = 1 if is_daytime else 2
+    elif user_emotion_input in ["2", "편안함"]:
+        emotion_name = "Relaxed"
+        spray_code = 4
+    elif user_emotion_input in ["3", "화남"]:
+        emotion_name = "Angry"
+        spray_code = 2 if is_daytime else 3
+    elif user_emotion_input in ["4", "슬픔"]:
+        emotion_name = "Sad"
+        spray_code = 3 if is_daytime else 4
+    return spray_code, f"{emotion_name}/{time_label}", "Emotion_Mode", (3 if is_daytime else 2)
+
+def get_kma_time():
+    now = datetime.now(timezone(timedelta(hours=9)))
+    if now.minute < 40: now -= timedelta(hours=1)
+    return now.strftime("%Y%m%d"), now.strftime("%H00")
+
+def forecast(params):
+    url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst"
+    try:
+        query_string = urllib.parse.urlencode(params)
+        full_url = f"{url}?{query_string}"
+        with urllib.request.urlopen(full_url, timeout=5) as response:
+            if response.getcode() == 200:
+                xml_str = response.read().decode('utf-8')
+                root = ET.fromstring(xml_str)
+                t, p, h = "0", "0", "0"
+                for item in root.findall(".//item"):
+                    cat = item.findtext("category")
+                    val = item.findtext("obsrValue")
+                    if cat == "T1H": t = val
+                    elif cat == "PTY": p = val
+                    elif cat == "REH": h = val
+                w = "강수" if p != "0" else "맑음"
+                return t, w, h
+    except: return "0", "통신에러", "0"
+    return "0", "에러", "0"
+
+def get_device_state(device_id):
+    try:
+        res = state_table.get_item(Key={'deviceId': device_id})
+        if 'Item' in res: return res['Item']
+        return {
+            'deviceId': device_id,
+            'last_spray_time': "2000-01-01T00:00:00",
+            'current_capacity': Decimal(str(MAX_CAPACITY)),
+            'last_spray_code': 0
+        }
+    except: return None
+
+def update_device_state(device_id, last_time, new_capacity, spray_code, weight_g):
+    try:
+        state_table.put_item(Item={
+            'deviceId': device_id,
+            'last_spray_time': last_time,
+            'current_capacity': Decimal(str(new_capacity)),
+            'last_spray_code': int(spray_code),
+            'last_weight_g': Decimal(str(weight_g))
+        })
+    except Exception as e:
+        logger.error(f"DB Write Error: {e}")
+
+# ========================================================
+# [추가] 음성 처리 유틸 (수정됨: 상세 에러 반환)
+# ========================================================
+
+def _get_header(headers: dict, key: str) -> str:
+    if not headers or not isinstance(headers, dict):
+        return ""
+    for k, v in headers.items():
+        if str(k).lower() == key.lower():
+            return v
+    return ""
+
+def _guess_device_id(event, body_dict):
+    qs = event.get("queryStringParameters") or {}
+    headers = event.get("headers") or {}
+    device_id = ""
+
+    if isinstance(body_dict, dict):
+        device_id = body_dict.get("device", "") or body_dict.get("deviceId", "")
+
+    if not device_id:
+        device_id = qs.get("deviceId") or qs.get("device") or ""
+
+    if not device_id:
+        device_id = _get_header(headers, "x-device-id")
+
+    return device_id if device_id else "ESP32_VOICE"
+
+# 이 함수 전체를 덮어쓰세요
+def _transcribe_wav_from_s3(bucket, key, language_code="ko-KR"):
+    job_name = f"diffuser-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    media_uri = f"s3://{bucket}/{key}"
+
+    try:
+        transcribe.start_transcription_job(
+            TranscriptionJobName=job_name,
+            Media={"MediaFileUri": media_uri},
+            MediaFormat="wav",
+            LanguageCode=language_code
+        )
+
+        # [수정된 부분] 2초씩 30번 확인 = 최대 60초 대기
+        for _ in range(30):
+            job = transcribe.get_transcription_job(TranscriptionJobName=job_name)
+            status = job["TranscriptionJob"]["TranscriptionJobStatus"]
+            
+            if status == "COMPLETED":
+                uri = job["TranscriptionJob"]["Transcript"]["TranscriptFileUri"]
+                with urllib.request.urlopen(uri, timeout=10) as r:
+                    txt = json.loads(r.read().decode('utf-8'))
+                
+                transcripts = txt.get("results", {}).get("transcripts", [])
+                if transcripts:
+                    result_text = transcripts[0].get("transcript", "").strip()
+                    logger.info(f"[STT 성공] {result_text}")
+                    return result_text
+                return "SILENCE" # 목소리 없음
+                
+            elif status == "FAILED":
+                logger.error(f"[STT 실패] {job['TranscriptionJob'].get('FailureReason')}")
+                return "FAIL"
+            
+            time.sleep(2) # 2초 대기
+            
+    except Exception as e:
+        logger.error(f"[Transcribe Error] {e}")
+        return "ERROR"
+    
+    return "TIMEOUT" # 시간 초과
+
+def _voice_to_spray(transcript: str):
+    t = (transcript or "").strip().lower()
+    spray_code = 0
+    duration = 3
+    result_text = f"VOICE: {transcript}"
+
+    if any(k in t for k in ["맑", "상쾌", "시트러스", "레몬", "오렌지"]):
+        spray_code = 1
+        result_text = f"맑음(키워드): {transcript}"
+    elif any(k in t for k in ["흐림", "구름", "차분", "라벤더", "릴렉스", "편안"]):
+        spray_code = 2
+        result_text = f"흐림(키워드): {transcript}"
+    elif any(k in t for k in ["비", "강수", "레인", "우울", "진정", "바다", "아쿠아"]):
+        spray_code = 3
+        result_text = f"비(키워드): {transcript}"
+    elif any(k in t for k in ["눈", "스노우", "겨울", "민트", "쿨", "시원"]):
+        spray_code = 4
+        result_text = f"눈(키워드): {transcript}"
+    elif any(k in t for k in ["정지", "스톱", "멈춰", "꺼", "중지"]):
+        spray_code = 0
+        duration = 0
+        result_text = f"정지(키워드): {transcript}"
+
+    for sec in [1, 2, 3, 5, 10, 15]:
+        if f"{sec}초" in t:
+            duration = sec
+            break
+
+    return spray_code, duration, result_text
+
+def ask_gpt_recommendation(weather, emotion):
+    if not OPENAI_API_KEY or "sk-" not in OPENAI_API_KEY: return 0, "API키_설정안됨"
+    
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json", 
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
+    }
+    
+    prompt = f"""
+    당신은 'AI 디퓨저 소믈리에'입니다.
+    상황: 날씨-{weather}, 기분-{emotion}
+    가장 어울리는 향기(1:시트러스, 2:라벤더, 3:아쿠아, 4:민트)를 하나 고르고 이유를 20자 이내로 말해주세요.
+    [중요] 오직 JSON 형식으로만 답하세요.
+    응답형식: {{"spray": 번호, "reason": "이유"}}
+    """
+    
+    data = {
+        "model": "gpt-4o-mini", 
+        "messages": [{"role": "system", "content": "JSON only"}, {"role": "user", "content": prompt}], 
+        "temperature": 0.7
+    }
+    
+    try:
+        req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers, method='POST')
+        with urllib.request.urlopen(req, timeout=20) as response:
+            if response.getcode() == 200:
+                res_body = json.loads(response.read().decode('utf-8'))
+                content = res_body['choices'][0]['message']['content'].strip()
+                if content.startswith("```"): content = content.replace("```json", "").replace("```", "").strip()
+                start, end = content.find('{'), content.rfind('}') + 1
+                if start != -1 and end != -1:
+                    parsed = json.loads(content[start:end])
+                    return int(parsed.get("spray", 1)), parsed.get("reason", "AI 추천")
+    except Exception as e:
+        logger.error(f"GPT Error: {e}")
+    
+    return 0, "AI연동실패"
+
+
+# ========================================================
+# ★ 메인 핸들러
+# ========================================================
+# ========================================================
+# ★ 메인 핸들러 (ID 강제 고정 적용)
+# ========================================================
+def lambda_handler(event, context):
+    logger.info("============== [REQUEST START] ==============")
+
+    # ★ [핵심] 무조건 이 ID 하나만 사용 (연결 문제 해결용)
+    # 앱에서 다른 ID를 보내도 무시하고 이걸로 강제 통일합니다.
+    device_id = "ESP32_Test" 
+
+    # 1. 헤더 분석
+    headers = event.get("headers") or {}
+    content_type = _get_header(headers, "content-type")
+    
+    # ------------------------------------------------------
+    # [A] 음성 모드 처리
+    # ------------------------------------------------------
+    if "audio/wav" in str(content_type).lower():
+        try:
+            bucket = os.environ.get("AUDIO_BUCKET", "")
+            if not bucket: return {"statusCode": 500, "body": json.dumps({"message": "Server Error: AUDIO_BUCKET not set"})}
+
+            raw_body = event.get("body", "") or ""
+            is_b64 = bool(event.get("isBase64Encoded", False))
+            wav_bytes = base64.b64decode(raw_body) if is_b64 else raw_body.encode("latin1")
+            
+            # S3 업로드 (강제 통일된 device_id 사용)
+            key = f"voice/{device_id}/{datetime.now(timezone(timedelta(hours=9))).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.wav"
+            s3.put_object(Bucket=bucket, Key=key, Body=wav_bytes, ContentType="audio/wav")
+            
+            # STT 실행
+            transcript = _transcribe_wav_from_s3(bucket, key, language_code=os.environ.get("VOICE_LANG", "ko-KR"))
+            
+            # 실패 원인별 메시지 처리
+            if transcript in ["SILENCE", "FAIL", "ERROR", "TIMEOUT", ""]:
+                msg_map = {
+                    "SILENCE": "목소리가 들리지 않습니다(묵음).",
+                    "FAIL": "STT 변환 실패(AWS 오류).",
+                    "ERROR": "STT 시스템 에러.",
+                    "TIMEOUT": "STT 시간 초과(너무 오래 걸림).",
+                    "": "알 수 없는 오류."
+                }
+                msg = msg_map.get(transcript, "인식 실패")
+                return {"statusCode": 200, "body": json.dumps({"spray": 0, "message": msg}, ensure_ascii=False)}
+
+            spray_code, duration, result_text = _voice_to_spray(transcript)
+
+            # 쿨타임 체크
+            state = get_device_state(device_id) or {}
+            last_time_str = state.get('last_spray_time', "2000-01-01T00:00:00")
+            now = datetime.now(timezone(timedelta(hours=9)))
+            try:
+                last_time = datetime.fromisoformat(last_time_str)
+                if (now - last_time).total_seconds() < (COOLDOWN_MINUTES * 60):
+                    return {
+                        "statusCode": 200,
+                        "body": json.dumps({"spray": 0, "message": "쿨타임 중이라 분사할 수 없습니다.", "mode": "CoolDown"}, ensure_ascii=False)
+                    }
+            except: pass
+
+            # 명령 저장 & 기기 상태 업데이트
+            if spray_code > 0:
+                manage_mailbox(device_id, spray_code)
+                current_cap = float(state.get('current_capacity', MAX_CAPACITY))
+                new_cap = round(max(0.0, current_cap - (duration * CONSUMPTION_PER_SEC)), 2)
+                update_device_state(device_id, now.isoformat(), new_cap, spray_code, 0)
+
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({
+                    "spray": int(spray_code),
+                    "message": f"음성 인식 성공: {result_text}",
+                    "transcript": transcript,
+                    "duration": duration
+                }, ensure_ascii=False)
+            }
+
+        except Exception as e:
+            logger.error(f"[VOICE_FATAL] {e}")
+            return {"statusCode": 200, "body": json.dumps({"spray": 0, "message": f"음성 처리 에러: {str(e)}"}, ensure_ascii=False)}
+
+    # ------------------------------------------------------
+    # [B] 일반 JSON 모드 처리
+    # ------------------------------------------------------
+    try:
+        body = json.loads(event.get("body", "{}"))
+    except:
+        body = {}
+
+    # (여기서 device_id를 다시 뽑지 않고 위에서 정한 'ESP32_Test'를 그대로 씁니다)
+
+    mode = body.get("mode", "weather")
+    region = body.get("region", "")
+    action = body.get("action", "")
+
+    # [ACTION] FEEDBACK
+    if action == "FEEDBACK":
+        try:
+            rating = body.get("rating", "good")
+            is_like = (rating == 1) if isinstance(rating, int) else (rating == "good")
+            scent = int(body.get("sprayNum", 1))
+            ctx = body.get("context", "Unknown")
+
+            save_feedback(device_id, ctx, scent, is_like)
+            result_msg = "피드백 반영 완료"
+            
+            if not is_like:
+                new_scent, change_reason = get_personalized_scent(device_id, ctx, scent)
+                if new_scent == scent:
+                    candidates = [s for s in [1, 2, 3, 4] if s != scent]
+                    new_scent = random.choice(candidates) if candidates else 1
+                    change_reason = "강제 교체"
+                manage_mailbox(device_id, new_scent)
+                result_msg = f"다른 향으로 변경: {change_reason}"
+
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"message": result_msg}, ensure_ascii=False)
+            }
+        except Exception as e:
+             return {"statusCode": 500, "body": str(e)}
+
+    # [ACTION] POLL (기기가 명령 확인하러 옴)
+    if action == "POLL":
+        spray_code, target_region = manage_mailbox(device_id)
+        if spray_code > 0:
+            result_text = f"예약명령 실행({spray_code})"
+            if target_region: result_text += f"/{target_region}"
+            logger.info(f"[POLL] ESP32에게 전달: {spray_code}, {target_region}")
+        else:
+            result_text = "명령없음"
+            target_region = ""
+
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({
+                "spray": spray_code,
+                "target_region": target_region,
+                "result_text": result_text,
+                "message": result_text
+            }, ensure_ascii=False)
+        }
+
+    # [ACTION] MANUAL (앱이 수동 분사 명령)
+    elif action == "MANUAL":
+        try:
+            spray_code = int(body.get("sprayNum", 1))
+            region_req = body.get("region", "")
+            manage_mailbox(device_id, spray_code, region_req)
+            result_text = f"수동분사 {spray_code}번 예약됨"
+        except:
+            spray_code = 0
+            result_text = "명령 오류"
+
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({
+                "spray": spray_code,
+                "result_text": result_text,
+                "message": result_text
+            }, ensure_ascii=False)
+        }
+
+    # ======================================================================
+    # [기존 로직] 날씨 모드, 감성 모드
+    # ======================================================================
+    weight_g = body.get("w4", 0)
+    if weight_g is None: weight_g = 0
+
+    spray_code = 0
+    result_text = ""
+    logic_name = ""
+    temp = "0"
+    humidity = "0"
+    duration = 3
+    context_key = "Unknown"
+
+    # [A] 감성 모드
+    if mode == "emotion":
+        user_emo = body.get("user_emotion", "평범")
+        context_key = f"Emotion_{user_emo}"
+        gpt_spray, gpt_reason = ask_gpt_recommendation(weather="실내", emotion=user_emo)
+        if gpt_spray > 0:
+            spray_code, result_text, logic_name = gpt_spray, gpt_reason, "AI_GPT_Emotion"
+        else:
+            spray_code, result_text, logic_name, duration = logic_emotion_mode(user_emo)
+            
+    # [B] 날씨 모드
+    else:
+        if not region: region = "서울"
+        if region not in REGION_COORDS: region = "서울"
+        nx, ny = REGION_COORDS[region]["nx"], REGION_COORDS[region]["ny"]
+        
+        if "SERVICE_KEY" in os.environ:
+            bd, bt = get_kma_time()
+            params = {
+                "serviceKey": os.environ["SERVICE_KEY"],
+                "pageNo": "1", "numOfRows": "10", "dataType": "XML",
+                "base_date": bd, "base_time": bt, "nx": nx, "ny": ny
+            }
+            temp, w_res, humidity = forecast(params)
+            
+            w_key = "Sunny"
+            if "비" in w_res or "강수" in w_res: w_key = "Rain"
+            elif "눈" in w_res: w_key = "Snow"
+            elif "흐림" in w_res or "구름" in w_res: w_key = "Cloudy"
+            context_key = f"Weather_{w_key}"
+            
+            gpt_spray, gpt_reason = ask_gpt_recommendation(weather=w_res, emotion="날씨에 맞김")
+            if gpt_spray > 0:
+                spray_code, result_text, logic_name = gpt_spray, gpt_reason, "AI_GPT_Weather"
+            else:
+                spray_code, result_text, logic_name, duration = logic_weather_mode(w_res, humidity)
+        else:
+            spray_code, result_text = 1, "API키없음"
+            
+    # [싫어요 목록 확인 및 교체]
+    if spray_code > 0:
+        final_scent, ai_msg = get_personalized_scent(device_id, context_key, spray_code)
+        if final_scent != spray_code:
+            logger.info(f"[AI Change] {spray_code} -> {final_scent} ({ai_msg})")
+            result_text += f" {ai_msg}"
+            spray_code = final_scent
+
+    # 상태 및 쿨타임 확인
+    state = get_device_state(device_id) or {}
+    last_time_str = state.get('last_spray_time', "2000-01-01T00:00:00")
+    current_capacity = float(state.get('current_capacity', MAX_CAPACITY))
+
+    now = datetime.now(timezone(timedelta(hours=9)))
+    is_blocked = False
+    log_msg = ""
+
+    if spray_code > 0:
+        try:
+            last_time = datetime.fromisoformat(last_time_str)
+            if (now - last_time).total_seconds() < (COOLDOWN_MINUTES * 60):
+                is_blocked = True
+                remaining_sec = int((COOLDOWN_MINUTES * 60) - (now - last_time).total_seconds())
+                log_msg = f"쿨타임 중: {remaining_sec}초 남음"
+        except: pass
+
+    # 차단 시 응답
+    if is_blocked:
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({
+                "spray": 0,
+                "result_text": "WAIT",
+                "message": log_msg,
+                "mode": "CoolDown"
+            }, ensure_ascii=False)
+        }
+
+    # 최종 실행 및 로그 저장
+    new_capacity = current_capacity # 초기화
+    if spray_code > 0:
+        manage_mailbox(device_id, spray_code)
+        usage = duration * CONSUMPTION_PER_SEC
+        new_capacity = round(max(0.0, current_capacity - usage), 2)
+        update_device_state(device_id, now.isoformat(), new_capacity, spray_code, weight_g)
+
+    try:
+        def safe_int(v): return int(float(v)) if v else 0
+        def safe_dec(v): return Decimal(str(v)) if v else Decimal("0")
+
+        log_table.put_item(Item={
+            "deviceId": device_id,
+            "timestamp": now.isoformat(),
+            "mode": logic_name,
+            "result_text": result_text,
+            "spray_code": int(spray_code),
+            "duration": int(duration),
+            "region": region if mode == "weather" else "Emotion",
+            "weight_g": safe_dec(weight_g),
+            "temp": safe_dec(temp),
+            "humid": safe_int(humidity),
+            "feedback": 1
+        })
+    except Exception as e:
+        logger.warning(f"Log save failed: {e}")
+
+    # 최종 응답
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({
+            "spray": spray_code,
+            "result_text": result_text,
+            "duration": duration,
+            "remaining_capacity": new_capacity,
+            "message": f"분사 성공! ({result_text})",
+            "mode": logic_name
+        }, ensure_ascii=False)
+    }
