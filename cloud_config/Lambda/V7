@@ -1,3 +1,5 @@
+// ai관련 앱 항목 추가, db추가
+
 import os
 import json
 import base64
