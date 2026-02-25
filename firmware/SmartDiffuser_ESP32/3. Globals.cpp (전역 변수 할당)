@@ -1,0 +1,49 @@
+#include "Globals.h"
+
+// 객체 생성
+HardwareSerial mySoftwareSerial(2);
+HardwareSerial nexSerial(1);
+DFRobotDFPlayerMini myDFPlayer;
+HX711 scale1, scale2, scale3, scale4;
+Preferences prefs;
+WiFiServer webServer(80);
+
+// 변수 초기화
+const char* ssid      = "Jaehong_WiFi";
+const char* password  = "12345678";
+String serverName     = "https://tgrwszo3iwurntqeq76s5rro640asnwq.lambda-url.ap-northeast-2.on.aws/";
+
+unsigned long sprayDuration = 3000;
+const long REST_TIME        = 5000;
+const long MAX_RUN_TIME     = 270000;
+float calibration_factor = 430.0;
+int currentVolume = 20;
+int currentMode   = 0;
+bool isRunning    = false;
+int activePin     = -1;
+bool isSpraying   = false;
+
+String lastWebMessage = "Ready";
+String inputBuffer    = "";
+
+unsigned long lastPollTime = 0;
+const unsigned long POLL_INTERVAL = 2000;
+float weights[4] = {0.0, 0.0, 0.0, 0.0};
+unsigned long lastWeightCheckTime = 0;
+const float WEIGHT_THRESHOLD = 5.0;
+
+int soundThreshold = 60;
+unsigned long lastReactionTime = 0;
+int demoStep = 0;
+unsigned long prevDemoMillis  = 0;
+unsigned long prevMotorMillis = 0;
+unsigned long lastCheckTime = 0;
+unsigned long prevLedMillis = 0;
+unsigned long startTimeMillis = 0;
+
+int ledBrightness = 0;
+int ledFadeAmount = 5;
+
+unsigned long lastWeatherCallMillis = 0;
+const unsigned long WEATHER_INTERVAL = 3600000;
+String lastWeatherRegion = "서울";
