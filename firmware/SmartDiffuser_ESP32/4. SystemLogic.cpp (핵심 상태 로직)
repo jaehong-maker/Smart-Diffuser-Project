@@ -125,6 +125,35 @@ void handleInput(String input) {
     else if (input == "7") { currentMode = 7; Serial.println(C_MAGENTA "\r\n--- [ Sound Visualizer ] ---" C_RESET); updateDisplay(0, "Visualizer"); } 
     else if (input == "8") { currentMode = 8; Serial.printf(C_MAGENTA "\r\n--- [ Sound Reactive (%ddB) ] ---\r\n" C_RESET, soundThreshold); updateDisplay(0, "Reactive"); } 
     else if (input == "9") { printDashboard(); } 
+    else if (input == "99") { 
+      // 1. 먼저 9600 속도로 시도
+      Serial2.begin(9600, SERIAL_8N1, 16, 17);
+      delay(100);
+      Serial2.print("dim=10"); Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+      Serial.println(C_YELLOW "9600 속도로 밝기 조절 시도..." C_RESET);
+
+      delay(500);
+
+      // 2. 안 되면 115200 속도로 시도
+      Serial2.begin(115200, SERIAL_8N1, 16, 17);
+      delay(100);
+      Serial2.print("dim=10"); Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+      Serial.println(C_YELLOW "115200 속도로 밝기 조절 시도..." C_RESET);
+    }
+    else if (input == "100") { 
+      // 99번에서 성공했던 속도(9600)로 확실히 고정합니다.
+      Serial2.begin(9600, SERIAL_8N1, 16, 17); 
+      delay(200); // 통신 준비가 될 때까지 조금 더 기다려줍니다.
+
+      // 밝기를 100으로 올리는 명령을 3번 연속으로 보냅니다 (확실하게 전달되도록)
+      for(int i=0; i<3; i++) {
+        Serial2.print("dim=100"); 
+        Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
+        delay(100);
+      }
+      
+      Serial.println(C_YELLOW "밝기 100% 원상복구 명령 전송 완료!" C_RESET); 
+    }
     else { Serial.println(C_RED "Error" C_RESET); printMainMenu(); }
   }
   else if (currentMode == 1) { 
@@ -172,7 +201,7 @@ void runSprayLogic() {
       digitalWrite(activePin, HIGH); isSpraying = false; prevMotorMillis = millis();
       if (currentMode == 1) { stopSystem(); showPrompt(); return; }
       Serial.print("\r\033[K"); Serial.printf(C_CYAN "      └── [Idle] 휴식...\r\n" C_RESET);
-      showPrompt(); Serial.print(inputBuffer); updateDisplay(0, "Resting...");
+      showPrompt(); Serial.print(inputBuffer); updateDisplay((currentMode == 3 ? lastWeatherIconId : 0), "Resting...");
     }
   } else {
     if (millis() - prevMotorMillis >= REST_TIME) {
