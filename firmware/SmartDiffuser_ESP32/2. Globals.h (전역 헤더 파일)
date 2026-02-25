@@ -1,0 +1,147 @@
+#ifndef GLOBALS_H
+#define GLOBALS_H
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include "HX711.h"
+#include <Preferences.h>
+#include "DFRobotDFPlayerMini.h"
+#include <esp_task_wdt.h>
+#include <driver/i2s.h>
+#include <math.h>
+
+// --- 색상 및 상수 ---
+#define C_RESET   "\033[0m"
+#define C_RED     "\033[31m"
+#define C_GREEN   "\033[32m"
+#define C_YELLOW  "\033[33m"
+#define C_BLUE    "\033[34m"
+#define C_MAGENTA "\033[35m"
+#define C_CYAN    "\033[36m"
+#define C_BOLD    "\033[1m"
+#define WDT_TIMEOUT 60
+
+// --- 핀 정의 ---
+const int PIN_SUNNY  = 4;
+const int PIN_CLOUDY = 13;
+const int PIN_RAIN   = 14;
+const int PIN_SNOW   = 27;
+const int PIN_LED    = 2;
+
+const int LC1_DT = 34; const int LC1_SCK = 33;
+const int LC2_DT = 36; const int LC2_SCK = 18;
+const int LC3_DT = 39; const int LC3_SCK = 21;
+const int LC4_DT = 32; const int LC4_SCK = 23;
+
+const int DFPLAYER_RX_PIN = 25; const int DFPLAYER_TX_PIN = 26;
+const int NEXTION_TX_PIN = 16;  const int NEXTION_RX_PIN = 17;
+
+#define I2S_WS   19
+#define I2S_SD   35
+#define I2S_SCK  22
+#define I2S_PORT I2S_NUM_0
+#define SAMPLE_RATE 16000
+#define RECORD_TIME 2
+
+// --- 구조체 ---
+struct WavHeader {
+  char riff[4]; uint32_t overall_size; char wave[4];
+  char fmt_chunk_marker[4]; uint32_t length_of_fmt; uint16_t format_type; uint16_t channels;
+  uint32_t sample_rate; uint32_t byterate; uint16_t block_align; uint16_t bits_per_sample;
+  char data_chunk_header[4]; uint32_t data_size;
+};
+
+// --- 전역 객체 (extern) ---
+extern HardwareSerial mySoftwareSerial;
+extern HardwareSerial nexSerial;
+extern DFRobotDFPlayerMini myDFPlayer;
+extern HX711 scale1, scale2, scale3, scale4;
+extern Preferences prefs;
+extern WiFiServer webServer;
+
+// --- 전역 변수 (extern) ---
+extern const char* ssid;
+extern const char* password;
+extern String serverName;
+
+extern unsigned long sprayDuration;
+extern const long REST_TIME;
+extern const long MAX_RUN_TIME;
+extern float calibration_factor;
+extern int currentVolume;
+extern int currentMode;
+extern bool isRunning;
+extern int activePin;
+extern bool isSpraying;
+extern String lastWebMessage;
+extern String inputBuffer;
+extern unsigned long lastPollTime;
+extern const unsigned long POLL_INTERVAL;
+extern float weights[4];
+extern unsigned long lastWeightCheckTime;
+extern const float WEIGHT_THRESHOLD;
+extern int soundThreshold;
+extern unsigned long lastReactionTime;
+extern int demoStep;
+extern unsigned long prevDemoMillis;
+extern unsigned long prevMotorMillis;
+extern unsigned long lastCheckTime;
+extern unsigned long prevLedMillis;
+extern unsigned long startTimeMillis;
+extern int ledBrightness;
+extern int ledFadeAmount;
+extern unsigned long lastWeatherCallMillis;
+extern const unsigned long WEATHER_INTERVAL;
+extern String lastWeatherRegion;
+
+// --- 함수 선언 (이름표) ---
+// SystemLogic.cpp
+void initSystem();
+void runSystem();
+void handleInput(String input);
+void checkSerialInput();
+void runManualMode(String input);
+void enterWeatherMode(bool runNow);
+void runSprayLogic();
+void runAutoDemoLoop();
+void checkSafety();
+
+// Hardware.cpp
+void initMicrophone();
+int32_t readMicrophone();
+void runSoundVisualizer();
+void runSoundReaction();
+void forceAllOff();
+void stopSystem();
+void playSound(int trackNum);
+void bootAnimation();
+void systemHeartbeat();
+void monitorWeight();
+void printCalibrationInfo();
+
+// NetworkUI.cpp
+void connectWiFi();
+void manageWiFi();
+void pollServer();
+void sendServerRequest(String payload);
+void handleWebClient();
+void autoWeatherScheduler();
+void recordAndSendVoice();
+void checkNextionInput();
+void handleNextionCmd(const String &cmd);
+void nexSend(const String &cmd);
+void nexSetText(const char* obj, String text);
+void nexSetVal(const char* obj, int v);
+void nexSetPic(const char* obj, int picId);
+void updateDisplay(int iconID, String text);
+void updateProgressBar(int val);
+void showPrompt();
+void printMainMenu();
+void redrawInputLine(String &buffer);
+void printDashboard();
+void changeVolume(int vol);
+
+#endif
