@@ -1,0 +1,209 @@
+#include "Globals.h"
+
+void initSystem() {
+  Serial.begin(115200);
+  Serial.setTimeout(5000);
+
+  nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
+
+  esp_task_wdt_deinit();
+  esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = 60000,
+    .idle_core_mask = (1 << 0) | (1 << 1),
+    .trigger_panic = true
+  };
+  esp_task_wdt_init(&wdt_config);
+  esp_task_wdt_add(NULL);
+
+  pinMode(PIN_SUNNY, OUTPUT); pinMode(PIN_CLOUDY, OUTPUT);
+  pinMode(PIN_RAIN, OUTPUT); pinMode(PIN_SNOW, OUTPUT);
+  pinMode(PIN_LED, OUTPUT);
+  forceAllOff();
+
+  Serial.print("\r\n\r\n");
+  Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
+  Serial.printf(C_BOLD    " 🚀 SMART DIFFUSER V10.9.1 (Modular) \r\n" C_RESET);
+  Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
+
+  mySoftwareSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
+  if (!myDFPlayer.begin(mySoftwareSerial)) Serial.println("Audio Fail");
+  else Serial.println("Audio OK");
+
+  updateDisplay(0, "System Ready");
+  initMicrophone();
+
+  prefs.begin("diffuser", false);
+  float savedFactor = prefs.getFloat("cal_factor", 0.0);
+  if (savedFactor != 0.0) calibration_factor = savedFactor;
+
+  currentVolume = prefs.getInt("volume", 20);
+  myDFPlayer.volume(currentVolume);
+
+  scale1.begin(LC1_DT, LC1_SCK); scale2.begin(LC2_DT, LC2_SCK);
+  scale3.begin(LC3_DT, LC3_SCK); scale4.begin(LC4_DT, LC4_SCK);
+  scale1.set_scale(calibration_factor); scale1.tare();
+  scale2.set_scale(calibration_factor); scale2.tare();
+  scale3.set_scale(calibration_factor); scale3.tare();
+  scale4.set_scale(calibration_factor); scale4.tare();
+
+  weights[0] = scale1.get_units(5);
+
+  connectWiFi();
+  webServer.begin();
+  bootAnimation();
+  printMainMenu();
+}
+
+void runSystem() {
+  esp_task_wdt_reset();
+  checkNextionInput();
+
+  if (currentMode == 7) { runSoundVisualizer(); checkSerialInput(); return; }
+  if (currentMode == 8) { runSoundReaction();   checkSerialInput(); return; }
+
+  manageWiFi();
+  systemHeartbeat();
+  handleWebClient();
+  autoWeatherScheduler();
+  pollServer();
+  monitorWeight();
+
+  if (currentMode == 5) runAutoDemoLoop();
+  else if (isRunning) { runSprayLogic(); checkSafety(); }
+
+  checkSerialInput();
+}
+
+void checkSerialInput() {
+  if (currentMode == 8) {
+      if (Serial.available() > 0) {
+          char c = Serial.read();
+          if (c == '\n' || c == '\r') return;
+          if (c == '+') { soundThreshold += 2; Serial.printf("\r\n🆙 감도: %d dB\r\n", soundThreshold); }
+          else if (c == '-') { soundThreshold -= 2; Serial.printf("\r\n⬇️ 감도: %d dB\r\n", soundThreshold); }
+          else if (c == '0') { currentMode = 0; stopSystem(); printMainMenu(); }
+          showPrompt();
+      }
+      return;
+  }
+  if (currentMode == 4) {
+    if (Serial.available() > 0) {
+      char c = Serial.read(); if (c=='\n'||c=='\r') return;
+      if (c == '+') { calibration_factor += 10; scale1.set_scale(calibration_factor); printCalibrationInfo(); }
+      else if (c == '-') { calibration_factor -= 10; scale1.set_scale(calibration_factor); printCalibrationInfo(); }
+      else if (c == 't') { scale1.tare(); Serial.println("영점"); printCalibrationInfo(); }
+      else if (c == 's') { prefs.putFloat("cal_factor", calibration_factor); Serial.println("저장"); }
+      else if (c == '0') { currentMode = 0; printMainMenu(); }
+    }
+    return;
+  }
+  while (Serial.available() > 0) {
+    char c = Serial.read(); 
+    if (c == '\n' || c == '\r') { 
+      if (inputBuffer.length() > 0) {
+        Serial.println(); 
+        if (inputBuffer == "0") { stopSystem(); currentMode = 0; printMainMenu(); } 
+        else { handleInput(inputBuffer); }
+        inputBuffer = ""; 
+      }
+    } 
+    else if (c == '\b' || c == 0x7F) { 
+      if (inputBuffer.length() > 0) { inputBuffer.remove(inputBuffer.length() - 1); redrawInputLine(inputBuffer); }
+    }
+    else { inputBuffer += c; redrawInputLine(inputBuffer); }
+  }
+}
+
+void handleInput(String input) {
+  if (currentMode == 0) {
+    if (input == "1") { currentMode = 1; Serial.println(C_BLUE "\r\n--- [ Mode 1: 수동 ] ---" C_RESET); updateDisplay(0, "Manual Mode"); showPrompt(); }
+    else if (input == "2") { currentMode = 2; Serial.println(C_BLUE "\r\n--- [ Mode 2: 감성 ] ---" C_RESET); updateDisplay(0, "Emotion Mode"); showPrompt(); }
+    else if (input == "3") { currentMode = 3; Serial.println(C_BLUE "\r\n--- [ Mode 3: 날씨 ] ---" C_RESET); updateDisplay(0, "Weather Mode"); showPrompt(); }
+    else if (input == "4") { currentMode = 4; Serial.println(C_YELLOW "\r\n--- [ Setting ] ---" C_RESET); }
+    else if (input == "5") { currentMode = 5; demoStep=0; Serial.println(C_MAGENTA "\r\n--- [ Demo ] ---" C_RESET); }
+    else if (input == "6") { currentMode = 6; recordAndSendVoice(); currentMode=0; printMainMenu(); } 
+    else if (input == "7") { currentMode = 7; Serial.println(C_MAGENTA "\r\n--- [ Sound Visualizer ] ---" C_RESET); updateDisplay(0, "Visualizer"); } 
+    else if (input == "8") { currentMode = 8; Serial.printf(C_MAGENTA "\r\n--- [ Sound Reactive (%ddB) ] ---\r\n" C_RESET, soundThreshold); updateDisplay(0, "Reactive"); } 
+    else if (input == "9") { printDashboard(); } 
+    else { Serial.println(C_RED "Error" C_RESET); printMainMenu(); }
+  }
+  else if (currentMode == 1) { 
+      if (input == "+") changeVolume(currentVolume + 2); 
+      else if (input == "-") changeVolume(currentVolume - 2); 
+      else runManualMode(input); 
+  }
+  else if (currentMode == 2) { Serial.println("감성 분석 중..."); updateDisplay(0, "Analyzing..."); sendServerRequest("{\"mode\": \"emotion\", \"user_emotion\": \"" + input + "\"}"); }
+  else if (currentMode == 3) { lastWeatherRegion = input; float w = scale1.get_units(10); Serial.printf("날씨 조회: %s\r\n", input.c_str()); updateDisplay(0, "Checking " + input); sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\", \"w4\": " + String(w) + "}"); }
+}
+
+void runManualMode(String input) { 
+    int t = -1; 
+    if (input == "1") t = PIN_SUNNY; else if (input == "2") t = PIN_CLOUDY;
+    else if (input == "3") t = PIN_RAIN; else if (input == "4") t = PIN_SNOW; 
+    
+    if (t != -1) {
+        forceAllOff(); activePin = t; isRunning = true; isSpraying = true;
+        sprayDuration = 3000; prevMotorMillis = millis(); startTimeMillis = millis();
+        digitalWrite(activePin, LOW); playSound(input.toInt());
+        Serial.printf("\r\n[Manual] %s번 실행\r\n", input.c_str());
+        updateDisplay(input.toInt(), "Manual Run");
+        showPrompt(); 
+    } else if (input == "0") {
+        currentMode = 0; stopSystem(); printMainMenu();
+    } else { showPrompt(); }
+}
+
+void enterWeatherMode(bool runNow) {
+  stopSystem(); currentMode = 3; lastWebMessage = "Nextion: 날씨";
+  Serial.print("\r\033[K"); Serial.println(C_BLUE "\r\n--- [ Mode 3: 날씨 모드 ] ---" C_RESET);
+  Serial.println(C_YELLOW "👉 날씨를 확인할 지역 이름을 입력하세요 (예: 부산)" C_RESET);
+  showPrompt();
+  if (runNow) {
+    float w = scale1.get_units(10);
+    sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\", \"w4\": " + String(w) + "}");
+    lastWeatherCallMillis = millis(); 
+  } else { lastWeatherCallMillis = 0; }
+}
+
+void runSprayLogic() {
+  if (activePin == -1) return;
+  if (isSpraying) {
+    if (millis() - prevMotorMillis >= sprayDuration) {
+      digitalWrite(activePin, HIGH); isSpraying = false; prevMotorMillis = millis();
+      if (currentMode == 1) { stopSystem(); showPrompt(); return; }
+      Serial.print("\r\033[K"); Serial.printf(C_CYAN "      └── [Idle] 휴식...\r\n" C_RESET);
+      showPrompt(); Serial.print(inputBuffer); updateDisplay(0, "Resting...");
+    }
+  } else {
+    if (millis() - prevMotorMillis >= REST_TIME) {
+      forceAllOff(); digitalWrite(activePin, LOW); isSpraying = true; prevMotorMillis = millis();
+      Serial.print("\r\033[K"); Serial.printf(C_GREEN "      ┌── [Action] 재분사!\r\n" C_RESET);
+      showPrompt(); Serial.print(inputBuffer);
+      int icon = 0;
+      if (activePin == PIN_SUNNY) icon=1; else if (activePin == PIN_CLOUDY) icon=2;
+      else if (activePin == PIN_RAIN) icon=3; else if (activePin == PIN_SNOW) icon=4;
+      updateDisplay(icon, "Spraying...");
+    }
+  }
+}
+
+void runAutoDemoLoop() {
+  if (millis() - prevDemoMillis >= 4000) {
+    prevDemoMillis = millis(); forceAllOff(); demoStep++;
+    if (demoStep > 4) demoStep = 1;
+    int t = -1;
+    if (demoStep == 1) t = PIN_SUNNY; else if (demoStep == 2) t = PIN_CLOUDY;
+    else if (demoStep == 3) t = PIN_RAIN; else if (demoStep == 4) t = PIN_SNOW;
+    Serial.print("\r\033[K");
+    Serial.printf(C_MAGENTA "[Auto Demo] %s 모드\r\n" C_RESET, (demoStep == 1) ? "맑음" : (demoStep == 2) ? "흐림" : (demoStep == 3) ? "비" : "눈");
+    digitalWrite(t, LOW); playSound(demoStep); updateDisplay(demoStep, "Demo Mode");
+  }
+}
+
+void checkSafety() {
+  if (millis() - startTimeMillis > MAX_RUN_TIME) {
+    Serial.print("\r\033[K"); Serial.printf(C_RED "\r\n🚨 [Emergency] 안전 타이머 작동!\r\n" C_RESET);
+    stopSystem(); updateDisplay(0, "Error: Timeout");
+    currentMode = 0; printMainMenu(); Serial.print(inputBuffer);
+  }
+}
