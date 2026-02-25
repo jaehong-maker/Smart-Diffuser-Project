@@ -1,0 +1,13 @@
+package com.example.diffuser3;
+
+public class Constants {
+    // AWS Lambda URL
+    public static final String LAMBDA_URL = "https://tgrwszo3iwurntqeq76s5rro640asnwq.lambda-url.ap-northeast-2.on.aws/";
+
+    // 명령어 타입 정의 (오타 방지용)
+    public static final String ACTION_GPS = "GPS";
+    public static final String ACTION_MANUAL = "MANUAL";
+    public static final String ACTION_FEEDBACK = "FEEDBACK";
+    public static final String ACTION_LED = "LED";
+    public static final String ACTION_AUTO_START = "AUTO_START";
+}
