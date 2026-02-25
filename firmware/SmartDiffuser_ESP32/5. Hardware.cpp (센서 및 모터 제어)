@@ -41,7 +41,10 @@ void monitorWeight() {
 }
 
 void printCalibrationInfo() {
-  Serial.printf("📡 보정값: %.1f | 현재 무게: %.2f g\r\n", calibration_factor, scale1.get_units(5));
+  Serial.printf("📡 보정값: %.1f | W1:%.1f W2:%.1f W3:%.1f W4:%.1f (g)\r\n", 
+                calibration_factor, 
+                scale1.get_units(2), scale2.get_units(2), 
+                scale3.get_units(2), scale4.get_units(2));
 }
 
 void initMicrophone() {
