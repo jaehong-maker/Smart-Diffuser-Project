@@ -40,6 +40,7 @@ unsigned long prevMotorMillis = 0;
 unsigned long lastCheckTime = 0;
 unsigned long prevLedMillis = 0;
 unsigned long startTimeMillis = 0;
+int lastWeatherIconId = 0;
 
 int ledBrightness = 0;
 int ledFadeAmount = 5;
