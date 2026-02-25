@@ -96,6 +96,7 @@ extern int ledFadeAmount;
 extern unsigned long lastWeatherCallMillis;
 extern const unsigned long WEATHER_INTERVAL;
 extern String lastWeatherRegion;
+extern int lastWeatherIconId;
 
 // --- 함수 선언 (이름표) ---
 // SystemLogic.cpp
