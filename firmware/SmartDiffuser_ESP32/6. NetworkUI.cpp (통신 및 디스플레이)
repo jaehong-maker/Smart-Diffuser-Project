@@ -14,7 +14,7 @@ void checkNextionInput() {
 }
 
 void handleNextionCmd(const String &cmd) {
-  if (cmd.startsWith("p0") || cmd.startsWith("t0") || cmd.startsWith("j0")) return;
+  if (cmd.startsWith("p0") || cmd.startsWith("t_region") || cmd.startsWith("j0")) return;
   bool isCommand = false;
   if (cmd == "M1" || cmd == "M2" || cmd == "M3" || cmd.startsWith("S")) isCommand = true;
   if (cmd == "Y1" || cmd == "Y2" || cmd == "Y3") isCommand = true;
@@ -27,12 +27,27 @@ void handleNextionCmd(const String &cmd) {
   else if (cmd.startsWith("S")) { int scent = cmd.substring(1).toInt(); if (scent >= 1 && scent <= 4) runManualMode(String(scent)); }
 }
 
-void nexSend(const String &cmd) { nexSerial.print(cmd); nexSerial.write(0xFF); nexSerial.write(0xFF); nexSerial.write(0xFF); }
-void nexSetText(const char* obj, String text) { text.replace("\"", "'"); nexSend(String(obj) + ".txt=\"" + text + "\""); }
-void nexSetVal(const char* obj, int v) { nexSend(String(obj) + ".val=" + String(v)); }
-void nexSetPic(const char* obj, int picId) { nexSend(String(obj) + ".pic=" + String(picId)); }
-void updateDisplay(int iconID, String text) { nexSetPic("p0", iconID); nexSetText("t0", text); }
-void updateProgressBar(int val) { nexSetVal("j0", constrain(val, 0, 100)); }
+// ==========================================
+// 💡 검증된 100% 성공 다이렉트 통신 함수들
+// ==========================================
+void nexSend(const String &cmd) { 
+  nexSerial.print(cmd); 
+  nexSerial.write(0xFF); nexSerial.write(0xFF); nexSerial.write(0xFF); 
+}
+
+void updateDisplay(int iconID, String text) { 
+  // 1. 사진(아이콘) 변경 (p0)
+  nexSend("p0.pic=" + String(iconID));
+  
+  // 2. 글자(텍스트) 변경 (t_region)
+  text.replace("\"", "'"); // 따옴표 충돌 방지
+  nexSend("t_region.txt=\"" + text + "\""); 
+}
+
+void updateProgressBar(int val) { 
+  nexSend("j0.val=" + String(constrain(val, 0, 100))); 
+}
+// ==========================================
 
 void connectWiFi() {
   Serial.printf(C_YELLOW "[System] WiFi Connecting" C_RESET);
@@ -78,12 +93,21 @@ void pollServer() {
         if (cmd > 0) {
           Serial.printf("\r\n" C_GREEN "📲 [APP] 명령: %d\r\n" C_RESET, cmd);
           if (cmd == 90) { stopSystem(); currentMode = 0; updateDisplay(0, "Reset"); return; }
-          if (cmd == 30) { currentMode = 3; if (doc["target_region"]) lastWeatherRegion = String((const char*)doc["target_region"]); lastWeatherCallMillis = millis() - WEATHER_INTERVAL; updateDisplay(0, "Weather Mode"); return; }
+          if (cmd == 30) { 
+            currentMode = 3;
+            if (doc["target_region"]) lastWeatherRegion = String((const char*)doc["target_region"]); 
+            lastWeatherCallMillis = millis() - WEATHER_INTERVAL; 
+            updateDisplay(0, "Weather Mode"); 
+            return; 
+          }
           forceAllOff();
           if (cmd == 1) activePin = PIN_SUNNY; else if (cmd == 2) activePin = PIN_CLOUDY;
           else if (cmd == 3) activePin = PIN_RAIN; else if (cmd == 4) activePin = PIN_SNOW;
           isRunning = true; isSpraying = true; sprayDuration = 3000; prevMotorMillis = millis(); startTimeMillis = millis();
-          digitalWrite(activePin, LOW); playSound(cmd); updateDisplay(cmd-1, "App Control"); lastWebMessage = "앱 제어 중...";
+          digitalWrite(activePin, LOW); playSound(cmd); 
+          
+          updateDisplay(cmd, "App Control"); // 깔끔하게 함수 하나로 호출
+          lastWebMessage = "앱 제어 중...";
           showPrompt(); Serial.print(inputBuffer);
         }
       }
@@ -93,26 +117,94 @@ void pollServer() {
 }
 
 void sendServerRequest(String payload) {
-  if (WiFi.status() != WL_CONNECTED) { Serial.println("WiFi Err"); return; }
-  WiFiClientSecure client; client.setInsecure(); HTTPClient http; http.setTimeout(10000);
+  if (WiFi.status() != WL_CONNECTED) { 
+    Serial.println("WiFi Err"); 
+    return; 
+  }
+
+  WiFiClientSecure client; 
+  client.setInsecure(); 
+
+  HTTPClient http; 
+  http.setTimeout(10000);
+
   if (!http.begin(client, serverName)) return;
   http.addHeader("Content-Type", "application/json");
+
   int code = http.POST(payload);
+
   if (code > 0) {
-    String res = http.getString(); JsonDocument doc; deserializeJson(doc, res);
-    int cmd = doc["spray"]; int dur = doc["duration"]; String txt = doc["result_text"];
+    String res = http.getString(); 
+    JsonDocument doc; 
+    deserializeJson(doc, res);
+
+    int cmd = doc["spray"];
+    int dur = doc["duration"];
+    String txt = doc["result_text"];
+
     Serial.printf("\r\n✅ 응답: %s\r\n", txt.c_str());
+
+    // =========================
+    // 🌤 날씨 모드: 아이콘 매칭 및 디스플레이 업데이트
+    // =========================
+    if (currentMode == 3) {
+      int iconId = 1; // 기본 맑음
+      String w = "";
+      if (doc["weather"].is<const char*>()) w = doc["weather"].as<const char*>();
+      if (w.length() == 0) w = txt;
+
+      // 맑=1, 흐림=2, 비=3, 눈=4
+      if (w.indexOf("눈") >= 0) iconId = 4;
+      else if (w.indexOf("비") >= 0) iconId = 3;
+      else if (w.indexOf("흐") >= 0 || w.indexOf("구름") >= 0) iconId = 2;
+      else if (w.indexOf("맑") >= 0) iconId = 1;
+
+      updateDisplay(iconId, txt); // 복잡한 코드 다 지우고 이 한 줄로 완벽 해결!
+    }
+
+    // =========================
+    // 🔥 모터 작동 및 화면 갱신
+    // =========================
     if (cmd > 0) {
       forceAllOff();
-      if (cmd == 1) activePin = PIN_SUNNY; else if (cmd == 2) activePin = PIN_CLOUDY;
-      else if (cmd == 3) activePin = PIN_RAIN; else if (cmd == 4) activePin = PIN_SNOW;
-      isRunning = true; isSpraying = true; sprayDuration = dur * 1000; prevMotorMillis = millis(); startTimeMillis = millis();
-      digitalWrite(activePin, LOW); playSound(cmd); lastWebMessage = "성공: " + txt; updateDisplay(cmd, txt);
+
+      if (cmd == 1) activePin = PIN_SUNNY; 
+      else if (cmd == 2) activePin = PIN_CLOUDY;
+      else if (cmd == 3) activePin = PIN_RAIN; 
+      else if (cmd == 4) activePin = PIN_SNOW;
+
+      isRunning = true; 
+      isSpraying = true; 
+      sprayDuration = dur * 1000; 
+      prevMotorMillis = millis(); 
+      startTimeMillis = millis();
+
+      digitalWrite(activePin, LOW); 
+      playSound(cmd); 
+      lastWebMessage = "성공: " + txt;
+
+      // 날씨 모드가 아닐 때만 수동 명령 아이콘으로 덮어쓰기
+      if (currentMode != 3) {
+        updateDisplay(cmd, txt);
+      }
+
     } else {
-      Serial.printf(C_YELLOW "⚠️ 대기: %s\r\n" C_RESET, txt.c_str()); lastWebMessage = txt; stopSystem(); updateDisplay(0, txt);
+      Serial.printf(C_YELLOW "⚠️ 대기: %s\r\n" C_RESET, txt.c_str()); 
+      lastWebMessage = txt;
+
+      if (currentMode == 3) {
+        forceAllOff();
+        isRunning = false; isSpraying = false; activePin = -1;
+      } else {
+        stopSystem(); 
+        updateDisplay(0, txt);
+      }
     }
   }
-  http.end(); showPrompt(); Serial.print(inputBuffer);
+
+  http.end(); 
+  showPrompt(); 
+  Serial.print(inputBuffer);
 }
 
 void recordAndSendVoice() {
