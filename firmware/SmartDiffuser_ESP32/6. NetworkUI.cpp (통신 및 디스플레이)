@@ -64,7 +64,7 @@ void manageWiFi() {
 }
 
 void pollServer() {
-  if (isRunning || currentMode == 5) return;
+  if (currentMode == 5) return;
   unsigned long now = millis();
   if (now - lastPollTime >= POLL_INTERVAL) {
     lastPollTime = now;
