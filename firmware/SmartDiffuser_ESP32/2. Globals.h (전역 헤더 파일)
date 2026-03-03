@@ -37,7 +37,7 @@ const int LC3_DT = 39; const int LC3_SCK = 21;
 const int LC4_DT = 32; const int LC4_SCK = 23;
 
 const int DFPLAYER_RX_PIN = 25; const int DFPLAYER_TX_PIN = 26;
-const int NEXTION_TX_PIN = 16;  const int NEXTION_RX_PIN = 17;
+const int NEXTION_TX_PIN = 17;  const int NEXTION_RX_PIN = 16;
 
 #define I2S_WS   19
 #define I2S_SD   35
