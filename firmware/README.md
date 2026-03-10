@@ -1,9 +1,9 @@
-# 🌿 스마트 디퓨저 (Smart Diffuser) - Firmware
+# 스마트 디퓨저 (Smart Diffuser) - Firmware
 
-[cite_start]본 리포지토리는 **'I2S 음향 분석 및 날씨 데이터 연동형 AI 스마트 디퓨저'**의 ESP32 펌웨어 소스 코드입니다. [cite: 1]
+[cite_start]본 리포지토리는 'I2S 음향 분석 및 날씨 데이터 연동형 AI 스마트 디퓨저'의 ESP32 펌웨어 소스 코드입니다. [cite: 1]
 모듈화된 C++ 구조를 채택하여 유지보수성을 높였으며, AWS Lambda 서버와 실시간 통신하며 동작합니다.
 
-## 📂 파일 구조 (File Structure)
+## 파일 구조 (File Structure)
 
 코드는 기능별로 분리되어 관리됩니다.
 
@@ -46,3 +46,4 @@
 
 ---
 *Developed by Jae-hong Ryu (21학번) / 한이음 멘토링 프로젝트*
+
