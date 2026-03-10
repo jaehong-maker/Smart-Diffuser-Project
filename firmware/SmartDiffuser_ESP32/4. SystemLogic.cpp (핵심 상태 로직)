@@ -45,14 +45,12 @@ void initSystem() {
   currentVolume = prefs.getInt("volume", 20);
   myDFPlayer.volume(currentVolume);
 
-  scale1.begin(LC1_DT, LC1_SCK); scale2.begin(LC2_DT, LC2_SCK);
-  scale3.begin(LC3_DT, LC3_SCK); scale4.begin(LC4_DT, LC4_SCK);
-  scale1.set_scale(calibration_factor); scale1.tare();
-  scale2.set_scale(calibration_factor); scale2.tare();
-  scale3.set_scale(calibration_factor); scale3.tare();
-  scale4.set_scale(calibration_factor); scale4.tare();
-
-  weights[0] = scale1.get_units(5);
+  for (int i = 0; i < 4; i++) {
+    scales[i].begin(LOADCELL_DT[i], LOADCELL_SCK[i]);
+    scales[i].set_scale(calibration_factor);
+    scales[i].tare();
+  }
+  weights[0] = scales[0].get_units(5);
 
   connectWiFi();
   webServer.begin();
@@ -95,9 +93,9 @@ void checkSerialInput() {
   if (currentMode == 4) {
     if (Serial.available() > 0) {
       char c = Serial.read(); if (c=='\n'||c=='\r') return;
-      if (c == '+') { calibration_factor += 10; scale1.set_scale(calibration_factor); printCalibrationInfo(); }
-      else if (c == '-') { calibration_factor -= 10; scale1.set_scale(calibration_factor); printCalibrationInfo(); }
-      else if (c == 't') { scale1.tare(); Serial.println("영점"); printCalibrationInfo(); }
+      if (c == '+') { calibration_factor += 10; for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); printCalibrationInfo(); }
+      else if (c == '-') { calibration_factor -= 10; for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); printCalibrationInfo(); }
+      else if (c == 't') { for(int i=0; i<4; i++) scales[i].tare(); Serial.println("영점"); printCalibrationInfo(); }
       else if (c == 's') { prefs.putFloat("cal_factor", calibration_factor); Serial.println("저장"); }
       // =======================================================
       // ★ 추가된 줄: 'p'를 누르면 현재 무게를 JSON 형태로 한 번만 출력
@@ -137,7 +135,17 @@ void handleInput(String input) {
     if (input == "1") { currentMode = 1; Serial.println(C_BLUE "\r\n--- [ Mode 1: 수동 ] ---" C_RESET); updateDisplay(0, "Manual Mode"); showPrompt(); }
     else if (input == "2") { currentMode = 2; Serial.println(C_BLUE "\r\n--- [ Mode 2: 감성 ] ---" C_RESET); updateDisplay(0, "Emotion Mode"); showPrompt(); }
     else if (input == "3") { currentMode = 3; Serial.println(C_BLUE "\r\n--- [ Mode 3: 날씨 ] ---" C_RESET); updateDisplay(0, "Weather Mode"); showPrompt(); }
-    else if (input == "4") { currentMode = 4; Serial.println(C_YELLOW "\r\n--- [ Setting ] ---" C_RESET); }
+    else if (input == "4") { 
+      currentMode = 4; 
+      Serial.println(C_YELLOW "\r\n--- [ Setting (저울 보정 설정) ] ---" C_RESET); 
+      Serial.println(" [+] 보정값 +10 증가");
+      Serial.println(" [-] 보정값 -10 감소");
+      Serial.println(" [t] 현재 무게를 0g으로 맞추기 (영점/Tare)");
+      Serial.println(" [s] 현재 보정값 저장 (Save)");
+      Serial.println(" [p] 서버 전송용 데이터 (JSON) 미리보기"); 
+      Serial.println(" [0] 메인 메뉴로 돌아가기");
+      showPrompt(); 
+    }
     else if (input == "5") { currentMode = 5; demoStep=0; Serial.println(C_MAGENTA "\r\n--- [ Demo ] ---" C_RESET); }
     else if (input == "6") { currentMode = 6; recordAndSendVoice(); currentMode=0; printMainMenu(); } 
     else if (input == "7") { currentMode = 7; Serial.println(C_MAGENTA "\r\n--- [ Sound Visualizer ] ---" C_RESET); updateDisplay(0, "Visualizer"); } 
@@ -152,7 +160,9 @@ void handleInput(String input) {
       else runManualMode(input); 
   }
   else if (currentMode == 2) { Serial.println("감성 분석 중..."); updateDisplay(0, "Analyzing..."); sendServerRequest("{\"mode\": \"emotion\", \"user_emotion\": \"" + input + "\"}"); }
-  else if (currentMode == 3) { lastWeatherRegion = input; float w = scale1.get_units(10); Serial.printf("날씨 조회: %s\r\n", input.c_str()); updateDisplay(0, "Checking " + input); sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\", \"w4\": " + String(w) + "}"); }
+  else if (currentMode == 3) { lastWeatherRegion = input; 
+  float w = scales[0].get_units(10); 
+  Serial.printf("날씨 조회: %s\r\n", input.c_str()); updateDisplay(0, "Checking " + input); sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\", \"w4\": " + String(w) + "}"); }
 }
 
 void runManualMode(String input) { 
@@ -178,7 +188,7 @@ void enterWeatherMode(bool runNow) {
   Serial.println(C_YELLOW "👉 날씨를 확인할 지역 이름을 입력하세요 (예: 부산)" C_RESET);
   showPrompt();
   if (runNow) {
-    float w = scale1.get_units(10);
+    float w = scales[0].get_units(10);
     sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\", \"w4\": " + String(w) + "}");
     lastWeatherCallMillis = millis(); 
   } else { lastWeatherCallMillis = 0; }
