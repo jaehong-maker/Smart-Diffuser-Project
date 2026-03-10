@@ -99,8 +99,23 @@ void pollServer() {
       int code = http.POST("{\"action\": \"POLL\", \"deviceId\": \"App_User\"}");
       if (code > 0) {
         String res = http.getString();
-        JsonDocument doc; deserializeJson(doc, res); int cmd = doc["spray"];
+        JsonDocument doc; deserializeJson(doc, res); 
+        
+        int cmd = doc["spray"];
+        int music = doc["music"]; // ★ 추가됨: 음악 번호 파싱
+        
+        static int lastAppCmd = 0; // ★ 추가됨: 이전 명령 기억
+
         if (cmd > 0) {
+          // ★ 추가됨: 분사 명령(1~4) 중복 수신 방지 (노래 끊김 현상 해결)
+          if (cmd >= 1 && cmd <= 4) {
+             if (cmd == lastAppCmd && isRunning) {
+                 http.end();
+                 return; 
+             }
+          }
+          lastAppCmd = cmd; // 현재 명령 저장
+
           Serial.printf("\r\n" C_GREEN "📲 [APP] 명령: %d\r\n" C_RESET, cmd);
           if (cmd == 90) { stopSystem(); currentMode = 0; updateDisplay(0, "Reset"); return;
           }
@@ -113,7 +128,7 @@ void pollServer() {
           }
 
           // ========================================================
-          // ★ [추가됨] 앱에서 보낸 볼륨 제어 명령(80, 81, 82) 가로채기
+          // ★ 앱에서 보낸 볼륨 제어 명령(80, 81, 82) 가로채기
           // ========================================================
           if (cmd == 80 || cmd == 81 || cmd == 82) {
             if (cmd == 80) changeVolume(0); // 무음
@@ -121,7 +136,7 @@ void pollServer() {
             else if (cmd == 82) changeVolume(currentVolume + 2); // 볼륨 업
             updateDisplay(0, "Volume Set");
             lastWebMessage = "볼륨 조절 완료";
-            return; // 🚨 여기서 함수 종료! 밑에 있는 playSound()를 막아버림!
+            return; // 여기서 함수 종료
           }
 
           forceAllOff();
@@ -129,13 +144,23 @@ void pollServer() {
           else if (cmd == 2) activePin = PIN_CLOUDY;
           else if (cmd == 3) activePin = PIN_RAIN;
           else if (cmd == 4) activePin = PIN_SNOW;
+          
           isRunning = true; isSpraying = true; sprayDuration = 3000; prevMotorMillis = millis();
           startTimeMillis = millis();
-          digitalWrite(activePin, LOW); playSound(cmd); 
+          digitalWrite(activePin, LOW); 
+          
+          // ★ 추가됨: 람다에서 내려온 music 번호가 유효하면 해당 음악 재생, 아니면 cmd 번호 재생
+          if (music > 0 && music <= 20) {
+            playSound(music);
+          } else {
+            playSound(cmd); 
+          }
           
           updateDisplay(cmd, "App Control"); 
           lastWebMessage = "앱 제어 중...";
           showPrompt(); Serial.print(inputBuffer);
+        } else {
+          lastAppCmd = 0; // ★ 서버에서 명령이 초기화(0)되면 상태 리셋
         }
       }
       http.end();
@@ -167,6 +192,7 @@ void sendServerRequest(String payload) {
     int cmd = doc["spray"];
     int dur = doc["duration"];
     String txt = doc["result_text"];
+    int music = doc["music"]; // ★ 추가됨: 음악 번호 파싱
 
     Serial.printf("\r\n✅ 응답: %s\r\n", txt.c_str());
     // =========================
@@ -194,7 +220,7 @@ void sendServerRequest(String payload) {
     if (cmd > 0) {
 
       // ========================================================
-      // ★ [추가됨] 앱에서 보낸 볼륨 제어 명령(80, 81, 82) 가로채기
+      // ★ 앱에서 보낸 볼륨 제어 명령(80, 81, 82) 가로채기
       // ========================================================
       if (cmd == 80 || cmd == 81 || cmd == 82) {
         if (cmd == 80) changeVolume(0);
@@ -202,7 +228,7 @@ void sendServerRequest(String payload) {
         else if (cmd == 82) changeVolume(currentVolume + 2);
         updateDisplay(0, "Volume Set");
         lastWebMessage = "볼륨 조절 완료";
-        return; // 🚨 여기서 함수 종료!
+        return; // 여기서 함수 종료
       }
 
       forceAllOff();
@@ -218,7 +244,14 @@ void sendServerRequest(String payload) {
       startTimeMillis = millis();
 
       digitalWrite(activePin, LOW); 
-      playSound(cmd);
+      
+      // ★ 추가됨: 람다에서 내려온 music 번호가 유효하면 해당 음악 재생, 아니면 cmd 번호 재생
+      if (music > 0 && music <= 20) {
+        playSound(music);
+      } else {
+        playSound(cmd); 
+      }
+      
       lastWebMessage = "성공: " + txt;
 
       // 날씨 모드가 아닐 때만 수동 명령 아이콘으로 덮어쓰기
@@ -267,13 +300,28 @@ void recordAndSendVoice() {
     http.addHeader("Content-Type", "audio/wav"); int httpCode = http.POST(audioBuffer, totalSize);
     if (httpCode > 0) {
       String res = http.getString(); Serial.printf(C_GREEN "✅ 응답: %s\r\n" C_RESET, res.c_str());
-      JsonDocument doc; deserializeJson(doc, res); int cmd = doc["spray"]; int dur = doc["duration"]; String txt = doc["result_text"];
+      JsonDocument doc; deserializeJson(doc, res); 
+      
+      int cmd = doc["spray"]; 
+      int dur = doc["duration"]; 
+      String txt = doc["result_text"];
+      int music = doc["music"]; // ★ 람다에서 골라주는 1~20번 음악 번호 파싱
+      
       if (cmd > 0) {
         forceAllOff(); if (cmd == 1) activePin = PIN_SUNNY;
         else if (cmd == 2) activePin = PIN_CLOUDY; else if (cmd == 3) activePin = PIN_RAIN;
         else if (cmd == 4) activePin = PIN_SNOW;
         isRunning = true; isSpraying = true; sprayDuration = dur * 1000;
-        prevMotorMillis = millis(); startTimeMillis = millis(); digitalWrite(activePin, LOW); playSound(cmd); lastWebMessage = "성공: " + txt; updateDisplay(cmd, txt);
+        prevMotorMillis = millis(); startTimeMillis = millis(); digitalWrite(activePin, LOW); 
+        
+        // ★ 추가됨: 람다에서 내려온 music 번호가 유효하면 해당 음악 재생, 아니면 cmd 번호 재생
+        if (music > 0 && music <= 20) {
+          playSound(music);
+        } else {
+          playSound(cmd); 
+        }
+
+        lastWebMessage = "성공: " + txt; updateDisplay(cmd, txt);
       } else { lastWebMessage = txt; updateDisplay(0, txt); }
     } else { Serial.printf("HTTP Error: %s\n", http.errorToString(httpCode).c_str());
       updateDisplay(0, "Network Error"); }
