@@ -43,6 +43,9 @@ void nexSend(const String &cmd) {
 }
 
 void updateDisplay(int iconID, String text) { 
+   if (currentMode == 3 && lastWeatherIconId >= 1 && lastWeatherIconId <= 4) {
+    iconID = lastWeatherIconId;
+  }
   // 1. 사진(아이콘) 변경 (p0)
   nexSend("p0.pic=" + String(iconID));
   // 2. 글자(텍스트) 변경 (t_region)
@@ -228,7 +231,7 @@ void sendServerRequest(String payload) {
       else if (w.indexOf("비") >= 0) iconId = 3;
       else if (w.indexOf("흐") >= 0 || w.indexOf("구름") >= 0) iconId = 2;
       else if (w.indexOf("맑") >= 0) iconId = 1;
-
+      lastWeatherIconId = iconId;
       updateDisplay(iconId, txt);
     }
 
