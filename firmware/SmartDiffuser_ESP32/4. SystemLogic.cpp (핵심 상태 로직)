@@ -119,7 +119,16 @@ void handleInput(String input) {
     if (input == "1") { currentMode = 1; Serial.println(C_BLUE "\r\n--- [ Mode 1: 수동 ] ---" C_RESET); updateDisplay(0, "Manual Mode"); showPrompt(); }
     else if (input == "2") { currentMode = 2; Serial.println(C_BLUE "\r\n--- [ Mode 2: 감성 ] ---" C_RESET); updateDisplay(0, "Emotion Mode"); showPrompt(); }
     else if (input == "3") { currentMode = 3; Serial.println(C_BLUE "\r\n--- [ Mode 3: 날씨 ] ---" C_RESET); updateDisplay(0, "Weather Mode"); showPrompt(); }
-    else if (input == "4") { currentMode = 4; Serial.println(C_YELLOW "\r\n--- [ Setting ] ---" C_RESET); }
+    else if (input == "4") { 
+      currentMode = 4; 
+      Serial.println(C_YELLOW "\r\n--- [ Setting (저울 보정 설정) ] ---" C_RESET); 
+      Serial.println(" [+] 보정값 +10 증가");
+      Serial.println(" [-] 보정값 -10 감소");
+      Serial.println(" [t] 현재 무게를 0g으로 맞추기 (영점/Tare)");
+      Serial.println(" [s] 현재 보정값 저장 (Save)");
+      Serial.println(" [0] 메인 메뉴로 돌아가기");
+      showPrompt(); 
+    }
     else if (input == "5") { currentMode = 5; demoStep=0; Serial.println(C_MAGENTA "\r\n--- [ Demo ] ---" C_RESET); }
     else if (input == "6") { currentMode = 6; recordAndSendVoice(); currentMode=0; printMainMenu(); } 
     else if (input == "7") { currentMode = 7; Serial.println(C_MAGENTA "\r\n--- [ Sound Visualizer ] ---" C_RESET); updateDisplay(0, "Visualizer"); } 
