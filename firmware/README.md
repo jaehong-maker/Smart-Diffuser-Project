@@ -13,7 +13,7 @@
 * [cite_start]`SystemLogic.cpp` : 사용자 입력 처리, 상태 머신(State Machine), 시스템 구동 로직 [cite: 1]
 * [cite_start]`NetworkUI.cpp` : Wi-Fi 관리, AWS 웹훅 통신, 앱 제어용 웹 서버 로직 [cite: 1]
 
-## 🛠 하드웨어 핀 맵 (Pin Mapping)
+## 하드웨어 핀 맵 (Pin Mapping)
 
 [cite_start]ESP32 보드를 기준으로 다음과 같이 핀이 배선되어 있습니다. [cite: 1]
 
@@ -26,7 +26,7 @@
 | **Nextion Display** | 터치 UI 화면 제어 | [cite_start]TX: 17, RX: 16 (HardwareSerial 1) [cite: 1] |
 | **Status LED** | 시스템 상태 표시용 | [cite_start]GPIO 2 [cite: 1] |
 
-## 🚀 주요 작동 모드 (Operation Modes)
+## 주요 작동 모드 (Operation Modes)
 
 [cite_start]시리얼 모니터 또는 디스플레이를 통해 총 8가지 모드를 제어할 수 있습니다. [cite: 1]
 
@@ -39,11 +39,12 @@
 7. [cite_start]**[파형 시각화]** 주변 소리의 크기(Volume)를 실시간으로 측정하여 막대그래프로 보여줍니다. [cite: 1]
 8. [cite_start]**[소리 반응 모드]** 설정된 임계치(dB) 이상의 큰 소리가 나면 랜덤으로 디퓨저가 자동 분사됩니다. [cite: 1]
 
-## 🌐 통신 프로토콜 (Network)
+## 통신 프로토콜 (Network)
 
 * [cite_start]기기가 구동되면 2초(`POLL_INTERVAL`) 간격으로 4개의 로드셀 무게 데이터(`weights` 배열)를 AWS Lambda 서버로 POST 전송합니다. [cite: 1]
 * [cite_start]JSON 형식의 응답을 파싱하여 원격으로 디퓨저 분사 명령, 음악 선곡, 볼륨 조절(80~82번) 등을 수행합니다. [cite: 1]
 
 ---
 *Developed by Jae-hong Ryu (21학번) / 한이음 멘토링 프로젝트*
+
 
