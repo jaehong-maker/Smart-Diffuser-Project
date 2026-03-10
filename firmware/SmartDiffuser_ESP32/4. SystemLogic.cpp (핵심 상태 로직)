@@ -5,7 +5,13 @@ void initSystem() {
   Serial.setTimeout(5000);
 
   nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
-
+  
+  // ★ [업그레이드 1] 디스플레이 초기화 최적화 (99, 100번 임시 코드 대체)
+  delay(300); // 디스플레이 부팅 대기
+  nexSend("bauds=9600"); // 통신 속도 9600 영구 고정
+  delay(100);
+  nexSend("dim=100");    // 화면 밝기 100% 초기화
+  
   esp_task_wdt_deinit();
   esp_task_wdt_config_t wdt_config = {
     .timeout_ms = 60000,
@@ -22,7 +28,7 @@ void initSystem() {
 
   Serial.print("\r\n\r\n");
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
-  Serial.printf(C_BOLD    " 🚀 SMART DIFFUSER V10.9.1 (Modular) \r\n" C_RESET);
+  Serial.printf(C_BOLD    " 🚀 SMART DIFFUSER V11.0.0 (Upgraded) \r\n" C_RESET);
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
 
   mySoftwareSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
@@ -93,6 +99,18 @@ void checkSerialInput() {
       else if (c == '-') { calibration_factor -= 10; scale1.set_scale(calibration_factor); printCalibrationInfo(); }
       else if (c == 't') { scale1.tare(); Serial.println("영점"); printCalibrationInfo(); }
       else if (c == 's') { prefs.putFloat("cal_factor", calibration_factor); Serial.println("저장"); }
+      // =======================================================
+      // ★ 추가된 줄: 'p'를 누르면 현재 무게를 JSON 형태로 한 번만 출력
+      else if (c == 'p') {
+        String payload = "{\"action\": \"POLL\", \"deviceId\": \"App_User\", \"weights\": [";
+        payload += String(weights[0], 1) + ", "; 
+        payload += String(weights[1], 1) + ", ";
+        payload += String(weights[2], 1) + ", ";
+        payload += String(weights[3], 1) + "]}";
+        Serial.println("\r\n🚀 [서버 전송 데이터 미리보기]:");
+        Serial.println(payload);
+      }
+      // =======================================================
       else if (c == '0') { currentMode = 0; printMainMenu(); }
     }
     return;
@@ -119,50 +137,13 @@ void handleInput(String input) {
     if (input == "1") { currentMode = 1; Serial.println(C_BLUE "\r\n--- [ Mode 1: 수동 ] ---" C_RESET); updateDisplay(0, "Manual Mode"); showPrompt(); }
     else if (input == "2") { currentMode = 2; Serial.println(C_BLUE "\r\n--- [ Mode 2: 감성 ] ---" C_RESET); updateDisplay(0, "Emotion Mode"); showPrompt(); }
     else if (input == "3") { currentMode = 3; Serial.println(C_BLUE "\r\n--- [ Mode 3: 날씨 ] ---" C_RESET); updateDisplay(0, "Weather Mode"); showPrompt(); }
-    else if (input == "4") { 
-      currentMode = 4; 
-      Serial.println(C_YELLOW "\r\n--- [ Setting (저울 보정 설정) ] ---" C_RESET); 
-      Serial.println(" [+] 보정값 +10 증가");
-      Serial.println(" [-] 보정값 -10 감소");
-      Serial.println(" [t] 현재 무게를 0g으로 맞추기 (영점/Tare)");
-      Serial.println(" [s] 현재 보정값 저장 (Save)");
-      Serial.println(" [0] 메인 메뉴로 돌아가기");
-      showPrompt(); 
-    }
+    else if (input == "4") { currentMode = 4; Serial.println(C_YELLOW "\r\n--- [ Setting ] ---" C_RESET); }
     else if (input == "5") { currentMode = 5; demoStep=0; Serial.println(C_MAGENTA "\r\n--- [ Demo ] ---" C_RESET); }
     else if (input == "6") { currentMode = 6; recordAndSendVoice(); currentMode=0; printMainMenu(); } 
     else if (input == "7") { currentMode = 7; Serial.println(C_MAGENTA "\r\n--- [ Sound Visualizer ] ---" C_RESET); updateDisplay(0, "Visualizer"); } 
     else if (input == "8") { currentMode = 8; Serial.printf(C_MAGENTA "\r\n--- [ Sound Reactive (%ddB) ] ---\r\n" C_RESET, soundThreshold); updateDisplay(0, "Reactive"); } 
     else if (input == "9") { printDashboard(); } 
-    else if (input == "99") { 
-      // 1. 먼저 9600 속도로 시도
-      Serial2.begin(9600, SERIAL_8N1, 16, 17);
-      delay(100);
-      Serial2.print("dim=10"); Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
-      Serial.println(C_YELLOW "9600 속도로 밝기 조절 시도..." C_RESET);
-
-      delay(500);
-
-      // 2. 안 되면 115200 속도로 시도
-      Serial2.begin(115200, SERIAL_8N1, 16, 17);
-      delay(100);
-      Serial2.print("dim=10"); Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
-      Serial.println(C_YELLOW "115200 속도로 밝기 조절 시도..." C_RESET);
-    }
-    else if (input == "100") { 
-      // 99번에서 성공했던 속도(9600)로 확실히 고정합니다.
-      Serial2.begin(9600, SERIAL_8N1, 16, 17); 
-      delay(200); // 통신 준비가 될 때까지 조금 더 기다려줍니다.
-
-      // 밝기를 100으로 올리는 명령을 3번 연속으로 보냅니다 (확실하게 전달되도록)
-      for(int i=0; i<3; i++) {
-        Serial2.print("dim=100"); 
-        Serial2.write(0xFF); Serial2.write(0xFF); Serial2.write(0xFF);
-        delay(100);
-      }
-      
-      Serial.println(C_YELLOW "밝기 100% 원상복구 명령 전송 완료!" C_RESET); 
-    }
+    // ★ [업그레이드 2] 지저분한 99, 100번 예외 처리 삭제 완료!
     else { Serial.println(C_RED "Error" C_RESET); printMainMenu(); }
   }
   else if (currentMode == 1) { 
