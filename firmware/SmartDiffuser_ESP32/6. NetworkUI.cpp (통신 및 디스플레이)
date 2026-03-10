@@ -52,7 +52,12 @@ void updateDisplay(int iconID, String text) {
   text.replace("\"", "'"); // 따옴표 충돌 방지
   nexSend("t_region.txt=\"" + text + "\""); 
 }
-
+void updateTempHumi(float tempC, float humi) {
+  String t = String(tempC, 1) + "C";
+  String h = String(humi, 0) + "%";
+  nexSend("t_temp.txt=\"" + t + "\"");
+  nexSend("t_humi.txt=\"" + h + "\"");
+}
 void updateProgressBar(int val) { 
   nexSend("j0.val=" + String(constrain(val, 0, 100))); 
 }
@@ -117,6 +122,7 @@ void pollServer() {
         
         // [안정화 2] JSON 파싱 에러 체크 (서버가 이상한 값을 보낼 때 크래시 방지)
         DeserializationError error = deserializeJson(doc, res);
+        
         if (error) {
           Serial.print(C_RED "⚠️ [APP] JSON 파싱 에러: " C_RESET);
           Serial.println(error.c_str());
@@ -217,6 +223,11 @@ void sendServerRequest(String payload) {
     int cmd = doc["spray"] | 0;
     int dur = doc["duration"] | 3;
     String txt = doc["result_text"] | "명령 수신";
+    String tS = doc["temp"] | "";
+    String hS = doc["humidity"] | "";
+    if (tS.length() && hS.length()) {
+      updateTempHumi(tS.toFloat(), hS.toFloat());
+    }
     int music = doc["music"] | 0; 
 
     txt = txt + " [M: " + String(music) + "]";
@@ -235,7 +246,7 @@ void sendServerRequest(String payload) {
       else if (w.indexOf("맑") >= 0) iconId = 1;
       lastWeatherIconId = iconId;
       updateDisplay(iconId, txt);
-    }
+     }
 
     if (cmd > 0) {
       if (cmd == 80 || cmd == 81 || cmd == 82) {
