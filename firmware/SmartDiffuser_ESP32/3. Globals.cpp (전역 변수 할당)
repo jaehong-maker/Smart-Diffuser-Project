@@ -4,7 +4,12 @@
 HardwareSerial mySoftwareSerial(2);
 HardwareSerial nexSerial(1);
 DFRobotDFPlayerMini myDFPlayer;
-HX711 scale1, scale2, scale3, scale4;
+HX711 scales[4];
+
+// README에 적어두신 핀 번호를 배열로 묶어줍니다.
+const int LOADCELL_DT[4]  = {34, 36, 39, 32};
+const int LOADCELL_SCK[4] = {33, 18, 21, 23};
+
 Preferences prefs;
 WiFiServer webServer(80);
 
