@@ -219,6 +219,8 @@ void sendServerRequest(String payload) {
     String txt = doc["result_text"] | "명령 수신";
     int music = doc["music"] | 0; 
 
+    txt = txt + " [M: " + String(music) + "]";
+
     Serial.printf("\r\n✅ 응답: %s\r\n", txt.c_str());
 
     if (currentMode == 3) {
@@ -295,54 +297,82 @@ void sendServerRequest(String payload) {
 }
 
 void recordAndSendVoice() {
-  if (WiFi.status() != WL_CONNECTED) { Serial.println("WiFi Disconnected"); return;
+  if (WiFi.status() != WL_CONNECTED) { Serial.println("WiFi Disconnected"); return; }
+  
+  uint32_t dataSize  = SAMPLE_RATE * RECORD_TIME * 2; 
+  uint32_t totalSize = sizeof(WavHeader) + dataSize;
+  
+  // ★ [버그 1차 패치] OOM(Out of Memory) 크래시 방어 로직 (여유 메모리 검사)
+  if (ESP.getFreeHeap() < totalSize + 20000) { 
+      Serial.println(C_RED "⚠️ [시스템 보호] 기기 메모리가 부족하여 녹음을 실행할 수 없습니다. 기기를 껐다 켜주세요." C_RESET); 
+      updateDisplay(0, "Memory Full"); 
+      showPrompt(); 
+      return; 
   }
-  uint32_t dataSize  = SAMPLE_RATE * RECORD_TIME * 2; uint32_t totalSize = sizeof(WavHeader) + dataSize;
+
   Serial.printf(C_YELLOW "\r\n[Voice] 🎤 녹음 (2초)...\r\n" C_RESET);
-  uint8_t* audioBuffer = (uint8_t*)malloc(totalSize); if (audioBuffer == NULL) return;
+  uint8_t* audioBuffer = (uint8_t*)malloc(totalSize); 
+  if (audioBuffer == NULL) {
+      Serial.println(C_RED "⚠️ 오디오 버퍼 할당 실패!" C_RESET); 
+      return;
+  }
+  
   WavHeader header; memcpy(header.riff, "RIFF", 4);
   header.overall_size = totalSize - 8; memcpy(header.wave, "WAVE", 4); memcpy(header.fmt_chunk_marker, "fmt ", 4); header.length_of_fmt = 16; header.format_type = 1;
   header.channels = 1; header.sample_rate = SAMPLE_RATE; header.byterate = SAMPLE_RATE * 2; header.block_align = 2; header.bits_per_sample = 16; memcpy(header.data_chunk_header, "data", 4);
   header.data_size = dataSize; memcpy(audioBuffer, &header, sizeof(WavHeader));
-  size_t bytesRead = 0; i2s_read(I2S_PORT, (void*)(audioBuffer + sizeof(WavHeader)), dataSize, &bytesRead, portMAX_DELAY);
+  
+  size_t bytesRead = 0; 
+  i2s_read(I2S_PORT, (void*)(audioBuffer + sizeof(WavHeader)), dataSize, &bytesRead, portMAX_DELAY);
+  
   long sumVolume = 0; int16_t* samples = (int16_t*)(audioBuffer + sizeof(WavHeader));
   for (int i = 0; i < (int)(dataSize / 2); i++) sumVolume += abs(samples[i]);
-  if (sumVolume / (dataSize / 2) < 500) { Serial.println(C_RED "→ 🤫 침묵 (취소)" C_RESET); updateDisplay(0, "Too Quiet"); free(audioBuffer); showPrompt();
-  return; }
+  
+  if (sumVolume / (dataSize / 2) < 500) { 
+      Serial.println(C_RED "→ 🤫 침묵 (취소)" C_RESET); 
+      updateDisplay(0, "Too Quiet"); 
+      free(audioBuffer); showPrompt();
+      return; 
+  }
+  
   Serial.println(C_GREEN "→ 🗣️ 전송 중..." C_RESET); updateDisplay(0, "Thinking...");
-  esp_task_wdt_delete(NULL); WiFiClientSecure client; client.setInsecure(); HTTPClient http; http.setTimeout(20000);
+  esp_task_wdt_delete(NULL); 
+  
+  WiFiClientSecure client; client.setInsecure(); HTTPClient http; http.setTimeout(20000);
   if (http.begin(client, serverName)) {
-    http.addHeader("Content-Type", "audio/wav"); int httpCode = http.POST(audioBuffer, totalSize);
+    http.addHeader("Content-Type", "audio/wav"); 
+    int httpCode = http.POST(audioBuffer, totalSize);
     if (httpCode > 0) {
       String res = http.getString(); Serial.printf(C_GREEN "✅ 응답: %s\r\n" C_RESET, res.c_str());
       JsonDocument doc; deserializeJson(doc, res); 
       
-      int cmd = doc["spray"]; 
-      int dur = doc["duration"]; 
-      String txt = doc["result_text"];
-      int music = doc["music"]; // ★ 람다에서 골라주는 1~20번 음악 번호 파싱
+      int cmd = doc["spray"] | 0; 
+      int dur = doc["duration"] | 3; 
+      String txt = doc["result_text"] | "명령 수신";
+      int music = doc["music"] | 0; 
       
       if (cmd > 0) {
-        forceAllOff(); if (cmd == 1) activePin = PIN_SUNNY;
-        else if (cmd == 2) activePin = PIN_CLOUDY; else if (cmd == 3) activePin = PIN_RAIN;
-        else if (cmd == 4) activePin = PIN_SNOW;
+        forceAllOff(); 
+        if (cmd == 1) activePin = PIN_SUNNY; else if (cmd == 2) activePin = PIN_CLOUDY; 
+        else if (cmd == 3) activePin = PIN_RAIN; else if (cmd == 4) activePin = PIN_SNOW;
+        
         isRunning = true; isSpraying = true; sprayDuration = dur * 1000;
         prevMotorMillis = millis(); startTimeMillis = millis(); digitalWrite(activePin, LOW); 
         
-        // ★ 추가됨: 람다에서 내려온 music 번호가 유효하면 해당 음악 재생, 아니면 cmd 번호 재생
-        if (music > 0 && music <= 20) {
-          playSound(music);
-        } else {
-          playSound(cmd); 
-        }
-
+        if (music > 0 && music <= 20) playSound(music);
+        else playSound(cmd); 
+        
         lastWebMessage = "성공: " + txt; updateDisplay(cmd, txt);
       } else { lastWebMessage = txt; updateDisplay(0, txt); }
-    } else { Serial.printf("HTTP Error: %s\n", http.errorToString(httpCode).c_str());
-      updateDisplay(0, "Network Error"); }
+    } else { 
+        Serial.printf("HTTP Error: %s\n", http.errorToString(httpCode).c_str());
+        updateDisplay(0, "Network Error"); 
+    }
     http.end();
   } else { Serial.println("Conn Fail"); updateDisplay(0, "Conn Fail"); }
-  esp_task_wdt_add(NULL); free(audioBuffer);
+  
+  esp_task_wdt_add(NULL); 
+  free(audioBuffer);
   showPrompt();
 }
 
