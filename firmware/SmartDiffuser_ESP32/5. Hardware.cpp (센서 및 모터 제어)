@@ -112,12 +112,31 @@ void runSoundReaction() {
          lastReactionTime = millis();
          Serial.printf("\n\n🎉 [Sound Trigger] %d dB! 자동 분사!\n", db);
          updateDisplay(0, "LOUD NOISE!");
-         int cmd = random(1, 5); forceAllOff();
-         if (cmd==1) activePin=PIN_SUNNY; else if (cmd==2) activePin=PIN_CLOUDY;
-         else if (cmd==3) activePin=PIN_RAIN; else if (cmd==4) activePin=PIN_SNOW;
+         
+         int cmd = random(1, 5); 
+         forceAllOff();
+         int musicTrack = 1; // 재생할 실제 MP3 파일 번호
+         
+         if (cmd==1) {
+             activePin=PIN_SUNNY;
+             musicTrack = random(1, 6); // 1~5 (맑음 음악) 중 랜덤
+         } else if (cmd==2) {
+             activePin=PIN_CLOUDY;
+             musicTrack = random(6, 11); // 6~10 (흐림 음악) 중 랜덤
+         } else if (cmd==3) {
+             activePin=PIN_RAIN;
+             musicTrack = random(11, 16); // 11~15 (비 음악) 중 랜덤
+         } else if (cmd==4) {
+             activePin=PIN_SNOW;
+             musicTrack = random(16, 21); // 16~20 (눈 음악) 중 랜덤
+         }
+         
          isRunning = true; isSpraying = true; sprayDuration = 3000;
          prevMotorMillis = millis(); startTimeMillis = millis();
-         digitalWrite(activePin, LOW); playSound(cmd); updateDisplay(cmd, "Sound Active");
+         digitalWrite(activePin, LOW); 
+         
+         playSound(musicTrack); // 기존 playSound(cmd) 대신 랜덤화된 musicTrack 재생
+         updateDisplay(cmd, "Sound Active");
     }
   }
 }
