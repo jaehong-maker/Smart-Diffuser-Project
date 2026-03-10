@@ -368,7 +368,7 @@ def _voice_to_spray(transcript: str):
     elif any(k in t for k in ["눈", "스노우", "겨울", "민트", "쿨", "시원","누","문","론","돈"]):
         spray_code = 4
         result_text = f"눈(키워드): {transcript}"
-    elif any(k in t for k in ["정지", "스톱", "멈춰", "꺼", "중지"]):
+    elif any(k in t for k in ["정지", "스톱", "멈춰", "꺼", "중지","멈처","멍처","먼처","멍춰","먼춰"]):
         spray_code = 0
         duration = 0
         result_text = f"정지(키워드): {transcript}"
