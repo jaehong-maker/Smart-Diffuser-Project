@@ -35,8 +35,12 @@ void systemHeartbeat() {
 void monitorWeight() {
   if (millis() - lastWeightCheckTime > 500) {
     lastWeightCheckTime = millis();
-    weights[0] = scale1.get_units(2); weights[1] = scale2.get_units(2);
-    weights[2] = scale3.get_units(2); weights[3] = scale4.get_units(2);
+    
+    // [버그 1차 패치] 센서가 준비되었을 때만 값을 읽어와 루프 멈춤(Jitter) 현상 완벽 방지
+    if (scale1.is_ready()) weights[0] = scale1.get_units(1);
+    if (scale2.is_ready()) weights[1] = scale2.get_units(1);
+    if (scale3.is_ready()) weights[2] = scale3.get_units(1);
+    if (scale4.is_ready()) weights[3] = scale4.get_units(1);
   }
 }
 
