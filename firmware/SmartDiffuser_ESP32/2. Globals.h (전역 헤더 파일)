@@ -58,7 +58,9 @@ struct WavHeader {
 extern HardwareSerial mySoftwareSerial;
 extern HardwareSerial nexSerial;
 extern DFRobotDFPlayerMini myDFPlayer;
-extern HX711 scale1, scale2, scale3, scale4;
+extern HX711 scales[4];
+extern const int LOADCELL_DT[4];
+extern const int LOADCELL_SCK[4];
 extern Preferences prefs;
 extern WiFiServer webServer;
 
