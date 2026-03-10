@@ -36,19 +36,20 @@ void monitorWeight() {
   if (millis() - lastWeightCheckTime > 500) {
     lastWeightCheckTime = millis();
     
-    // [버그 1차 패치] 센서가 준비되었을 때만 값을 읽어와 루프 멈춤(Jitter) 현상 완벽 방지
-    if (scale1.is_ready()) weights[0] = scale1.get_units(1);
-    if (scale2.is_ready()) weights[1] = scale2.get_units(1);
-    if (scale3.is_ready()) weights[2] = scale3.get_units(1);
-    if (scale4.is_ready()) weights[3] = scale4.get_units(1);
+    // 4줄이었던 코드가 for문 하나로 우아하게 처리됩니다!
+    for (int i = 0; i < 4; i++) {
+      if (scales[i].is_ready()) {
+        weights[i] = scales[i].get_units(1);
+      }
+    }
   }
 }
 
 void printCalibrationInfo() {
-  Serial.printf("📡 보정값: %.1f | W1:%.1f W2:%.1f W3:%.1f W4:%.1f (g)\r\n", 
-                calibration_factor, 
-                scale1.get_units(2), scale2.get_units(2), 
-                scale3.get_units(2), scale4.get_units(2));
+  Serial.printf("보정값: %.1f | W1:%.1f W2:%.1f W3:%.1f W4:%.1f (g)\r\n", 
+              calibration_factor, 
+              scales[0].get_units(2), scales[1].get_units(2), 
+              scales[2].get_units(2), scales[3].get_units(2));
 }
 
 void initMicrophone() {
