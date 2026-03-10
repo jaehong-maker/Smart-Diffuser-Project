@@ -96,7 +96,16 @@ void pollServer() {
     client.setInsecure(); HTTPClient http; http.setTimeout(3000);
     if (http.begin(client, serverName)) {
       http.addHeader("Content-Type", "application/json");
-      int code = http.POST("{\"action\": \"POLL\", \"deviceId\": \"App_User\"}");
+
+      // [추가된 로직] 현재 측정된 weights 배열의 값을 JSON 문자열로 조합
+      String payload = "{\"action\": \"POLL\", \"deviceId\": \"App_User\", \"weights\": [";
+      payload += String(weights[0], 1) + ", "; // 소수점 1자리까지 전송
+      payload += String(weights[1], 1) + ", ";
+      payload += String(weights[2], 1) + ", ";
+      payload += String(weights[3], 1) + "]}";
+
+      // 조합된 payload를 서버로 전송
+      int code = http.POST(payload);
       
       // [안정화 1] HTTP 상태 코드가 200(OK)일 때만 처리하도록 방어
       if (code == HTTP_CODE_OK) {
