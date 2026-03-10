@@ -379,7 +379,7 @@ void recordAndSendVoice() {
 void autoWeatherScheduler() {
   if (currentMode != 3 || isRunning) return;
   if (millis() - lastWeatherCallMillis >= WEATHER_INTERVAL) {
-    lastWeatherCallMillis = millis(); float w = scale1.get_units(10);
+    lastWeatherCallMillis = millis(); float w = scales[0].get_units(10);
     Serial.print("\r\033[K");
     Serial.printf(C_YELLOW "\r\n[AUTO] 날씨 갱신 (%s)\r\n" C_RESET, lastWeatherRegion.c_str());
     updateDisplay(0, "Weather Check...");
