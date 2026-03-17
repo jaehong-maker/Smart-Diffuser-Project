@@ -1,535 +1,152 @@
-#include "Globals.h"
+#ifndef GLOBALS_H
+#define GLOBALS_H
 
-void checkNextionInput() {
-  static String buf = ""; static unsigned long lastRxTime = 0;
-  while (nexSerial.available()) {
-    char c = (char)nexSerial.read();
-    if (isalnum(c) || c == '_' || c == ' ') { buf += c;
-      if (buf.length() > 64) buf = ""; }
-    lastRxTime = millis();
-  }
-  if (buf.length() > 0 && (millis() - lastRxTime > 50)) {
-    buf.trim();
-    if (buf.length() > 0) handleNextionCmd(buf);
-    buf = "";
-  }
-}
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include "HX711.h"
+#include <Preferences.h>
+#include "DFRobotDFPlayerMini.h"
+#include <esp_task_wdt.h>
+#include <driver/i2s.h>
+#include <math.h>
 
-void handleNextionCmd(const String &cmd) {
-  if (cmd.startsWith("p0") || cmd.startsWith("t_region") || cmd.startsWith("j0")) return;
+// --- 색상 및 상수 ---
+#define C_RESET   "\033[0m"
+#define C_RED     "\033[31m"
+#define C_GREEN   "\033[32m"
+#define C_YELLOW  "\033[33m"
+#define C_BLUE    "\033[34m"
+#define C_MAGENTA "\033[35m"
+#define C_CYAN    "\033[36m"
+#define C_BOLD    "\033[1m"
+#define WDT_TIMEOUT 60
 
-  bool isCommand = false;
-  if (cmd == "M1" || cmd == "M2" || cmd == "M3" || cmd.startsWith("S")) isCommand = true;
-  if (cmd == "Y1" || cmd == "Y2" || cmd == "Y3") isCommand = true;
+// --- 핀 정의 ---
+const int PIN_SUNNY  = 4;
+const int PIN_CLOUDY = 13;
+const int PIN_RAIN   = 14;
+const int PIN_SNOW   = 27;
+const int PIN_LED    = 2;
 
-  if (isCommand) {
-    Serial.print("\r\033[K");
-    Serial.printf(C_CYAN "[NX] 터치: %s\r\n" C_RESET, cmd.c_str());
-  }
+const int LC1_DT = 34; const int LC1_SCK = 33;
+const int LC2_DT = 36; const int LC2_SCK = 18;
+const int LC3_DT = 39; const int LC3_SCK = 21;
+const int LC4_DT = 32; const int LC4_SCK = 23;
 
-  if (cmd == "M2" || cmd == "Y3") {
-    enterWeatherMode(false);
-  }
-  else if (cmd == "M1" || cmd == "Y1") {
-    currentMode = 1;
-    Serial.println(C_BLUE "--- [ Mode 1: 수동 ] ---" C_RESET);
-    updateDisplay(0, "Manual Mode");
-    showPrompt();
-  }
-  else if (cmd == "M3" || cmd == "Y2") {
-    currentMode = 2;
-    Serial.println(C_BLUE "--- [ Mode 2: 감성 ] ---" C_RESET);
-    updateDisplay(0, "Emotion Mode");
-    showPrompt();
-  }
-  else if (cmd.startsWith("S")) {
-    int scent = cmd.substring(1).toInt();
-    if (scent >= 1 && scent <= 4) {
-      currentMode = 1;
-      lastWebMessage = "Nextion 수동 분사 S" + String(scent);
-      Serial.printf(C_GREEN "[NX] 수동 향 %d 실행\r\n" C_RESET, scent);
-      runManualMode(String(scent));
-    }
-  }
-}
+const int DFPLAYER_RX_PIN = 25; const int DFPLAYER_TX_PIN = 26;
+const int NEXTION_TX_PIN = 17;  const int NEXTION_RX_PIN = 16;
 
-// ==========================================
-// 💡 검증된 100% 성공 다이렉트 통신 함수들
-// ==========================================
-void nexSend(const String &cmd) { 
-  nexSerial.print(cmd);
-  nexSerial.write(0xFF); nexSerial.write(0xFF); nexSerial.write(0xFF); 
-}
+#define I2S_WS   19
+#define I2S_SD   35
+#define I2S_SCK  22
+#define I2S_PORT I2S_NUM_0
+#define SAMPLE_RATE 16000
+#define RECORD_TIME 2
+#define REST_TIME 5000
 
-void updateDisplay(int iconID, String text) { 
-   if (currentMode == 3 && lastWeatherIconId >= 1 && lastWeatherIconId <= 4) {
-    iconID = lastWeatherIconId;
-  }
-  // 1. 사진(아이콘) 변경 (p0)
-  nexSend("p0.pic=" + String(iconID));
-  // 2. 글자(텍스트) 변경 (t_region)
-  text.replace("\"", "'"); // 따옴표 충돌 방지
-  nexSend("t_region.txt=\"" + text + "\""); 
-}
-void updateTempHumi(float tempC, float humi) {
-  String t = String(tempC, 1) + "C";
-  String h = String(humi, 0) + "%";
-  nexSend("t_temp.txt=\"" + t + "\"");
-  nexSend("t_humi.txt=\"" + h + "\"");
-}
-void updateProgressBar(int val) { 
-  nexSend("j0.val=" + String(constrain(val, 0, 100))); 
-}
-// ==========================================
+// --- 구조체 ---
+struct WavHeader {
+  char riff[4]; uint32_t overall_size; char wave[4];
+  char fmt_chunk_marker[4]; uint32_t length_of_fmt; uint16_t format_type; uint16_t channels;
+  uint32_t sample_rate; uint32_t byterate; uint16_t block_align; uint16_t bits_per_sample;
+  char data_chunk_header[4]; uint32_t data_size;
+};
 
-void connectWiFi() {
-  Serial.printf(C_YELLOW "[System] WiFi Connecting" C_RESET);
-  WiFi.begin(ssid, password);
-  int retry = 0;
-  while (WiFi.status() != WL_CONNECTED && retry < 15) { delay(200); Serial.print("."); retry++; }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\r\n" C_GREEN "Connected!\r\n" C_RESET);
-    Serial.printf(C_CYAN "🌐 Web: http://%s/\r\n" C_RESET, WiFi.localIP().toString().c_str());
-  } else { Serial.printf(C_RED "\r\nWiFi Failed.\r\n" C_RESET); }
-}
+// --- 전역 객체 (extern) ---
+extern HardwareSerial mySoftwareSerial;
+extern HardwareSerial nexSerial;
+extern DFRobotDFPlayerMini myDFPlayer;
+extern HX711 scales[4];
+extern const int LOADCELL_DT[4];
+extern const int LOADCELL_SCK[4];
+extern Preferences prefs;
+extern WiFiServer webServer;
 
-void manageWiFi() {
-  static bool wasConnected = true;
- 
-  if (millis() - lastCheckTime >= 1000) {
-    lastCheckTime = millis();
-    if (WiFi.status() != WL_CONNECTED) {
-      if (wasConnected) {
-        wasConnected = false; Serial.print("\r\033[K"); Serial.printf(C_RED "🚨 WiFi 끊김!\r\n" C_RESET);
-        updateDisplay(0, "WiFi Lost"); WiFi.disconnect(); WiFi.reconnect(); showPrompt(); Serial.print(inputBuffer);
-      }
-    } else {
-      if (!wasConnected) {
-        wasConnected = true;
-        Serial.print("\r\033[K"); Serial.printf(C_GREEN "✅ WiFi 복구!\r\n" C_RESET);
-        updateDisplay(0, "WiFi OK"); showPrompt(); Serial.print(inputBuffer);
-      }
-    }
-  }
-}
+// --- 전역 변수 (extern) ---
+extern const char* ssid;
+extern const char* password;
+extern String serverName;
 
-void pollServer() {
-  if (currentMode == 5) return;
-  unsigned long now = millis();
-  if (now - lastPollTime >= POLL_INTERVAL) {
-    lastPollTime = now;
-    if (WiFi.status() != WL_CONNECTED) return;
-    WiFiClientSecure client;
-    client.setInsecure(); HTTPClient http; http.setTimeout(3000);
-    if (http.begin(client, serverName)) {
-      http.addHeader("Content-Type", "application/json");
+extern unsigned long sprayDuration;
+extern const long REST_TIME;
+extern const long MAX_RUN_TIME;
+extern float calibration_factor;
+extern int currentVolume;
+extern int currentMode;
+extern bool isRunning;
+extern int activePin;
+extern bool isSpraying;
+extern String lastWebMessage;
+extern String inputBuffer;
+extern unsigned long lastPollTime;
+extern const unsigned long POLL_INTERVAL;
+extern float weights[4];
+extern unsigned long lastWeightCheckTime;
+extern const float WEIGHT_THRESHOLD;
+extern int soundThreshold;
+extern unsigned long lastReactionTime;
+extern int demoStep;
+extern unsigned long prevDemoMillis;
+extern unsigned long prevMotorMillis;
+extern unsigned long lastCheckTime;
+extern unsigned long prevLedMillis;
+extern unsigned long startTimeMillis;
+extern int ledBrightness;
+extern int ledFadeAmount;
+extern unsigned long lastWeatherCallMillis;
+extern const unsigned long WEATHER_INTERVAL;
+extern String lastWeatherRegion;
+extern int lastWeatherIconId;
 
-      // [추가된 로직] 현재 측정된 weights 배열의 값을 JSON 문자열로 조합
-      String payload = "{\"action\": \"POLL\", \"deviceId\": \"App_User\", \"weights\": [";
-      payload += String(weights[0], 1) + ", "; // 소수점 1자리까지 전송
-      payload += String(weights[1], 1) + ", ";
-      payload += String(weights[2], 1) + ", ";
-      payload += String(weights[3], 1) + "]}";
+// --- 함수 선언 (이름표) ---
+// SystemLogic.cpp
+void initSystem();
+void runSystem();
+void handleInput(String input);
+void checkSerialInput();
+void runManualMode(String input);
+void enterWeatherMode(bool runNow);
+void runSprayLogic();
+void runAutoDemoLoop();
+void checkSafety();
+void checkBackgroundNoise();
 
-      // 조합된 payload를 서버로 전송
-      int code = http.POST(payload);
-      
-      // [안정화 1] HTTP 상태 코드가 200(OK)일 때만 처리하도록 방어
-      if (code == HTTP_CODE_OK) {
-        String res = http.getString();
-        JsonDocument doc; 
-        
-        // [안정화 2] JSON 파싱 에러 체크 (서버가 이상한 값을 보낼 때 크래시 방지)
-        DeserializationError error = deserializeJson(doc, res);
-        
-        if (error) {
-          Serial.print(C_RED "⚠️ [APP] JSON 파싱 에러: " C_RESET);
-          Serial.println(error.c_str());
-          http.end();
-          return;
-        }
-        
-        int cmd = doc["spray"] | 0; // 값이 없으면 기본값 0
-        int music = doc["music"] | 0; 
-        static int lastAppCmd = 0; 
+// Hardware.cpp
+void initMicrophone();
+int32_t readMicrophone();
+void runSoundVisualizer();
+void runSoundReaction();
+void forceAllOff();
+void stopSystem();
+void playSound(int trackNum);
+void bootAnimation();
+void systemHeartbeat();
+void monitorWeight();
+void printCalibrationInfo();
 
-        if (cmd > 0) {
-          if (cmd >= 1 && cmd <= 4) {
-             if (cmd == lastAppCmd && isRunning) {
-                 http.end();
-                 return; 
-             }
-          }
-          lastAppCmd = cmd; 
+// NetworkUI.cpp
+void connectWiFi();
+void manageWiFi();
+void pollServer();
+void sendServerRequest(String payload);
+void handleWebClient();
+void autoWeatherScheduler();
+void recordAndSendVoice();
+void checkNextionInput();
+void handleNextionCmd(const String &cmd);
+void nexSend(const String &cmd);
+void nexSetText(const char* obj, String text);
+void nexSetVal(const char* obj, int v);
+void nexSetPic(const char* obj, int picId);
+void updateDisplay(int iconID, String text);
+void updateProgressBar(int val);
+void showPrompt();
+void printMainMenu();
+void redrawInputLine(String &buffer);
+void printDashboard();
+void changeVolume(int vol);
 
-          Serial.printf("\r\n" C_GREEN "📲 [APP] 명령: %d\r\n" C_RESET, cmd);
-          if (cmd == 90) { stopSystem(); currentMode = 0; updateDisplay(0, "Reset"); return; }
-          if (cmd == 30) { 
-            currentMode = 3;
-            if (doc["target_region"]) lastWeatherRegion = String((const char*)doc["target_region"]); 
-            lastWeatherCallMillis = millis() - WEATHER_INTERVAL; 
-            updateDisplay(0, "Weather Mode"); 
-            return;
-          }
-
-          if (cmd == 80 || cmd == 81 || cmd == 82) {
-            if (cmd == 80) changeVolume(0); 
-            else if (cmd == 81) changeVolume(currentVolume - 2); 
-            else if (cmd == 82) changeVolume(currentVolume + 2); 
-            updateDisplay(0, "Volume Set");
-            lastWebMessage = "볼륨 조절 완료";
-            return; 
-          }
-
-          forceAllOff();
-          if (cmd == 1) activePin = PIN_SUNNY;
-          else if (cmd == 2) activePin = PIN_CLOUDY;
-          else if (cmd == 3) activePin = PIN_RAIN;
-          else if (cmd == 4) activePin = PIN_SNOW;
-          
-          isRunning = true; isSpraying = true; sprayDuration = 3000; prevMotorMillis = millis();
-          startTimeMillis = millis();
-          digitalWrite(activePin, LOW); 
-          
-          if (music > 0 && music <= 20) {
-            playSound(music);
-          } else {
-            playSound(cmd); 
-          }
-          
-          updateDisplay(cmd, "App Control"); 
-          lastWebMessage = "앱 제어 중...";
-          showPrompt(); Serial.print(inputBuffer);
-        } else {
-          lastAppCmd = 0; 
-        }
-      } else if (code < 0) {
-        // [안정화 3] 타임아웃 등 네트워크 접속 실패 로그
-        Serial.printf(C_RED "⚠️ [APP] 서버 연결 실패: %s\r\n" C_RESET, http.errorToString(code).c_str());
-      }
-      http.end();
-    }
-  }
-}
-
-void sendServerRequest(String payload) {
-  if (WiFi.status() != WL_CONNECTED) { 
-    Serial.println("WiFi Err"); 
-    return;
-  }
-
-  WiFiClientSecure client; 
-  client.setInsecure(); 
-
-  HTTPClient http; 
-  http.setTimeout(10000);
-
-  if (!http.begin(client, serverName)) return;
-  http.addHeader("Content-Type", "application/json");
-
-  int code = http.POST(payload);
-  if (code == HTTP_CODE_OK) { // [안정화] 정상 응답(200)일 때만 파싱
-    String res = http.getString(); 
-    JsonDocument doc; 
-    
-    DeserializationError error = deserializeJson(doc, res);
-    if (error) {
-       Serial.println(C_RED "⚠️ 서버 응답 JSON 오류" C_RESET);
-       http.end();
-       return;
-    }
-
-    int cmd = doc["spray"] | 0;
-    int dur = doc["duration"] | 3;
-    String txt = doc["result_text"] | "명령 수신";
-    String tS = doc["temp"] | "";
-    String hS = doc["humidity"] | "";
-    if (tS.length() && hS.length()) {
-      updateTempHumi(tS.toFloat(), hS.toFloat());
-    }
-    int music = doc["music"] | 0; 
-
-    txt = txt + " [M: " + String(music) + "]";
-
-    Serial.printf("\r\n✅ 응답: %s\r\n", txt.c_str());
-
-    if (currentMode == 3) {
-      int iconId = 1;
-      String w = "";
-      if (doc["weather"].is<const char*>()) w = doc["weather"].as<const char*>();
-      if (w.length() == 0) w = txt;
-
-      if (w.indexOf("눈") >= 0) iconId = 4;
-      else if (w.indexOf("비") >= 0) iconId = 3;
-      else if (w.indexOf("흐") >= 0 || w.indexOf("구름") >= 0) iconId = 2;
-      else if (w.indexOf("맑") >= 0) iconId = 1;
-      lastWeatherIconId = iconId;
-      updateDisplay(iconId, txt);
-     }
-
-    if (cmd > 0) {
-      if (cmd == 80 || cmd == 81 || cmd == 82) {
-        if (cmd == 80) changeVolume(0);
-        else if (cmd == 81) changeVolume(currentVolume - 2);
-        else if (cmd == 82) changeVolume(currentVolume + 2);
-        updateDisplay(0, "Volume Set");
-        lastWebMessage = "볼륨 조절 완료";
-        return; 
-      }
-
-      forceAllOff();
-      if (cmd == 1) activePin = PIN_SUNNY; 
-      else if (cmd == 2) activePin = PIN_CLOUDY;
-      else if (cmd == 3) activePin = PIN_RAIN; 
-      else if (cmd == 4) activePin = PIN_SNOW;
-
-      isRunning = true;
-      isSpraying = true; 
-      sprayDuration = dur * 1000; 
-      prevMotorMillis = millis(); 
-      startTimeMillis = millis();
-
-      digitalWrite(activePin, LOW); 
-      
-      if (music > 0 && music <= 20) {
-        playSound(music);
-      } else {
-        playSound(cmd); 
-      }
-      
-      lastWebMessage = "성공: " + txt;
-
-      if (currentMode != 3) {
-        updateDisplay(cmd, txt);
-      }
-
-    } else {
-      Serial.printf(C_YELLOW "⚠️ 대기: %s\r\n" C_RESET, txt.c_str());
-      lastWebMessage = txt;
-
-      if (currentMode == 3) {
-        forceAllOff();
-        isRunning = false;
-        isSpraying = false; activePin = -1;
-      } else {
-        stopSystem(); 
-        updateDisplay(0, txt);
-      }
-    }
-  } else {
-      Serial.printf(C_RED "⚠️ HTTP Error: %d\r\n" C_RESET, code);
-      updateDisplay(0, "Server Error");
-  }
-
-  http.end(); 
-  showPrompt(); 
-  Serial.print(inputBuffer);
-}
-
-// ==========================================================
-// 1. 오디오 녹음 전문가 (메모리 체크 및 I2S 마이크 제어)
-// ==========================================================
-bool recordAudio(uint8_t** audioBuffer, uint32_t* totalSize) {
-  uint32_t dataSize = SAMPLE_RATE * RECORD_TIME * 2;
-  *totalSize = sizeof(WavHeader) + dataSize;
-
-  if (ESP.getFreeHeap() < *totalSize + 20000) {
-    Serial.println(C_RED "⚠️ 메모리 부족! 기기를 재부팅해주세요." C_RESET);
-    updateDisplay(0, "Memory Full");
-    return false;
-  }
-
-  Serial.printf(C_YELLOW "\r\n[Voice] 🎤 녹음 (2초)...\r\n" C_RESET);
-  *audioBuffer = (uint8_t*)malloc(*totalSize);
-  if (*audioBuffer == NULL) return false;
-
-  WavHeader header; memcpy(header.riff, "RIFF", 4);
-  header.overall_size = *totalSize - 8; memcpy(header.wave, "WAVE", 4); memcpy(header.fmt_chunk_marker, "fmt ", 4); header.length_of_fmt = 16; header.format_type = 1;
-  header.channels = 1; header.sample_rate = SAMPLE_RATE; header.byterate = SAMPLE_RATE * 2; header.block_align = 2; header.bits_per_sample = 16; memcpy(header.data_chunk_header, "data", 4);
-  header.data_size = dataSize; memcpy(*audioBuffer, &header, sizeof(WavHeader));
-
-  size_t bytesRead = 0;
-  i2s_read(I2S_PORT, (void*)(*audioBuffer + sizeof(WavHeader)), dataSize, &bytesRead, portMAX_DELAY);
-
-  long sumVolume = 0; 
-  int16_t* samples = (int16_t*)(*audioBuffer + sizeof(WavHeader));
-  
-  // ★ [펌웨어 끝판왕의 끝판왕] 주파수 강조 + 정규화
-  float preEmphasis = 0.97; // 고주파 강조 계수
-  int16_t lastSample = 0;
-
-  // ★ [펌웨어 마스터 등급] 동적 범위 압축(DRC) + 자동 게인 제어
-  for (int i = 0; i < (int)(dataSize / 2); i++) {
-    int32_t sample = samples[i];
-    
-    // 1. 컴프레서: 작은 소리는 키우고 큰 소리는 압축하여 평준화
-    float absSample = abs(sample);
-    if (absSample > 0) {
-      // 로그 압축 방식과 유사한 비선형 증폭 적용
-      if (absSample < 4000) sample *= 8;      // 아주 작은 소리는 8배
-      else if (absSample < 10000) sample *= 4; // 중간 소리는 4배
-      else sample *= 2;                       // 이미 큰 소리는 2배만
-    }
-
-    // 2. 최종 클리핑 방지
-    if (sample > 32767) sample = 32767;
-    if (sample < -32768) sample = -32768;
-    
-    samples[i] = (int16_t)sample;
-    sumVolume += abs(samples[i]);
-  }
-
-  // 증폭되었으므로 기준치를 500으로 다시 세팅
-  if (sumVolume / (dataSize / 2) < 200) {
-    Serial.println(C_RED "→ 🤫 침묵 (취소)" C_RESET);
-    updateDisplay(0, "Too Quiet");
-    free(*audioBuffer);
-    return false;
-  }
-  return true;
-}
-
-// ==========================================================
-// 2. 서버 통신 전문가 (AWS 서버로 데이터 POST)
-// ==========================================================
-bool sendAudioToServer(uint8_t* audioBuffer, uint32_t totalSize, String& response) {
-  Serial.println(C_GREEN "→ 🗣️ 전송 중..." C_RESET); updateDisplay(0, "Thinking...");
-  esp_task_wdt_delete(NULL); // 전송 중 워치독 리셋 방지
-  bool success = false;
-
-  WiFiClientSecure client; client.setInsecure(); HTTPClient http; http.setTimeout(20000);
-  if (http.begin(client, serverName)) {
-    http.addHeader("Content-Type", "audio/wav");
-    int httpCode = http.POST(audioBuffer, totalSize);
-    if (httpCode > 0) {
-      response = http.getString();
-      Serial.printf(C_GREEN "✅ 응답: %s\r\n" C_RESET, response.c_str());
-      success = true;
-    } else {
-      Serial.printf("HTTP Error: %s\n", http.errorToString(httpCode).c_str());
-      updateDisplay(0, "Network Error");
-    }
-    http.end();
-  } else { Serial.println("Conn Fail"); updateDisplay(0, "Conn Fail"); }
-
-  esp_task_wdt_add(NULL);
-  return success;
-}
-
-// ==========================================================
-// 3. 기기 제어 전문가 (JSON 응답 파싱 및 모터 구동)
-// ==========================================================
-void executeVoiceCommand(String jsonResponse) {
-  JsonDocument doc; deserializeJson(doc, jsonResponse);
-  int cmd = doc["spray"] | 0;
-  int dur = doc["duration"] | 3;
-  String txt = doc["result_text"] | "명령 수신";
-  int music = doc["music"] | 0;
-
-  if (cmd > 0) {
-    forceAllOff();
-    if (cmd == 1) activePin = PIN_SUNNY; else if (cmd == 2) activePin = PIN_CLOUDY;
-    else if (cmd == 3) activePin = PIN_RAIN; else if (cmd == 4) activePin = PIN_SNOW;
-
-    isRunning = true; isSpraying = true; sprayDuration = dur * 1000;
-    prevMotorMillis = millis(); startTimeMillis = millis(); digitalWrite(activePin, LOW);
-
-    if (music > 0 && music <= 20) playSound(music);
-    else playSound(cmd);
-
-    lastWebMessage = "성공: " + txt; updateDisplay(cmd, txt);
-  } else { 
-    // ★ 추가: spray가 0 (정지 명령)일 경우 시스템을 완전히 정지시킵니다.
-    stopSystem();
-    lastWebMessage = txt; updateDisplay(0, txt); 
-  }
-}
-
-// ==========================================================
-// 4. 메인 지휘관 (위의 3개 함수를 순서대로 실행)
-// ==========================================================
-void recordAndSendVoice() {
-  if (WiFi.status() != WL_CONNECTED) { Serial.println("WiFi Disconnected"); return; }
-
-  uint8_t* audioBuffer = NULL;
-  uint32_t totalSize = 0;
-
-  // 1단계: 녹음 시도
-  if (!recordAudio(&audioBuffer, &totalSize)) {
-    showPrompt();
-    return; // 실패 시 여기서 종료
-  }
-
-  // 2단계: 서버 전송 시도
-  String response = "";
-  if (sendAudioToServer(audioBuffer, totalSize, response)) {
-    // 3단계: 성공적으로 응답을 받으면 명령 실행
-    executeVoiceCommand(response);
-  }
-
-  // 마지막: 사용한 메모리 반납 (매우 중요!)
-  free(audioBuffer);
-  showPrompt();
-}
-
-void autoWeatherScheduler() {
-  if (currentMode != 3 || isRunning) return;
-  if (millis() - lastWeatherCallMillis >= WEATHER_INTERVAL) {
-    lastWeatherCallMillis = millis(); float w = scales[0].get_units(10);
-    Serial.print("\r\033[K");
-    Serial.printf(C_YELLOW "\r\n[AUTO] 날씨 갱신 (%s)\r\n" C_RESET, lastWeatherRegion.c_str());
-    updateDisplay(0, "Weather Check...");
-    sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\", \"w4\": " + String(w) + "}");
-  }
-}
-
-void handleWebClient() {
-  WiFiClient client = webServer.available(); 
-  if (!client) return;
-  
-  unsigned long startTime = millis();
-  while (!client.available() && millis() - startTime < 1000) { delay(1); }
-  
-  // [안정화] 클라이언트가 연결되어 있다면, 첫 번째 줄만 빠르게 읽고 남은 버퍼는 비워버림
-  if (client.connected() && client.available()) {
-    String request = client.readStringUntil('\r');
-    client.flush(); // 나머지 헤더 찌꺼기 무시 (메모리 및 속도 확보)
-    
-    if (request.indexOf("favicon.ico") >= 0) { 
-      client.println("HTTP/1.1 404 Not Found\r\nConnection: close\r\n"); 
-      client.stop(); 
-      return;
-    }
-    
-    if (request.indexOf("GET /RUN_") >= 0 || request.indexOf("GET /STOP") >= 0 || request.indexOf("GET /VOL_") >= 0) {
-      if (request.indexOf("GET /RUN_SUNNY") >= 0) { runManualMode("1"); lastWebMessage = "수동: 맑음"; }
-      if (request.indexOf("GET /RUN_CLOUDY") >= 0) { runManualMode("2"); lastWebMessage = "수동: 흐림"; }
-      if (request.indexOf("GET /RUN_RAIN") >= 0) { runManualMode("3"); lastWebMessage = "수동: 비"; }
-      if (request.indexOf("GET /RUN_SNOW") >= 0) { runManualMode("4"); lastWebMessage = "수동: 눈"; }
-      if (request.indexOf("GET /STOP") >= 0) { stopSystem(); currentMode = 0; printMainMenu(); lastWebMessage = "정지"; }
-      
-      client.println("HTTP/1.1 204 No Content\r\nConnection: close\r\n");
-    } else { 
-      client.println("HTTP/1.1 200 OK\r\nContent-type:text/html\r\nConnection: close\r\n"); 
-      client.println("<!DOCTYPE html><html><head><meta charset=\"UTF-8\"></head><body><h1>Smart Diffuser</h1></body></html>");
-    }
-  }
-  delay(10); 
-  client.stop();
-}
-
-void showPrompt() { Serial.print("\r\033[K"); Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET);
-}
-void printMainMenu() { Serial.println("\r\n[1]수동 [2]감성 [3]날씨 [4]설정 [5]데모 [6]음성 [7]파형 [8]반응"); showPrompt(); }
-void redrawInputLine(String &buffer) { Serial.print("\r\033[K");
-  Serial.print(C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(buffer); }
-void printDashboard() {
-  Serial.println("\r\n--- Dashboard ---"); Serial.printf("WiFi: %d dBm\r\n", WiFi.RSSI());
-  Serial.printf("Weights: W1:%.1f / W2:%.1f / W3:%.1f / W4:%.1f\n", weights[0], weights[1], weights[2], weights[3]);
-  Serial.printf("Mic: %d\r\n", readMicrophone()); Serial.printf("Vol: %d\r\n", currentVolume); printMainMenu();
-}
-void changeVolume(int vol) {
-  currentVolume = constrain(vol, 0, 30); myDFPlayer.volume(currentVolume); prefs.putInt("volume", currentVolume);
-  Serial.print("\r\033[K"); Serial.printf(C_GREEN "🔊 볼륨: %d\r\n" C_RESET, currentVolume);
-  showPrompt();
-}
+#endif
