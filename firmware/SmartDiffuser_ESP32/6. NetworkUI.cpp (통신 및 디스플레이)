@@ -105,19 +105,14 @@ void updateDisplay(int iconID, String text) {
     iconID = lastWeatherIconId;
   }
 
-  // 조원분 추가 로직: 날씨 모드에서 text 처리
   if (currentMode == 3) {
-    if (text.length() == 0) text = lastWeatherRegion;
-    if (text.length() == 0) text = "지역없음";
+    if (text.length() == 0) text = lastWeatherLabel;
+    if (text.length() == 0) text = "Weather";
   }
 
-  // 1. 사진(아이콘) 변경
   nexSend("p0.pic=" + String(iconID));
-
-  // 2. 글자(텍스트) 변경
-  text.replace("\"", "'"); 
-  // 조원분 하드코딩 로직 유지
-  nexSend("t_region.txt=\"ANSAN\""); 
+  text.replace("\"", "'");
+  nexSend("t_region.txt=\"" + text + "\"");
 }
 
 void updateTempHumi(float tempC, float humi) {
@@ -205,12 +200,18 @@ void pollServer() {
           
           if (cmd == 90) { stopSystem(); currentMode = 0; updateDisplay(0, "Reset"); return; }
           if (cmd == 30) { 
-            currentMode = 3;
-            if (doc["target_region"]) lastWeatherRegion = String((const char*)doc["target_region"]); 
-            lastWeatherCallMillis = millis() - WEATHER_INTERVAL; 
-            updateDisplay(0, "Weather Mode"); 
-            return;
-          }
+              currentMode = 3;
+
+              String region = doc["region"] | "";
+              if (region.length() == 0) region = doc["target_region"] | "";
+              if (region.length() > 0) {
+                lastWeatherRegion = region;
+              }
+
+              lastWeatherCallMillis = millis() - WEATHER_INTERVAL; 
+              updateDisplay(lastWeatherIconId, lastWeatherLabel);
+              return;
+            }
           if (cmd >= 80 && cmd <= 82) {
             changeVolume((cmd == 80) ? 0 : (cmd == 81 ? currentVolume - 2 : currentVolume + 2)); 
             updateDisplay(0, "Volume Set"); lastWebMessage = "볼륨 조절 완료"; return; 
@@ -268,12 +269,28 @@ void sendServerRequest(String payload) {
     if (currentMode == 3) {
       int iconId = 1;
       String w = doc["weather"] | txt;
-      if (w.indexOf("눈") >= 0) iconId = 4;
-      else if (w.indexOf("비") >= 0) iconId = 3;
-      else if (w.indexOf("흐") >= 0 || w.indexOf("구름") >= 0) iconId = 2;
-      else if (w.indexOf("맑") >= 0) iconId = 1;
+      String weatherLabel = "Sunny";
+
+      if (w.indexOf("눈") >= 0) {
+        iconId = 4;
+        weatherLabel = "Snowy";
+      }
+      else if (w.indexOf("비") >= 0) {
+        iconId = 3;
+        weatherLabel = "Rainy";
+      }
+      else if (w.indexOf("흐") >= 0 || w.indexOf("구름") >= 0) {
+        iconId = 2;
+        weatherLabel = "Cloudy";
+      }
+      else if (w.indexOf("맑") >= 0) {
+        iconId = 1;
+        weatherLabel = "Sunny";
+      }
+
       lastWeatherIconId = iconId;
-      updateDisplay(iconId, lastWeatherRegion);
+      lastWeatherLabel = weatherLabel;
+      updateDisplay(iconId, lastWeatherLabel);
     }
 
     if (cmd > 0) {
@@ -439,7 +456,7 @@ void autoWeatherScheduler() {
   if (millis() - lastWeatherCallMillis >= WEATHER_INTERVAL) {
     lastWeatherCallMillis = millis(); 
     Serial.printf(C_YELLOW "\r\n[AUTO] 날씨 갱신 (%s)\r\n" C_RESET, lastWeatherRegion.c_str());
-    updateDisplay(lastWeatherIconId, lastWeatherRegion);
+    updateDisplay(lastWeatherIconId, lastWeatherLabel);
     sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\", \"w4\": " + String(scales[0].get_units(10)) + "}");
   }
 }
