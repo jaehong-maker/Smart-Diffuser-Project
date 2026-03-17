@@ -37,7 +37,7 @@ float weights[4] = {0.0, 0.0, 0.0, 0.0};
 unsigned long lastWeightCheckTime = 0;
 const float WEIGHT_THRESHOLD = 5.0;
 
-int soundThreshold = 60;
+int soundThreshold = 75;
 unsigned long lastReactionTime = 0;
 int demoStep = 0;
 unsigned long prevDemoMillis  = 0;
