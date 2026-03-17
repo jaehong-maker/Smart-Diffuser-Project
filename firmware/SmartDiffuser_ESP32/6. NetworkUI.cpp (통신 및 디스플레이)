@@ -1,15 +1,12 @@
 #include "Globals.h"
 
-// --- 전역 네트워크 세션 객체 ---
+// --- 전역 네트워크 세션 객체 (TLS 커넥션 유지용) ---
 static WiFiClientSecure sharedClient;
-static HTTPClient sharedHttp;
 static bool isSessionInit = false;
 
 void initNetworkSession() {
   if (!isSessionInit) {
-    sharedClient.setInsecure();
-    sharedHttp.setReuse(true);
-    sharedHttp.setTimeout(4000);
+    sharedClient.setInsecure(); // SSL 인증서 검사 건너뛰기
     isSessionInit = true;
   }
 }
@@ -166,24 +163,25 @@ void pollServer() {
     if (WiFi.status() != WL_CONNECTED) return;
     
     initNetworkSession();
+    HTTPClient http; // 지역 변수로 생성하여 독립성 확보
 
-    if (sharedHttp.begin(sharedClient, serverName)) {
-      sharedHttp.addHeader("Content-Type", "application/json");
+    if (http.begin(sharedClient, serverName)) {
+      http.addHeader("Content-Type", "application/json");
 
       String payload = "{\"action\": \"POLL\", \"deviceId\": \"App_User\", \"weights\": [";
       for (int i=0; i<4; i++) {
         payload += String(weights[i], 1) + (i < 3 ? ", " : "]}");
       }
 
-      int code = sharedHttp.POST(payload);
+      int code = http.POST(payload);
       
       if (code == HTTP_CODE_OK) {
         JsonDocument doc; 
-        DeserializationError error = deserializeJson(doc, sharedHttp.getString());
+        DeserializationError error = deserializeJson(doc, http.getString()); // http 객체 사용
         
         if (error) {
           Serial.println(C_RED "⚠️ [APP] JSON 파싱 에러" C_RESET);
-          sharedHttp.end(); return;
+          http.end(); return;
         }
         
         int cmd = doc["spray"] | 0; 
@@ -192,29 +190,26 @@ void pollServer() {
 
         if (cmd > 0) {
           if (cmd >= 1 && cmd <= 4 && cmd == lastAppCmd && isRunning) {
-             sharedHttp.end(); return; 
+             http.end(); return; 
           }
           lastAppCmd = cmd; 
 
           Serial.printf("\r\n" C_GREEN "📲 [APP] 명령: %d\r\n" C_RESET, cmd);
           
-          if (cmd == 90) { stopSystem(); currentMode = 0; updateDisplay(0, "Reset"); return; }
+          if (cmd == 90) { stopSystem(); currentMode = 0; updateDisplay(0, "Reset"); http.end(); return; }
           if (cmd == 30) { 
               currentMode = 3;
-
               String region = doc["region"] | "";
               if (region.length() == 0) region = doc["target_region"] | "";
-              if (region.length() > 0) {
-                lastWeatherRegion = region;
-              }
+              if (region.length() > 0) lastWeatherRegion = region;
 
               lastWeatherCallMillis = millis() - WEATHER_INTERVAL; 
               updateDisplay(lastWeatherIconId, lastWeatherLabel);
-              return;
+              http.end(); return;
             }
           if (cmd >= 80 && cmd <= 82) {
             changeVolume((cmd == 80) ? 0 : (cmd == 81 ? currentVolume - 2 : currentVolume + 2)); 
-            updateDisplay(0, "Volume Set"); lastWebMessage = "볼륨 조절 완료"; return; 
+            updateDisplay(0, "Volume Set"); lastWebMessage = "볼륨 조절 완료"; http.end(); return; 
           }
 
           triggerSpray(cmd, 3, music, "앱 제어 중...", false);
@@ -223,9 +218,9 @@ void pollServer() {
           lastAppCmd = 0; 
         }
       } else if (code < 0) {
-        Serial.printf(C_RED "⚠️ [APP] 서버 에러: %s\r\n" C_RESET, sharedHttp.errorToString(code).c_str());
+        Serial.printf(C_RED "⚠️ [APP] 서버 에러: %s\r\n" C_RESET, http.errorToString(code).c_str());
       }
-      sharedHttp.end();
+      http.end(); // 세션 종료
     }
   }
 }
@@ -234,23 +229,23 @@ void sendServerRequest(String payload) {
   if (WiFi.status() != WL_CONNECTED) { Serial.println("WiFi Err"); return; }
   
   initNetworkSession();
+  HTTPClient http; // 지역 변수화
 
-  if (!sharedHttp.begin(sharedClient, serverName)) return;
-  sharedHttp.addHeader("Content-Type", "application/json");
+  if (!http.begin(sharedClient, serverName)) return;
+  http.addHeader("Content-Type", "application/json");
 
-  int code = sharedHttp.POST(payload);
+  int code = http.POST(payload);
   if (code == HTTP_CODE_OK) {
     JsonDocument doc; 
-    if (deserializeJson(doc, sharedHttp.getString())) {
+    if (deserializeJson(doc, http.getString())) { // http 사용
        Serial.println(C_RED "⚠️ 서버 응답 JSON 오류" C_RESET);
-       sharedHttp.end(); return;
+       http.end(); return;
     }
 
     int cmd = doc["spray"] | 0;
     int dur = doc["duration"] | 3;
     String txt = doc["result_text"] | "명령 수신";
     
-    // 조원분 추가 로직: Region 파싱 및 저장
     String region = doc["region"] | "";
     if (region.length() == 0) region = doc["target_region"] | "";
     if (region.length() > 0) {
@@ -270,23 +265,10 @@ void sendServerRequest(String payload) {
       int iconId = 1;
       String w = doc["weather"] | txt;
       String weatherLabel = "Sunny";
-
-      if (w.indexOf("눈") >= 0) {
-        iconId = 4;
-        weatherLabel = "Snowy";
-      }
-      else if (w.indexOf("비") >= 0) {
-        iconId = 3;
-        weatherLabel = "Rainy";
-      }
-      else if (w.indexOf("흐") >= 0 || w.indexOf("구름") >= 0) {
-        iconId = 2;
-        weatherLabel = "Cloudy";
-      }
-      else if (w.indexOf("맑") >= 0) {
-        iconId = 1;
-        weatherLabel = "Sunny";
-      }
+      if (w.indexOf("눈") >= 0) { iconId = 4; weatherLabel = "Snowy"; }
+      else if (w.indexOf("비") >= 0) { iconId = 3; weatherLabel = "Rainy"; }
+      else if (w.indexOf("흐") >= 0 || w.indexOf("구름") >= 0) { iconId = 2; weatherLabel = "Cloudy"; }
+      else if (w.indexOf("맑") >= 0) { iconId = 1; weatherLabel = "Sunny"; }
 
       lastWeatherIconId = iconId;
       lastWeatherLabel = weatherLabel;
@@ -296,20 +278,17 @@ void sendServerRequest(String payload) {
     if (cmd > 0) {
       if (cmd >= 80 && cmd <= 82) {
         changeVolume((cmd == 80) ? 0 : (cmd == 81 ? currentVolume - 2 : currentVolume + 2)); 
-        updateDisplay(0, "Volume Set"); lastWebMessage = "볼륨 조절 완료"; return; 
+        updateDisplay(0, "Volume Set"); lastWebMessage = "볼륨 조절 완료"; http.end(); return; 
       }
       triggerSpray(cmd, dur, music, txt, (currentMode == 3));
     } else {
       Serial.printf(C_YELLOW "⚠️ 대기: %s\r\n" C_RESET, txt.c_str());
       lastWebMessage = txt;
-      if (currentMode == 3) {
-        forceAllOff(); isRunning = false; isSpraying = false; activePin = -1;
-      } else {
-        stopSystem(); updateDisplay(0, txt);
-      }
+      if (currentMode == 3) { forceAllOff(); isRunning = false; isSpraying = false; activePin = -1; }
+      else { stopSystem(); updateDisplay(0, txt); }
     }
   }
-  sharedHttp.end(); 
+  http.end(); // 세션 종료
   showPrompt(); Serial.print(inputBuffer);
 }
 
@@ -350,10 +329,8 @@ bool recordAudio(uint8_t** audioBuffer, uint32_t* totalSize) {
     int16_t currentX = samples[i];
     float currentY = (float)currentX - lastX + dcAlpha * lastY;
     lastX = (float)currentX; lastY = currentY;
-
     int32_t emphasized = (int32_t)(currentY - (preAlpha * (float)prevSample));
     prevSample = (int16_t)currentY;
-
     emphasized = constrain(emphasized, -32768, 32767);
     samples[i] = (int16_t)emphasized;
     if (abs(samples[i]) > maxPeak) maxPeak = abs(samples[i]);
@@ -384,19 +361,21 @@ bool sendAudioToServer(uint8_t* audioBuffer, uint32_t totalSize, String& respons
   bool success = false;
   
   initNetworkSession();
+  HTTPClient http; // 지역 변수화
+  http.setTimeout(10000); // 대용량 데이터 전송을 위해 타임아웃 넉넉히 설정
 
-  if (sharedHttp.begin(sharedClient, serverName)) {
-    sharedHttp.addHeader("Content-Type", "audio/wav");
-    int httpCode = sharedHttp.POST(audioBuffer, totalSize);
+  if (http.begin(sharedClient, serverName)) {
+    http.addHeader("Content-Type", "audio/wav");
+    int httpCode = http.POST(audioBuffer, totalSize);
     if (httpCode > 0) {
-      response = sharedHttp.getString();
+      response = http.getString();
       Serial.printf(C_GREEN "✅ 응답 수신 완료\r\n" C_RESET);
       success = true;
     } else {
-      Serial.printf("HTTP Error: %s\n", sharedHttp.errorToString(httpCode).c_str());
+      Serial.printf("HTTP Error: %s\n", http.errorToString(httpCode).c_str());
       updateDisplay(0, "Network Error");
     }
-    sharedHttp.end();
+    http.end(); // 세션 종료
   } else { Serial.println("Conn Fail"); updateDisplay(0, "Conn Fail"); }
 
   esp_task_wdt_add(NULL);
@@ -504,39 +483,22 @@ void changeVolume(int vol) {
   Serial.printf("\r\033[K" C_GREEN "🔊 볼륨: %d\r\n" C_RESET, currentVolume); showPrompt();
 }
 
-// 파일 맨 아래에 다음 두 함수를 추가합니다.
-
 void initOTA() {
-  ArduinoOTA.setHostname("SmartDiffuser"); // 아두이노 IDE 포트 목록에 표시될 이름
-  
-  // ArduinoOTA.setPassword("1234"); // 필요 시 주석을 해제하여 비밀번호 설정 가능
-
+  ArduinoOTA.setHostname("SmartDiffuser");
   ArduinoOTA.onStart([]() {
     String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
     Serial.println("\r\n[OTA] 무선 업데이트 시작: " + type);
     updateDisplay(0, "Updating..."); 
   });
-  
-  ArduinoOTA.onEnd([]() {
-    Serial.println("\r\n[OTA] 무선 업데이트 완료!");
-    updateDisplay(0, "Update Done");
-  });
-  
+  ArduinoOTA.onEnd([]() { Serial.println("\r\n[OTA] 무선 업데이트 완료!"); updateDisplay(0, "Update Done"); });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     int percent = (progress / (total / 100));
     Serial.printf("\r[OTA] 진행률: %u%%\r", percent);
-    updateProgressBar(percent); // 넥션 디스플레이 프로그레스 바 연동
+    updateProgressBar(percent);
   });
-  
-  ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("\r\n[OTA] 에러 발생[%u]: ", error);
-    updateDisplay(0, "OTA Error");
-  });
-
+  ArduinoOTA.onError([](ota_error_t error) { Serial.printf("\r\n[OTA] 에러 발생[%u]: ", error); updateDisplay(0, "OTA Error"); });
   ArduinoOTA.begin();
   Serial.println(C_CYAN "[System] OTA 무선 업데이트 준비 완료" C_RESET);
 }
 
-void handleOTA() {
-  ArduinoOTA.handle();
-}
+void handleOTA() { ArduinoOTA.handle(); }
