@@ -186,7 +186,6 @@ void checkBackgroundNoise() {
   
   int current_db = calculateDecibels(samples, bytes_read / sizeof(int32_t));
   
-  // EMA 필터를 활용한 팝핑 노이즈 억제
   static float smoothed_db = 0;
   smoothed_db = (0.3 * current_db) + (0.7 * smoothed_db);
   int final_db = (int)smoothed_db;
@@ -200,21 +199,28 @@ void checkBackgroundNoise() {
     trigger_count = 0;
   }
   
-  if (trigger_count >= 3 && (currentTime - lastReactionTime > 5000)) { 
+  // 이미 음성 인식 모드(6)가 아닐 때만 반응하도록 방어
+  if (currentMode != 6 && trigger_count >= 3 && (currentTime - lastReactionTime > 5000)) { 
     lastReactionTime = currentTime;
     trigger_count = 0; 
     
     Serial.print("\r\033[K"); 
-    Serial.printf("\033[36m[Wake-Word] %d dB 연속 감지! (필터 검증 통과) 음성 인식을 시작합니다.\033[0m\r\n", final_db);
+    Serial.printf("\033[36m[Core 0] %d dB 감지! Core 1에 음성 인식 신호를 전달합니다.\033[0m\r\n", final_db);
     
-    int previousMode = currentMode;
-    currentMode = 6; 
+    // ★ 통신을 직접 실행하지 않고 플래그만 활성화 (Core 1로 토스)
+    wakeWordDetected = true; 
+  }
+}
+
+// ★ Core 0에서 무한 반복되며 실행될 태스크
+void sensorTaskLoop(void *parameter) {
+  for (;;) {
+    // 음성 대기 모드나 기본 상태일 때 백그라운드 소음 감지 전담
+    if (currentMode != 7 && currentMode != 8 && currentMode != 6) {
+        checkBackgroundNoise();
+    }
     
-    recordAndSendVoice(); 
-    
-    currentMode = isRunning ? previousMode : 0;
-    
-    showPrompt();
-    Serial.print(inputBuffer);
+    // Core 0의 워치독 타이머(WDT) 에러를 방지하기 위해 2ms 휴식
+    vTaskDelay(2 / portTICK_PERIOD_MS); 
   }
 }
