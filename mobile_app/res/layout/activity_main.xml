@@ -1,0 +1,382 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF"
+    android:padding="20dp"
+    tools:context=".ModeSelectionActivity">
+
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="날씨 디퓨저"
+        android:textColor="#000000"
+        android:textSize="28sp"
+        android:textStyle="bold"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginTop="20dp"/>
+
+    <TextView
+        android:id="@+id/txtStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="상태: 대기 중"
+        android:textColor="#333333"
+        android:textSize="16sp"
+        android:layout_marginTop="10dp"
+        app:layout_constraintTop_toBottomOf="@id/tvTitle"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <LinearLayout
+        android:id="@+id/layoutFeedback"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:visibility="gone"
+        android:layout_marginTop="15dp"
+        app:layout_constraintTop_toBottomOf="@id/txtStatus"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <Button
+            android:id="@+id/btnLike"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="👍 좋아요 (고정)"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#4CAF50"
+            android:layout_marginEnd="10dp"/>
+
+        <Button
+            android:id="@+id/btnDislike"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="👎 별로예요 (변경)"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#F44336"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutMenu"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="visible"
+        app:layout_constraintTop_toBottomOf="@id/layoutFeedback"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="모드를 선택하세요"
+            android:textColor="#555555"
+            android:gravity="center"
+            android:layout_marginBottom="20dp"/>
+
+        <Button android:id="@+id/btnModeManual" android:text="[1] 🎮 수동 제어 모드" style="@style/MenuButton" android:backgroundTint="#8A2BE2" android:textColor="#FFFFFF"/>
+        <Button android:id="@+id/btnModeEmotion" android:text="[2] 💜 감성 모드" style="@style/MenuButton" android:backgroundTint="#8A2BE2" android:textColor="#FFFFFF"/>
+        <Button android:id="@+id/btnModeWeather" android:text="[3] 🌦️ 날씨 모드" style="@style/MenuButton" android:backgroundTint="#8A2BE2" android:textColor="#FFFFFF"/>
+        <Button android:id="@+id/btnModeSetting" android:text="[4] 🛠️ 설정 모드" style="@style/MenuButton" android:backgroundTint="#8A2BE2" android:textColor="#FFFFFF"/>
+        <Button android:id="@+id/btnModeDemo" android:text="[5] ✨ 오토 데모" style="@style/MenuButton" android:backgroundTint="#8A2BE2" android:textColor="#FFFFFF"/>
+        <Button android:id="@+id/btnModeVoice" android:text="[6] 🎤 음성 인식" style="@style/MenuButton" android:backgroundTint="#8A2BE2" android:textColor="#FFFFFF"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutManual"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/layoutFeedback"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🎮 수동 제어 (향기 선택)"
+            android:textColor="#3498db"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="20dp"/>
+
+        <Button android:id="@+id/btnScent1" android:text="🍊 1번: 시트러스 (Citrus)" android:backgroundTint="#F1C40F" android:textColor="#000000" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnScent2" android:text="🌿 2번: 라벤더 (Lavender)" android:backgroundTint="#95A5A6" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnScent3" android:text="🌊 3번: 아쿠아 (Aqua)" android:backgroundTint="#3498DB" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnScent4" android:text="❄️ 4번: 민트 (Mint)" android:backgroundTint="#ECF0F1" android:textColor="#000000" style="@style/MenuButton"/>
+
+        <Button android:id="@+id/btnBackFromManual" android:text="🔙 메뉴로 돌아가기" android:backgroundTint="#555555" style="@style/MenuButton" android:layout_marginTop="30dp"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutEmotion"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/layoutFeedback"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="💜 감성 모드"
+            android:textColor="#9b59b6"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="10dp"/>
+
+        <TextView
+            android:id="@+id/txtCurrentScentEmo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="감정을 선택해주세요"
+            android:textColor="#1976D2"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="20dp"/>
+
+        <Button android:id="@+id/btnEmoHappy" android:text="😄 행복/신남" android:backgroundTint="#E91E63" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnEmoRelax" android:text="😌 편안함/휴식" android:backgroundTint="#2ECC71" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnEmoAngry" android:text="😡 화남/짜증" android:backgroundTint="#E74C3C" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnEmoSad" android:text="😢 슬픔/우울" android:backgroundTint="#34495E" style="@style/MenuButton"/>
+
+        <Button android:id="@+id/btnBackFromEmotion" android:text="🔙 메뉴로 돌아가기" android:backgroundTint="#555555" style="@style/MenuButton" android:layout_marginTop="30dp"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutWeather"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/layoutFeedback"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🌦️ 날씨 모드"
+            android:textColor="#e67e22"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="10dp"/>
+
+        <TextView
+            android:id="@+id/txtCurrentScent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="향기 대기 중..."
+            android:textColor="#1976D2"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="15dp"/>
+
+        <TextView
+            android:id="@+id/txtRegion"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="현재 위치: 확인 안됨"
+            android:textColor="#333333"
+            android:gravity="center"
+            android:textSize="18sp"
+            android:layout_marginBottom="10dp"/>
+
+        <TextView
+            android:id="@+id/txtWeatherInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="날씨 정보 없음"
+            android:textColor="#555555"
+            android:textSize="16sp"
+            android:gravity="center"
+            android:layout_marginBottom="20dp"/>
+
+        <Button android:id="@+id/btnGps" android:text="📍 현재 위치로 날씨 실행" android:backgroundTint="#e67e22" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnBackFromWeather" android:text="🔙 메뉴로 돌아가기" android:backgroundTint="#555555" style="@style/MenuButton" android:layout_marginTop="30dp"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutSettingMenu"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/layoutFeedback"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🛠️ 설정 모드"
+            android:textColor="#7f8c8d"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="20dp"/>
+
+        <Button android:id="@+id/btnGoLoadCell" android:text="⚖️ 로드셀(무게) 설정" android:backgroundTint="#2980b9" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnGoSound" android:text="🎵 소리(음량) 설정" android:backgroundTint="#8e44ad" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnGoMusic" android:text="🎶 배경음악 설정" android:backgroundTint="#e67e22" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnGoIntensity" android:text="💨 분사 강도 설정" android:backgroundTint="#e74c3c" style="@style/MenuButton"/>
+
+        <Button android:id="@+id/btnBackFromSettingMenu" android:text="🔙 메인 메뉴로 돌아가기" android:backgroundTint="#555555" style="@style/MenuButton" android:layout_marginTop="30dp"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutSettingLoadCell"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/layoutFeedback"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="⚖️ 로드셀 상세 설정"
+            android:textColor="#2980b9"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="20dp"/>
+
+        <Button android:id="@+id/btnSetTare" android:text="⚖️ 영점 조절 (Tare)" android:backgroundTint="#27ae60" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnSetSave" android:text="💾 설정값 저장 (Save)" android:backgroundTint="#2980b9" style="@style/MenuButton"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/btnSetMinus" android:text="➖ 보정값 감소" android:layout_weight="1" android:layout_marginRight="5dp" style="@style/MenuButton"/>
+            <Button android:id="@+id/btnSetPlus" android:text="➕ 보정값 증가" android:layout_weight="1" android:layout_marginLeft="5dp" style="@style/MenuButton"/>
+        </LinearLayout>
+
+        <Button android:id="@+id/btnBackToSettingMenu1" android:text="🔙 설정 메뉴로 돌아가기" android:backgroundTint="#7f8c8d" style="@style/MenuButton" android:layout_marginTop="30dp"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutSettingSound"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/layoutFeedback"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🎵 앱 음악/소리 설정"
+            android:textColor="#8e44ad"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="20dp"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/btnVolMinus" android:text="🔉 소리 줄임 (-)" android:layout_weight="1" android:layout_marginRight="5dp" android:backgroundTint="#8e44ad" style="@style/MenuButton"/>
+            <Button android:id="@+id/btnVolPlus" android:text="🔊 소리 키움 (+)" android:layout_weight="1" android:layout_marginLeft="5dp" android:backgroundTint="#8e44ad" style="@style/MenuButton"/>
+        </LinearLayout>
+
+        <Button android:id="@+id/btnVolMute" android:text="🔇 무음 모드" android:backgroundTint="#c0392b" style="@style/MenuButton" android:layout_marginTop="5dp"/>
+
+        <Button android:id="@+id/btnBackToSettingMenu2" android:text="🔙 설정 메뉴로 돌아가기" android:backgroundTint="#7f8c8d" style="@style/MenuButton" android:layout_marginTop="30dp"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutSettingMusic"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/layoutFeedback"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🎶 날씨별 배경음악 선택"
+            android:textColor="#e67e22"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="20dp"/>
+
+        <LinearLayout android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="5dp">
+            <TextView android:layout_width="60dp" android:layout_height="wrap_content" android:text="☀️ 맑음" android:textColor="#e67e22" android:textStyle="bold"/>
+            <Spinner android:id="@+id/spinSunny" android:layout_width="match_parent" android:layout_height="wrap_content" android:backgroundTint="#000000"/>
+        </LinearLayout>
+
+        <LinearLayout android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="5dp">
+            <TextView android:layout_width="60dp" android:layout_height="wrap_content" android:text="☁️ 흐림" android:textColor="#7f8c8d" android:textStyle="bold"/>
+            <Spinner android:id="@+id/spinCloudy" android:layout_width="match_parent" android:layout_height="wrap_content" android:backgroundTint="#000000"/>
+        </LinearLayout>
+
+        <LinearLayout android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="5dp">
+            <TextView android:layout_width="60dp" android:layout_height="wrap_content" android:text="☔ 비" android:textColor="#2980b9" android:textStyle="bold"/>
+            <Spinner android:id="@+id/spinRain" android:layout_width="match_parent" android:layout_height="wrap_content" android:backgroundTint="#000000"/>
+        </LinearLayout>
+
+        <LinearLayout android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="15dp">
+            <TextView android:layout_width="60dp" android:layout_height="wrap_content" android:text="❄️ 눈" android:textColor="#000000" android:textStyle="bold"/>
+            <Spinner android:id="@+id/spinSnow" android:layout_width="match_parent" android:layout_height="wrap_content" android:backgroundTint="#000000"/>
+        </LinearLayout>
+
+        <Button android:id="@+id/btnSaveMusic" android:text="💾 음악 설정 서버에 저장" android:backgroundTint="#FF9800" style="@style/MenuButton"/>
+
+        <Button android:id="@+id/btnBackToSettingMenu3" android:text="🔙 설정 메뉴로 돌아가기" android:backgroundTint="#7f8c8d" style="@style/MenuButton" android:layout_marginTop="30dp"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutSettingIntensity"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/layoutFeedback"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="💨 분사 강도 설정"
+            android:textColor="#e74c3c"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="10dp"/>
+
+        <TextView
+            android:id="@+id/txtCurrentIntensity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="현재 강도: 중 (2단계)"
+            android:textColor="#333333"
+            android:textSize="18sp"
+            android:gravity="center"
+            android:layout_marginBottom="20dp"/>
+
+        <Button android:id="@+id/btnIntensity1" android:text="1단계 (약)" android:backgroundTint="#81C784" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnIntensity2" android:text="2단계 (중)" android:backgroundTint="#4CAF50" style="@style/MenuButton"/>
+        <Button android:id="@+id/btnIntensity3" android:text="3단계 (강)" android:backgroundTint="#388E3C" style="@style/MenuButton"/>
+
+        <Button android:id="@+id/btnBackToSettingMenu4" android:text="🔙 설정 메뉴로 돌아가기" android:backgroundTint="#7f8c8d" style="@style/MenuButton" android:layout_marginTop="30dp"/>
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
