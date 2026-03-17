@@ -472,6 +472,8 @@ void executeVoiceCommand(String jsonResponse) {
   int cmd = doc["spray"] | -1; 
   int dur = doc["duration"] | 3;
   String txt = doc["result_text"] | "명령 수신";
+  String transcript = doc["transcript"] | ""; // 음성 인식 원문
+  String msg = doc["message"] | "명령 수신"; // 서버 메시지
   int music = doc["music"] | 0;
 
   // 1. 유효한 분사 명령 (1~4번 향기)
@@ -497,13 +499,19 @@ void executeVoiceCommand(String jsonResponse) {
     updateDisplay(cmd, txt);
     Serial.printf(C_GREEN "✅ 음성 명령 실행: %s (핀:%d)\r\n" C_RESET, txt.c_str(), activePin);
   } 
-  // 2. 명시적 정지 명령 (예: 서버에서 정지로 정의한 특정 코드 사용)
-  // 만약 서버에서 "꺼줘"에 대해 0을 보낸다면 아래 조건을 cmd == 0으로 유지하십시오.
+  // 2. 명시적 정지 명령 (spray가 0일 때)
   else if (cmd == 0) { 
-    stopSystem();
-    lastWebMessage = txt; 
-    updateDisplay(0, txt); 
-    Serial.println(C_YELLOW "🛑 음성 명령으로 시스템 정지" C_RESET);
+    // ★ 추가된 로직: 묵음이거나 의미 없는 음성일 경우 정지하지 않고 무시함
+    if (transcript == "SILENCE" || msg.indexOf("묵음") >= 0 || msg.indexOf("실패") >= 0 || txt.indexOf("묵음") >= 0) {
+       Serial.println("\r\n[Voice] 묵음 또는 인식 실패. 기존 작동을 계속 유지합니다.");
+       updateDisplay(0, "Keep Running");
+    } else {
+       // 사용자가 명확히 "멈춰" 등의 정지 명령을 내린 경우에만 시스템 정지
+       stopSystem();
+       lastWebMessage = txt; 
+       updateDisplay(0, txt); 
+       Serial.println(C_YELLOW "🛑 음성 명령으로 시스템 정지" C_RESET);
+    }
   }
   // 3. 그 외의 값 (-1 등)은 무시하여 현재 상태 유지
   else {
