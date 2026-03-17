@@ -486,3 +486,40 @@ void changeVolume(int vol) {
   currentVolume = constrain(vol, 0, 30); myDFPlayer.volume(currentVolume); prefs.putInt("volume", currentVolume);
   Serial.printf("\r\033[K" C_GREEN "🔊 볼륨: %d\r\n" C_RESET, currentVolume); showPrompt();
 }
+
+// 파일 맨 아래에 다음 두 함수를 추가합니다.
+
+void initOTA() {
+  ArduinoOTA.setHostname("SmartDiffuser"); // 아두이노 IDE 포트 목록에 표시될 이름
+  
+  // ArduinoOTA.setPassword("1234"); // 필요 시 주석을 해제하여 비밀번호 설정 가능
+
+  ArduinoOTA.onStart([]() {
+    String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
+    Serial.println("\r\n[OTA] 무선 업데이트 시작: " + type);
+    updateDisplay(0, "Updating..."); 
+  });
+  
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\r\n[OTA] 무선 업데이트 완료!");
+    updateDisplay(0, "Update Done");
+  });
+  
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    int percent = (progress / (total / 100));
+    Serial.printf("\r[OTA] 진행률: %u%%\r", percent);
+    updateProgressBar(percent); // 넥션 디스플레이 프로그레스 바 연동
+  });
+  
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("\r\n[OTA] 에러 발생[%u]: ", error);
+    updateDisplay(0, "OTA Error");
+  });
+
+  ArduinoOTA.begin();
+  Serial.println(C_CYAN "[System] OTA 무선 업데이트 준비 완료" C_RESET);
+}
+
+void handleOTA() {
+  ArduinoOTA.handle();
+}
