@@ -56,6 +56,16 @@ void initSystem() {
   webServer.begin();
   bootAnimation();
   printMainMenu();
+
+  xTaskCreatePinnedToCore(
+    sensorTaskLoop,     // 실행할 함수
+    "SensorTask",       // 태스크 이름
+    8192,               // 스택 크기
+    NULL,               // 파라미터
+    1,                  // 우선순위
+    &SensorTaskHandle,  // 태스크 핸들
+    0                   // 실행할 코어 번호 (Core 0)
+  );
 }
 
 void runSystem() {
@@ -64,12 +74,23 @@ void runSystem() {
 
   if (currentMode == 7) { runSoundVisualizer(); checkSerialInput(); return; }
   if (currentMode == 8) { runSoundReaction();   checkSerialInput(); return; }
-
-  // 이미 음성 인식 모드(6)가 실행 중일 때는 중복 감지를 방지합니다.
   if (currentMode == 6) { return; }
 
-  // ★ 변경: 현재 모드나 동작 상태(isRunning)에 상관없이 항상 소음을 감지합니다.
-  checkBackgroundNoise();
+  // ★ 기존 checkBackgroundNoise() 삭제
+  // Core 0가 소음을 감지하여 플래그를 켜면, Core 1이 안전하게 통신(record) 실행
+  if (wakeWordDetected) {
+    wakeWordDetected = false; // 플래그 초기화
+    
+    int previousMode = currentMode;
+    currentMode = 6; 
+    
+    recordAndSendVoice(); 
+    
+    currentMode = isRunning ? previousMode : 0;
+    
+    showPrompt();
+    Serial.print(inputBuffer);
+  }
 
   manageWiFi();
   systemHeartbeat();
