@@ -71,7 +71,9 @@ extern const char* password;
 extern String serverName;
 
 extern unsigned long sprayDuration;
-extern const long REST_TIME;
+extern long REST_TIME;
+extern long REST_TIME;
+extern int currentIntensity;
 extern const long MAX_RUN_TIME;
 extern float calibration_factor;
 extern int currentVolume;
