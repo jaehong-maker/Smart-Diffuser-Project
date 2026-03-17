@@ -21,7 +21,8 @@ const char* password  = "12345678";
 String serverName     = "https://tgrwszo3iwurntqeq76s5rro640asnwq.lambda-url.ap-northeast-2.on.aws/";
 
 unsigned long sprayDuration = 3000;
-const long REST_TIME        = 5000;
+long REST_TIME        = 6000;
+int currentIntensity  = 2;
 const long MAX_RUN_TIME     = 270000;
 float calibration_factor = 430.0;
 int currentVolume = 20;
