@@ -45,6 +45,7 @@ const int NEXTION_TX_PIN = 17;  const int NEXTION_RX_PIN = 16;
 #define I2S_PORT I2S_NUM_0
 #define SAMPLE_RATE 16000
 #define RECORD_TIME 2
+#define REST_TIME 5000
 
 // --- 구조체 ---
 struct WavHeader {
@@ -111,6 +112,7 @@ void enterWeatherMode(bool runNow);
 void runSprayLogic();
 void runAutoDemoLoop();
 void checkSafety();
+void checkBackgroundNoise();
 
 // Hardware.cpp
 void initMicrophone();
