@@ -150,49 +150,54 @@ void checkBackgroundNoise() {
   int32_t samples[32]; 
   size_t bytes_read = 0;
   
-  // I2S 포트에서 데이터 수신
   i2s_read(I2S_PORT, &samples, sizeof(samples), &bytes_read, 0);
-  
-  // [개선 1] 읽은 데이터가 없으면 즉시 종료 (Early Return)
   if (bytes_read == 0) return;
   
   double sumSquares = 0.0; 
-  // [개선 2] 명시적인 타입 크기 연산으로 안전성 확보
   int numSamples = bytes_read / sizeof(int32_t); 
   
-  // 오디오 샘플 파형의 제곱합 계산
   for (int i = 0; i < numSamples; i++) { 
     int16_t wave = (samples[i] >> 14); 
     sumSquares += (double)wave * wave; 
   }
   
-  // RMS(실효값) 및 데시벨(dB) 계산
   double rms = sqrt(sumSquares / numSamples); 
-  if (rms < 1.0) rms = 1.0; // log10(0) 예외 처리
+  if (rms < 1.0) rms = 1.0; 
+  int current_db = (int)(20.0 * log10(rms)); 
   
-  int db = (int)(20.0 * log10(rms)); 
+  // [업그레이드 1] EMA(지수 이동 평균) 필터 적용 (이전 소음 70% + 현재 소음 30%)
+  // 순간적인 충격음이나 팝핑 노이즈로 인해 데시벨이 비정상적으로 튀는 현상을 방지합니다.
+  static float smoothed_db = 0;
+  smoothed_db = (0.3 * current_db) + (0.7 * smoothed_db);
+  int final_db = (int)smoothed_db;
   
-  // [개선 3] 현재 시간을 변수에 캐싱하여 정확도 향상 및 중복 호출 방지
   unsigned long currentTime = millis();
   
-  if (db >= soundThreshold && (currentTime - lastReactionTime > 5000)) { 
+  // [업그레이드 2] 지속 시간(연속 감지) 검증
+  // 사람의 호출 발화는 순간의 파열음보다 길게 유지됨을 이용한 알고리즘입니다.
+  static int trigger_count = 0;
+  
+  if (final_db >= soundThreshold) {
+    trigger_count++;
+  } else {
+    trigger_count = 0; // 소리가 줄어들면 카운트를 즉시 초기화하여 오작동을 막습니다.
+  }
+  
+  // 3회 이상(약 100~200ms) 기준 데시벨 이상의 소리가 연속으로 유지되었을 때만 최종 실행
+  if (trigger_count >= 3 && (currentTime - lastReactionTime > 5000)) { 
     lastReactionTime = currentTime;
+    trigger_count = 0; // 실행 후 카운트 초기화
     
     Serial.print("\r\033[K"); 
-    Serial.printf("\033[36m[Wake-Word] %d dB 감지! 작동을 유지하며 음성 인식을 시작합니다.\033[0m\r\n", db);
+    Serial.printf("\033[36m[Wake-Word] %d dB 연속 감지! (필터 검증 통과) 음성 인식을 시작합니다.\033[0m\r\n", final_db);
     
-    // 현재 상태 저장 후 음성 인식 모드(6)로 진입
     int previousMode = currentMode;
     currentMode = 6; 
     
-    // 녹음 및 서버 전송 실행
     recordAndSendVoice(); 
     
-    // [개선 4] 삼항 연산자를 활용하여 코드 길이 축약
-    // 작동이 계속 유지 중이면 이전 모드로 복귀, 서버 명령에 의해 정지되었다면 대기 모드(0)로 전환
     currentMode = isRunning ? previousMode : 0;
     
-    // 터미널 프롬프트 재출력
     showPrompt();
     Serial.print(inputBuffer);
   }
