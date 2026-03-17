@@ -42,19 +42,28 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode = 
 // 넥션 디스플레이 및 유틸 함수들
 // ==========================================
 void checkNextionInput() {
-  static String buf = ""; static unsigned long lastRxTime = 0;
+  static String buf = ""; 
+  
   while (nexSerial.available()) {
     char c = (char)nexSerial.read();
+    
+    // 유효한 문자열만 버퍼에 추가
     if (isalnum(c) || c == '_' || c == ' ') { 
       buf += c;
-      if (buf.length() > 64) buf = ""; 
     }
-    lastRxTime = millis();
-  }
-  if (buf.length() > 0 && (millis() - lastRxTime > 50)) {
-    buf.trim();
-    if (buf.length() > 0) handleNextionCmd(buf);
-    buf = "";
+
+    // 50ms 대기 없이, 명령어가 완성되는 즉시(길이 2 이상) 실시간 검사 및 실행
+    if (buf == "M1" || buf == "M2" || buf == "M3" || 
+        buf == "Y1" || buf == "Y2" || buf == "Y3" || 
+        (buf.startsWith("S") && buf.length() == 2)) {
+      
+      handleNextionCmd(buf);
+      buf = ""; // 실행 후 버퍼 즉시 초기화
+    } 
+    // 가비지 데이터가 쌓여 버퍼가 넘치는 것을 방지
+    else if (buf.length() > 64) {
+      buf = ""; 
+    }
   }
 }
 
