@@ -153,5 +153,7 @@ void printMainMenu();
 void redrawInputLine(String &buffer);
 void printDashboard();
 void changeVolume(int vol);
+void initOTA();
+void handleOTA();
 
 #endif
