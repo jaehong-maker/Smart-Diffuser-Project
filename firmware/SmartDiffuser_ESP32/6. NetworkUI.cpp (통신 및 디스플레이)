@@ -186,6 +186,14 @@ void pollServer() {
         
         int cmd = doc["spray"] | 0; 
         int music = doc["music"] | 0; 
+        currentIntensity = doc["intensity"] | 2; 
+        if (currentIntensity == 1) {
+            REST_TIME = 9000; // 약: 3초 쏘고 9초 쉼
+        } else if (currentIntensity == 2) {
+            REST_TIME = 6000; // 중: 3초 쏘고 6초 쉼
+        } else {
+            REST_TIME = 3000; // 강: 3초 쏘고 3초 쉼
+        }
         static int lastAppCmd = 0; 
 
         if (cmd > 0) {
@@ -245,6 +253,14 @@ void sendServerRequest(String payload) {
     int cmd = doc["spray"] | 0;
     int dur = doc["duration"] | 3;
     String txt = doc["result_text"] | "명령 수신";
+    currentIntensity = doc["intensity"] | 2; 
+    if (currentIntensity == 1) {
+        REST_TIME = 9000; // 약: 3초 쏘고 9초 쉼
+    } else if (currentIntensity == 2) {
+        REST_TIME = 6000; // 중: 3초 쏘고 6초 쉼
+    } else {
+        REST_TIME = 3000; // 강: 3초 쏘고 3초 쉼
+    }
     
     String region = doc["region"] | "";
     if (region.length() == 0) region = doc["target_region"] | "";
