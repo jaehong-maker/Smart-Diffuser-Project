@@ -5,6 +5,8 @@ HardwareSerial mySoftwareSerial(2);
 HardwareSerial nexSerial(1);
 DFRobotDFPlayerMini myDFPlayer;
 HX711 scales[4];
+TaskHandle_t SensorTaskHandle = NULL;
+volatile bool wakeWordDetected = false;
 
 // README에 적어두신 핀 번호를 배열로 묶어줍니다.
 const int LOADCELL_DT[4]  = {34, 36, 39, 32};
@@ -30,6 +32,7 @@ bool isSpraying   = false;
 
 String lastWebMessage = "Ready";
 String inputBuffer    = "";
+String lastWeatherLabel = "Weather";
 
 unsigned long lastPollTime = 0;
 const unsigned long POLL_INTERVAL = 2000;
