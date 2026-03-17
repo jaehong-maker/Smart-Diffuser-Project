@@ -150,42 +150,50 @@ void checkBackgroundNoise() {
   int32_t samples[32]; 
   size_t bytes_read = 0;
   
+  // I2S 포트에서 데이터 수신
   i2s_read(I2S_PORT, &samples, sizeof(samples), &bytes_read, 0);
   
-  if (bytes_read > 0) {
-    double sumSquares = 0; 
-    int numSamples = bytes_read / 4; 
+  // [개선 1] 읽은 데이터가 없으면 즉시 종료 (Early Return)
+  if (bytes_read == 0) return;
+  
+  double sumSquares = 0.0; 
+  // [개선 2] 명시적인 타입 크기 연산으로 안전성 확보
+  int numSamples = bytes_read / sizeof(int32_t); 
+  
+  // 오디오 샘플 파형의 제곱합 계산
+  for (int i = 0; i < numSamples; i++) { 
+    int16_t wave = (samples[i] >> 14); 
+    sumSquares += (double)wave * wave; 
+  }
+  
+  // RMS(실효값) 및 데시벨(dB) 계산
+  double rms = sqrt(sumSquares / numSamples); 
+  if (rms < 1.0) rms = 1.0; // log10(0) 예외 처리
+  
+  int db = (int)(20.0 * log10(rms)); 
+  
+  // [개선 3] 현재 시간을 변수에 캐싱하여 정확도 향상 및 중복 호출 방지
+  unsigned long currentTime = millis();
+  
+  if (db >= soundThreshold && (currentTime - lastReactionTime > 5000)) { 
+    lastReactionTime = currentTime;
     
-    for (int i = 0; i < numSamples; i++) { 
-      int16_t wave = (samples[i] >> 14); 
-      sumSquares += (double)wave * wave; 
-    }
+    Serial.print("\r\033[K"); 
+    Serial.printf("\033[36m[Wake-Word] %d dB 감지! 작동을 유지하며 음성 인식을 시작합니다.\033[0m\r\n", db);
     
-    double rms = sqrt(sumSquares / numSamples); 
-    if (rms < 1) rms = 1; 
-    int db = (int)(20 * log10(rms)); 
+    // 현재 상태 저장 후 음성 인식 모드(6)로 진입
+    int previousMode = currentMode;
+    currentMode = 6; 
     
-    if (db >= soundThreshold && (millis() - lastReactionTime > 5000)) { 
-      lastReactionTime = millis();
-      
-      Serial.print("\r\033[K"); 
-      Serial.printf("\033[36m[Wake-Word] %d dB 감지! 작동을 유지하며 음성 인식을 시작합니다.\033[0m\r\n", db);
-      
-      int previousMode = currentMode;
-      currentMode = 6; 
-      
-      recordAndSendVoice(); 
-      
-      // ★ 변경: 서버 명령으로 인해 기기가 정지(isRunning == false)되었다면 대기 모드(0)로 전환,
-      // 명령이 계속 동작하는 것이라면 원래 실행 중이던 모드로 정상 복귀
-      if (!isRunning) {
-        currentMode = 0;
-      } else {
-        currentMode = previousMode;
-      }
-      
-      showPrompt();
-      Serial.print(inputBuffer);
-    }
+    // 녹음 및 서버 전송 실행
+    recordAndSendVoice(); 
+    
+    // [개선 4] 삼항 연산자를 활용하여 코드 길이 축약
+    // 작동이 계속 유지 중이면 이전 모드로 복귀, 서버 명령에 의해 정지되었다면 대기 모드(0)로 전환
+    currentMode = isRunning ? previousMode : 0;
+    
+    // 터미널 프롬프트 재출력
+    showPrompt();
+    Serial.print(inputBuffer);
   }
 }
