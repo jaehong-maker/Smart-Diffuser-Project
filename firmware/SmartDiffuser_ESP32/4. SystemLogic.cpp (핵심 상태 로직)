@@ -65,6 +65,12 @@ void runSystem() {
   if (currentMode == 7) { runSoundVisualizer(); checkSerialInput(); return; }
   if (currentMode == 8) { runSoundReaction();   checkSerialInput(); return; }
 
+  // 이미 음성 인식 모드(6)가 실행 중일 때는 중복 감지를 방지합니다.
+  if (currentMode == 6) { return; }
+
+  // ★ 변경: 현재 모드나 동작 상태(isRunning)에 상관없이 항상 소음을 감지합니다.
+  checkBackgroundNoise();
+
   manageWiFi();
   systemHeartbeat();
   handleWebClient();
