@@ -439,6 +439,8 @@ void executeVoiceCommand(String jsonResponse) {
 
     lastWebMessage = "성공: " + txt; updateDisplay(cmd, txt);
   } else { 
+    // ★ 추가: spray가 0 (정지 명령)일 경우 시스템을 완전히 정지시킵니다.
+    stopSystem();
     lastWebMessage = txt; updateDisplay(0, txt); 
   }
 }
