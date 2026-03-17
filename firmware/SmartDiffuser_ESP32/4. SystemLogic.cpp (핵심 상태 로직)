@@ -53,6 +53,10 @@ void initSystem() {
   weights[0] = scales[0].get_units(5);
 
   connectWiFi();
+
+  // WiFi가 연결된 후에 호출하는 게 좋아! ㅋㅋㅋ
+  initOTA();
+
   webServer.begin();
   bootAnimation();
   printMainMenu();
@@ -70,6 +74,10 @@ void initSystem() {
 
 void runSystem() {
   esp_task_wdt_reset();
+
+  // 매 루프마다 업데이트 요청이 있는지 감시해
+  handleOTA();
+  
   checkNextionInput();
 
   if (currentMode == 7) { runSoundVisualizer(); checkSerialInput(); return; }
@@ -242,7 +250,7 @@ void runSprayLogic() {
       Serial.print(inputBuffer);
 
       if (currentMode == 3) {
-        updateDisplay(lastWeatherIconId, lastWeatherRegion);
+        updateDisplay(lastWeatherIconId, lastWeatherLabel);
       } else {
         updateDisplay(0, "Resting...");
       }
@@ -266,7 +274,7 @@ void runSprayLogic() {
       else if (activePin == PIN_SNOW) icon = 4;
 
       if (currentMode == 3) {
-        updateDisplay(lastWeatherIconId, lastWeatherRegion);
+        updateDisplay(lastWeatherIconId, lastWeatherLabel);
       } else {
         updateDisplay(icon, "Spraying...");
       }
