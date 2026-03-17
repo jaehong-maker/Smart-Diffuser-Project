@@ -17,21 +17,40 @@ void checkNextionInput() {
 
 void handleNextionCmd(const String &cmd) {
   if (cmd.startsWith("p0") || cmd.startsWith("t_region") || cmd.startsWith("j0")) return;
+
   bool isCommand = false;
   if (cmd == "M1" || cmd == "M2" || cmd == "M3" || cmd.startsWith("S")) isCommand = true;
   if (cmd == "Y1" || cmd == "Y2" || cmd == "Y3") isCommand = true;
+
   if (isCommand) {
-    Serial.print("\r\033[K"); Serial.printf(C_CYAN "[NX] 터치: %s\r\n" C_RESET, cmd.c_str());
+    Serial.print("\r\033[K");
+    Serial.printf(C_CYAN "[NX] 터치: %s\r\n" C_RESET, cmd.c_str());
   }
-  if (cmd == "M2" || cmd == "Y3") { enterWeatherMode(false);
+
+  if (cmd == "M2" || cmd == "Y3") {
+    enterWeatherMode(false);
   }
-  else if (cmd == "M1" || cmd == "Y1") { currentMode = 1;
-    Serial.println(C_BLUE "--- [ Mode 1: 수동 ] ---" C_RESET); showPrompt();
+  else if (cmd == "M1" || cmd == "Y1") {
+    currentMode = 1;
+    Serial.println(C_BLUE "--- [ Mode 1: 수동 ] ---" C_RESET);
+    updateDisplay(0, "Manual Mode");
+    showPrompt();
   }
-  else if (cmd == "M3" || cmd == "Y2") { currentMode = 2;
-    Serial.println(C_BLUE "--- [ Mode 2: 감성 ] ---" C_RESET); showPrompt(); }
-  else if (cmd.startsWith("S")) { int scent = cmd.substring(1).toInt();
-    if (scent >= 1 && scent <= 4) runManualMode(String(scent)); }
+  else if (cmd == "M3" || cmd == "Y2") {
+    currentMode = 2;
+    Serial.println(C_BLUE "--- [ Mode 2: 감성 ] ---" C_RESET);
+    updateDisplay(0, "Emotion Mode");
+    showPrompt();
+  }
+  else if (cmd.startsWith("S")) {
+    int scent = cmd.substring(1).toInt();
+    if (scent >= 1 && scent <= 4) {
+      currentMode = 1;
+      lastWebMessage = "Nextion 수동 분사 S" + String(scent);
+      Serial.printf(C_GREEN "[NX] 수동 향 %d 실행\r\n" C_RESET, scent);
+      runManualMode(String(scent));
+    }
+  }
 }
 
 // ==========================================
