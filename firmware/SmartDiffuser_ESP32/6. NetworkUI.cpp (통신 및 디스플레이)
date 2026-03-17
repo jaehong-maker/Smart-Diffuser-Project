@@ -1,5 +1,10 @@
 #include "Globals.h"
 
+// 세션 재사용을 위한 전역 객체
+static WiFiClientSecure sharedClient;
+static HTTPClient sharedHttp;
+static bool isSessionInit = false;
+
 void checkNextionInput() {
   static String buf = ""; static unsigned long lastRxTime = 0;
   while (nexSerial.available()) {
@@ -62,14 +67,22 @@ void nexSend(const String &cmd) {
 }
 
 void updateDisplay(int iconID, String text) { 
-   if (currentMode == 3 && lastWeatherIconId >= 1 && lastWeatherIconId <= 4) {
+  if (currentMode == 3 && lastWeatherIconId >= 1 && lastWeatherIconId <= 4) {
     iconID = lastWeatherIconId;
   }
-  // 1. 사진(아이콘) 변경 (p0)
+
+  // 날씨 모드에서는 text가 비어 있으면 마지막 region 유지
+  if (currentMode == 3) {
+    if (text.length() == 0) text = lastWeatherRegion;
+    if (text.length() == 0) text = "지역없음";
+  }
+
+  // 1. 사진(아이콘) 변경
   nexSend("p0.pic=" + String(iconID));
-  // 2. 글자(텍스트) 변경 (t_region)
+
+  // 2. 글자(텍스트) 변경
   text.replace("\"", "'"); // 따옴표 충돌 방지
-  nexSend("t_region.txt=\"" + text + "\""); 
+  nexSend("t_region.txt=\"ANSAN\""); 
 }
 void updateTempHumi(float tempC, float humi) {
   String t = String(tempC, 1) + "C";
@@ -116,47 +129,51 @@ void manageWiFi() {
 void pollServer() {
   if (currentMode == 5) return;
   unsigned long now = millis();
+  
   if (now - lastPollTime >= POLL_INTERVAL) {
     lastPollTime = now;
     if (WiFi.status() != WL_CONNECTED) return;
-    WiFiClientSecure client;
-    client.setInsecure(); HTTPClient http; http.setTimeout(3000);
-    if (http.begin(client, serverName)) {
-      http.addHeader("Content-Type", "application/json");
+    
+    // ★ 핵심: 매번 생성 안 하고 처음 한 번만 세팅!
+    if (!isSessionInit) {
+      sharedClient.setInsecure();
+      sharedHttp.setReuse(true); // Keep-Alive 세션 유지 ㅋㅋㅋ
+      sharedHttp.setTimeout(3000);
+      isSessionInit = true;
+    }
 
-      // [추가된 로직] 현재 측정된 weights 배열의 값을 JSON 문자열로 조합
+    if (sharedHttp.begin(sharedClient, serverName)) {
+      sharedHttp.addHeader("Content-Type", "application/json");
+
       String payload = "{\"action\": \"POLL\", \"deviceId\": \"App_User\", \"weights\": [";
-      payload += String(weights[0], 1) + ", "; // 소수점 1자리까지 전송
+      payload += String(weights[0], 1) + ", "; 
       payload += String(weights[1], 1) + ", ";
       payload += String(weights[2], 1) + ", ";
       payload += String(weights[3], 1) + "]}";
 
-      // 조합된 payload를 서버로 전송
-      int code = http.POST(payload);
+      int code = sharedHttp.POST(payload);
       
-      // [안정화 1] HTTP 상태 코드가 200(OK)일 때만 처리하도록 방어
       if (code == HTTP_CODE_OK) {
-        String res = http.getString();
+        String res = sharedHttp.getString();
         JsonDocument doc; 
         
-        // [안정화 2] JSON 파싱 에러 체크 (서버가 이상한 값을 보낼 때 크래시 방지)
         DeserializationError error = deserializeJson(doc, res);
         
         if (error) {
           Serial.print(C_RED "⚠️ [APP] JSON 파싱 에러: " C_RESET);
           Serial.println(error.c_str());
-          http.end();
+          sharedHttp.end(); // setReuse(true) 상태라 TCP는 안 끊김 ㅎㅎ
           return;
         }
         
-        int cmd = doc["spray"] | 0; // 값이 없으면 기본값 0
+        int cmd = doc["spray"] | 0; 
         int music = doc["music"] | 0; 
         static int lastAppCmd = 0; 
 
         if (cmd > 0) {
           if (cmd >= 1 && cmd <= 4) {
              if (cmd == lastAppCmd && isRunning) {
-                 http.end();
+                 sharedHttp.end();
                  return; 
              }
           }
@@ -191,11 +208,8 @@ void pollServer() {
           startTimeMillis = millis();
           digitalWrite(activePin, LOW); 
           
-          if (music > 0 && music <= 20) {
-            playSound(music);
-          } else {
-            playSound(cmd); 
-          }
+          if (music > 0 && music <= 20) playSound(music);
+          else playSound(cmd); 
           
           updateDisplay(cmd, "App Control"); 
           lastWebMessage = "앱 제어 중...";
@@ -204,10 +218,9 @@ void pollServer() {
           lastAppCmd = 0; 
         }
       } else if (code < 0) {
-        // [안정화 3] 타임아웃 등 네트워크 접속 실패 로그
-        Serial.printf(C_RED "⚠️ [APP] 서버 연결 실패: %s\r\n" C_RESET, http.errorToString(code).c_str());
+        Serial.printf(C_RED "⚠️ [APP] 서버 연결 실패: %s\r\n" C_RESET, sharedHttp.errorToString(code).c_str());
       }
-      http.end();
+      sharedHttp.end(); // 마무리
     }
   }
 }
@@ -244,6 +257,13 @@ void sendServerRequest(String payload) {
     String txt = doc["result_text"] | "명령 수신";
     String tS = doc["temp"] | "";
     String hS = doc["humidity"] | "";
+    String region = doc["region"] | "";
+    if (region.length() == 0) region = doc["target_region"] | "";
+
+    if (region.length() > 0) {
+      lastWeatherRegion = region;
+      Serial.printf(C_GREEN "[WEATHER] region 저장: %s\r\n" C_RESET, lastWeatherRegion.c_str());
+    }
     if (tS.length() && hS.length()) {
       updateTempHumi(tS.toFloat(), hS.toFloat());
     }
