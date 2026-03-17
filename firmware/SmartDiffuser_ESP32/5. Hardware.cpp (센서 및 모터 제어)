@@ -145,3 +145,47 @@ void runSoundReaction() {
     }
   }
 }
+
+void checkBackgroundNoise() {
+  int32_t samples[32]; 
+  size_t bytes_read = 0;
+  
+  i2s_read(I2S_PORT, &samples, sizeof(samples), &bytes_read, 0);
+  
+  if (bytes_read > 0) {
+    double sumSquares = 0; 
+    int numSamples = bytes_read / 4; 
+    
+    for (int i = 0; i < numSamples; i++) { 
+      int16_t wave = (samples[i] >> 14); 
+      sumSquares += (double)wave * wave; 
+    }
+    
+    double rms = sqrt(sumSquares / numSamples); 
+    if (rms < 1) rms = 1; 
+    int db = (int)(20 * log10(rms)); 
+    
+    if (db >= soundThreshold && (millis() - lastReactionTime > 5000)) { 
+      lastReactionTime = millis();
+      
+      Serial.print("\r\033[K"); 
+      Serial.printf("\033[36m[Wake-Word] %d dB 감지! 작동을 유지하며 음성 인식을 시작합니다.\033[0m\r\n", db);
+      
+      int previousMode = currentMode;
+      currentMode = 6; 
+      
+      recordAndSendVoice(); 
+      
+      // ★ 변경: 서버 명령으로 인해 기기가 정지(isRunning == false)되었다면 대기 모드(0)로 전환,
+      // 명령이 계속 동작하는 것이라면 원래 실행 중이던 모드로 정상 복귀
+      if (!isRunning) {
+        currentMode = 0;
+      } else {
+        currentMode = previousMode;
+      }
+      
+      showPrompt();
+      Serial.print(inputBuffer);
+    }
+  }
+}
