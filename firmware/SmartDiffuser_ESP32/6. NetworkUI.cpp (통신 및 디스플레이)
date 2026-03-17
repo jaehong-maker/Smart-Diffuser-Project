@@ -333,59 +333,98 @@ bool recordAudio(uint8_t** audioBuffer, uint32_t* totalSize) {
   uint32_t dataSize = SAMPLE_RATE * RECORD_TIME * 2;
   *totalSize = sizeof(WavHeader) + dataSize;
 
+  // 1. 메모리 가용성 체크 
   if (ESP.getFreeHeap() < *totalSize + 20000) {
     Serial.println(C_RED "⚠️ 메모리 부족! 기기를 재부팅해주세요." C_RESET);
     updateDisplay(0, "Memory Full");
     return false;
   }
 
-  Serial.printf(C_YELLOW "\r\n[Voice] 🎤 녹음 (2초)...\r\n" C_RESET);
+  // 2. 버퍼 할당 및 WAV 헤더 작성 
+  Serial.printf(C_YELLOW "\r\n[Voice] 🎤 녹음 시작 (2초)...\r\n" C_RESET);
   *audioBuffer = (uint8_t*)malloc(*totalSize);
   if (*audioBuffer == NULL) return false;
 
-  WavHeader header; memcpy(header.riff, "RIFF", 4);
-  header.overall_size = *totalSize - 8; memcpy(header.wave, "WAVE", 4); memcpy(header.fmt_chunk_marker, "fmt ", 4); header.length_of_fmt = 16; header.format_type = 1;
-  header.channels = 1; header.sample_rate = SAMPLE_RATE; header.byterate = SAMPLE_RATE * 2; header.block_align = 2; header.bits_per_sample = 16; memcpy(header.data_chunk_header, "data", 4);
-  header.data_size = dataSize; memcpy(*audioBuffer, &header, sizeof(WavHeader));
+  WavHeader header; 
+  memcpy(header.riff, "RIFF", 4);
+  header.overall_size = *totalSize - 8; 
+  memcpy(header.wave, "WAVE", 4); 
+  memcpy(header.fmt_chunk_marker, "fmt ", 4); 
+  header.length_of_fmt = 16; 
+  header.format_type = 1; // PCM
+  header.channels = 1; 
+  header.sample_rate = SAMPLE_RATE; 
+  header.byterate = SAMPLE_RATE * 2; 
+  header.block_align = 2; 
+  header.bits_per_sample = 16; 
+  memcpy(header.data_chunk_header, "data", 4);
+  header.data_size = dataSize; 
+  memcpy(*audioBuffer, &header, sizeof(WavHeader));
 
+  // 3. I2S 데이터 읽기 
   size_t bytesRead = 0;
   i2s_read(I2S_PORT, (void*)(*audioBuffer + sizeof(WavHeader)), dataSize, &bytesRead, portMAX_DELAY);
 
-  long sumVolume = 0; 
+  // 4. 디지털 신호 처리 (DSP) 필터 적용
   int16_t* samples = (int16_t*)(*audioBuffer + sizeof(WavHeader));
-  
-  // ★ [펌웨어 끝판왕의 끝판왕] 주파수 강조 + 정규화
-  float preEmphasis = 0.97; // 고주파 강조 계수
-  int16_t lastSample = 0;
+  int numSamples = dataSize / 2;
 
-  // ★ [펌웨어 마스터 등급] 동적 범위 압축(DRC) + 자동 게인 제어
-  for (int i = 0; i < (int)(dataSize / 2); i++) {
-    int32_t sample = samples[i];
-    
-    // 1. 컴프레서: 작은 소리는 키우고 큰 소리는 압축하여 평준화
-    float absSample = abs(sample);
-    if (absSample > 0) {
-      // 로그 압축 방식과 유사한 비선형 증폭 적용
-      if (absSample < 4000) sample *= 8;      // 아주 작은 소리는 8배
-      else if (absSample < 10000) sample *= 4; // 중간 소리는 4배
-      else sample *= 2;                       // 이미 큰 소리는 2배만
-    }
+  float lastX = 0;
+  float lastY = 0;
+  float dcAlpha = 0.999;     // DC Offset 제거 계수
+  float preAlpha = 0.97;     // Pre-emphasis(고주파 강조) 계수
+  int16_t maxPeak = 0;
+  int16_t prevSample = 0;
 
-    // 2. 최종 클리핑 방지
-    if (sample > 32767) sample = 32767;
-    if (sample < -32768) sample = -32768;
+  // --- 1단계: DC Offset 제거 및 고주파 강조 ---
+  for (int i = 0; i < numSamples; i++) {
+    int16_t currentX = samples[i];
+
+    // DC Offset 제거 필터 (High-pass)
+    float currentY = (float)currentX - lastX + dcAlpha * lastY;
+    lastX = (float)currentX;
+    lastY = currentY;
+
+    // 고주파 강조 (음성 특징을 더 명확하게 함)
+    int32_t emphasized = (int32_t)(currentY - (preAlpha * (float)prevSample));
+    prevSample = (int16_t)currentY;
+
+    // 클리핑 방지 및 샘플 저장
+    if (emphasized > 32767) emphasized = 32767;
+    else if (emphasized < -32768) emphasized = -32768;
     
-    samples[i] = (int16_t)sample;
-    sumVolume += abs(samples[i]);
+    samples[i] = (int16_t)emphasized;
+
+    // 최대 피크 탐색 (정규화용)
+    if (abs(samples[i]) > maxPeak) maxPeak = abs(samples[i]);
   }
 
-  // 증폭되었으므로 기준치를 500으로 다시 세팅
-  if (sumVolume / (dataSize / 2) < 200) {
-    Serial.println(C_RED "→ 🤫 침묵 (취소)" C_RESET);
+  // --- 2단계: Peak Normalization (볼륨 최적화) ---
+  long sumVolume = 0;
+  if (maxPeak > 500) { // 최소한의 소리가 감지되었을 때만 정규화
+    float gain = 30000.0 / (float)maxPeak;
+    if (gain > 15.0) gain = 15.0; // 노이즈 폭발 방지를 위해 최대 15배 제한
+
+    for (int i = 0; i < numSamples; i++) {
+      int32_t boosted = (int32_t)(samples[i] * gain);
+      
+      if (boosted > 32767) boosted = 32767;
+      else if (boosted < -32768) boosted = -32768;
+      
+      samples[i] = (int16_t)boosted;
+      sumVolume += abs(samples[i]);
+    }
+  }
+
+  // 5. 침묵 여부 확인 및 결과 반환 
+  if (sumVolume / numSamples < 300) { // 정규화 후에도 소리가 너무 작으면 취소
+    Serial.println(C_RED "→ 🤫 소리가 너무 작습니다 (취소)" C_RESET);
     updateDisplay(0, "Too Quiet");
     free(*audioBuffer);
     return false;
   }
+
+  Serial.println(C_GREEN "→ ✅ 필터링 및 증폭 완료" C_RESET);
   return true;
 }
 
@@ -420,28 +459,55 @@ bool sendAudioToServer(uint8_t* audioBuffer, uint32_t totalSize, String& respons
 // 3. 기기 제어 전문가 (JSON 응답 파싱 및 모터 구동)
 // ==========================================================
 void executeVoiceCommand(String jsonResponse) {
-  JsonDocument doc; deserializeJson(doc, jsonResponse);
-  int cmd = doc["spray"] | 0;
+  JsonDocument doc; 
+  DeserializationError error = deserializeJson(doc, jsonResponse);
+  
+  // JSON 파싱 에러 대응
+  if (error) {
+    Serial.println(C_RED "⚠️ 음성 응답 파싱 실패" C_RESET);
+    return;
+  }
+
+  // 기본값을 -1로 설정하여 0(기본값)으로 인한 오작동 방지
+  int cmd = doc["spray"] | -1; 
   int dur = doc["duration"] | 3;
   String txt = doc["result_text"] | "명령 수신";
   int music = doc["music"] | 0;
 
-  if (cmd > 0) {
+  // 1. 유효한 분사 명령 (1~4번 향기)
+  if (cmd >= 1 && cmd <= 4) {
     forceAllOff();
-    if (cmd == 1) activePin = PIN_SUNNY; else if (cmd == 2) activePin = PIN_CLOUDY;
-    else if (cmd == 3) activePin = PIN_RAIN; else if (cmd == 4) activePin = PIN_SNOW;
+    if (cmd == 1) activePin = PIN_SUNNY; 
+    else if (cmd == 2) activePin = PIN_CLOUDY;
+    else if (cmd == 3) activePin = PIN_RAIN; 
+    else if (cmd == 4) activePin = PIN_SNOW;
 
-    isRunning = true; isSpraying = true; sprayDuration = dur * 1000;
-    prevMotorMillis = millis(); startTimeMillis = millis(); digitalWrite(activePin, LOW);
+    isRunning = true; 
+    isSpraying = true; 
+    sprayDuration = dur * 1000;
+    prevMotorMillis = millis(); 
+    startTimeMillis = millis(); 
+    digitalWrite(activePin, LOW);
 
+    // 음악 재생 로직
     if (music > 0 && music <= 20) playSound(music);
     else playSound(cmd);
 
-    lastWebMessage = "성공: " + txt; updateDisplay(cmd, txt);
-  } else { 
-    // ★ 추가: spray가 0 (정지 명령)일 경우 시스템을 완전히 정지시킵니다.
+    lastWebMessage = "성공: " + txt; 
+    updateDisplay(cmd, txt);
+    Serial.printf(C_GREEN "✅ 음성 명령 실행: %s (핀:%d)\r\n" C_RESET, txt.c_str(), activePin);
+  } 
+  // 2. 명시적 정지 명령 (예: 서버에서 정지로 정의한 특정 코드 사용)
+  // 만약 서버에서 "꺼줘"에 대해 0을 보낸다면 아래 조건을 cmd == 0으로 유지하십시오.
+  else if (cmd == 0) { 
     stopSystem();
-    lastWebMessage = txt; updateDisplay(0, txt); 
+    lastWebMessage = txt; 
+    updateDisplay(0, txt); 
+    Serial.println(C_YELLOW "🛑 음성 명령으로 시스템 정지" C_RESET);
+  }
+  // 3. 그 외의 값 (-1 등)은 무시하여 현재 상태 유지
+  else {
+    Serial.printf(C_CYAN "ℹ️ 유효하지 않은 명령(cmd:%d). 현재 상태를 유지합니다.\r\n" C_RESET, cmd);
   }
 }
 
