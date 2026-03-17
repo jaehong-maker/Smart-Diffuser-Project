@@ -485,6 +485,10 @@ void changeVolume(int vol) {
 
 void initOTA() {
   ArduinoOTA.setHostname("SmartDiffuser");
+
+  // ★ 여기에 비밀번호를 설정해! (사진의 그 창에 입력할 번호)
+  ArduinoOTA.setPassword("1234");
+  
   ArduinoOTA.onStart([]() {
     String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
     Serial.println("\r\n[OTA] 무선 업데이트 시작: " + type);
