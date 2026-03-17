@@ -202,22 +202,53 @@ void enterWeatherMode(bool runNow) {
 
 void runSprayLogic() {
   if (activePin == -1) return;
+
   if (isSpraying) {
     if (millis() - prevMotorMillis >= sprayDuration) {
-      digitalWrite(activePin, HIGH); isSpraying = false; prevMotorMillis = millis();
-      if (currentMode == 1) { stopSystem(); showPrompt(); return; }
-      Serial.print("\r\033[K"); Serial.printf(C_CYAN "      └── [Idle] 휴식...\r\n" C_RESET);
-      showPrompt(); Serial.print(inputBuffer); updateDisplay((currentMode == 3 ? lastWeatherIconId : 0), "Resting...");
+      digitalWrite(activePin, HIGH);
+      isSpraying = false;
+      prevMotorMillis = millis();
+
+      if (currentMode == 1) {
+        stopSystem();
+        showPrompt();
+        return;
+      }
+
+      Serial.print("\r\033[K");
+      Serial.printf(C_CYAN "      └── [Idle] 휴식...\r\n" C_RESET);
+      showPrompt();
+      Serial.print(inputBuffer);
+
+      if (currentMode == 3) {
+        updateDisplay(lastWeatherIconId, lastWeatherRegion);
+      } else {
+        updateDisplay(0, "Resting...");
+      }
     }
   } else {
     if (millis() - prevMotorMillis >= REST_TIME) {
-      forceAllOff(); digitalWrite(activePin, LOW); isSpraying = true; prevMotorMillis = millis();
-      Serial.print("\r\033[K"); Serial.printf(C_GREEN "      ┌── [Action] 재분사!\r\n" C_RESET);
-      showPrompt(); Serial.print(inputBuffer);
+      forceAllOff();
+      digitalWrite(activePin, LOW);
+      isSpraying = true;
+      prevMotorMillis = millis();
+
+      Serial.print("\r\033[K");
+      Serial.printf(C_GREEN "      ┌── [Action] 재분사!\r\n" C_RESET);
+      showPrompt();
+      Serial.print(inputBuffer);
+
       int icon = 0;
-      if (activePin == PIN_SUNNY) icon=1; else if (activePin == PIN_CLOUDY) icon=2;
-      else if (activePin == PIN_RAIN) icon=3; else if (activePin == PIN_SNOW) icon=4;
-      updateDisplay(icon, "Spraying...");
+      if (activePin == PIN_SUNNY) icon = 1;
+      else if (activePin == PIN_CLOUDY) icon = 2;
+      else if (activePin == PIN_RAIN) icon = 3;
+      else if (activePin == PIN_SNOW) icon = 4;
+
+      if (currentMode == 3) {
+        updateDisplay(lastWeatherIconId, lastWeatherRegion);
+      } else {
+        updateDisplay(icon, "Spraying...");
+      }
     }
   }
 }
