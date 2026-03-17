@@ -60,12 +60,32 @@ void systemHeartbeat() {
 
 void monitorWeight() {
   unsigned long currentTime = millis();
-  if (currentTime - lastWeightCheckTime <= 500) return;
+  
+  // 센서값을 더 자주 읽어와서 필터링 정밀도를 높입니다 (500ms -> 200ms)
+  if (currentTime - lastWeightCheckTime <= 200) return;
   
   lastWeightCheckTime = currentTime;
+  
+  // 필터링 강도 계수 (0.0 ~ 1.0)
+  // 값이 작을수록 이전 값의 비중이 커져서 부드러워지지만, 반응 속도는 느려집니다.
+  const float alpha = 0.15; 
+
   for (int i = 0; i < 4; i++) {
     if (scales[i].is_ready()) {
-      weights[i] = scales[i].get_units(1);
+      float rawVal = scales[i].get_units(1);
+      
+      // 1차 방어: 통신 노이즈로 인한 비정상적인 쓰레기값(스파이크) 무시
+      // 디퓨저 용액의 범위를 고려하여 -50g ~ 1000g 사이의 값만 유효하게 처리합니다.
+      if (rawVal > 1000.0 || rawVal < -50.0) continue; 
+
+      // 2차 방어: EMA 필터를 이용한 부드러운 값 갱신
+      if (weights[i] == 0.0) {
+        // 시스템 시작 시 초기값은 그대로 수용
+        weights[i] = rawVal;
+      } else {
+        // 기존 값에 새로운 값을 15%만 반영하여 흔들림 최소화
+        weights[i] = (alpha * rawVal) + ((1.0 - alpha) * weights[i]);
+      }
     }
   }
 }
