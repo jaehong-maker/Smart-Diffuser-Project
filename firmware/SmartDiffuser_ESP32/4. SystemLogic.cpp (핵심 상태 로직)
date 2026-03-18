@@ -6,7 +6,7 @@ void initSystem() {
 
   nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
   
-  // ★ [업그레이드 1] 디스플레이 초기화 최적화 (99, 100번 임시 코드 대체)
+  // ★ 디스플레이 초기화 최적화 (99, 100번 임시 코드 대체)
   delay(300); // 디스플레이 부팅 대기
   nexSend("bauds=9600"); // 통신 속도 9600 영구 고정
   delay(100);
@@ -54,7 +54,7 @@ void initSystem() {
 
   connectWiFi();
 
-  // WiFi가 연결된 후에 호출하는 게 좋아! ㅋㅋㅋ
+  // WiFi가 연결된 후에 호출하는 게 좋음
   initOTA();
 
   webServer.begin();
@@ -75,7 +75,7 @@ void initSystem() {
 void runSystem() {
   esp_task_wdt_reset();
 
-  // 매 루프마다 업데이트 요청이 있는지 감시해
+  // 매 루프마다 업데이트 요청이 있는지 감시
   handleOTA();
   
   checkNextionInput();
@@ -83,8 +83,7 @@ void runSystem() {
   if (currentMode == 7) { runSoundVisualizer(); checkSerialInput(); return; }
   if (currentMode == 8) { runSoundReaction();   checkSerialInput(); return; }
   if (currentMode == 6) { return; }
-
-  // ★ 기존 checkBackgroundNoise() 삭제
+  
   // Core 0가 소음을 감지하여 플래그를 켜면, Core 1이 안전하게 통신(record) 실행
   if (wakeWordDetected) {
     wakeWordDetected = false; // 플래그 초기화
@@ -133,7 +132,7 @@ void checkSerialInput() {
       else if (c == 't') { for(int i=0; i<4; i++) scales[i].tare(); Serial.println("영점"); printCalibrationInfo(); }
       else if (c == 's') { prefs.putFloat("cal_factor", calibration_factor); Serial.println("저장"); }
       // =======================================================
-      // ★ 추가된 줄: 'p'를 누르면 현재 무게를 JSON 형태로 한 번만 출력
+      // ★ 'p'를 누르면 현재 무게를 JSON 형태로 한 번만 출력
       else if (c == 'p') {
         String payload = "{\"action\": \"POLL\", \"deviceId\": \"App_User\", \"weights\": [";
         payload += String(weights[0], 1) + ", "; 
