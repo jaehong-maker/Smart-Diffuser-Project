@@ -432,7 +432,7 @@ def lambda_handler(event, context):
     # [ACTION] MANUAL
     elif action == "MANUAL":
         try:
-            spray_code = int(body.get("spray", body.get("sprayNum", 1))) 
+            spray_code = int(body.get("spray", body.get("sprayNum", 1))
             region_req = body.get("region", "")
             duration = int(body.get("duration", 3)) 
 
