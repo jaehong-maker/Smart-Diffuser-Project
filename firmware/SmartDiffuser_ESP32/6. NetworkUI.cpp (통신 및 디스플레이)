@@ -62,38 +62,23 @@ void checkNextionInput() {
 void handleNextionCmd(const String &cmd) {
   if (cmd.startsWith("p0") || cmd.startsWith("t_region") || cmd.startsWith("j0")) return;
 
-  bool isCommand = (cmd == "M1" || cmd == "M2" || cmd == "M3" || 
-                  cmd.startsWith("S") || 
-                  cmd == "Y1" || cmd == "Y2" || cmd == "Y3" ||
-                  cmd == "ST");
-  if (isCommand) {
-    Serial.print("\r\033[K");
-    Serial.printf(C_CYAN "[NX] 터치: %s\r\n" C_RESET, cmd.c_str());
-  }
-
-  if (cmd == "M2" || cmd == "Y3") { // 날씨 모드 (2번으로 승격)
+  if (cmd == "M2" || cmd == "Y3") {
+    setSystemMode(MODE_WEATHER, "Weather Mode"); // 2 -> MODE_WEATHER
     enterWeatherMode(false); 
-    currentMode = 2;
   }
   else if (cmd == "M1" || cmd == "Y1") {
-    currentMode = 1;
-    updateDisplay(0, "Manual Mode");
+    setSystemMode(MODE_MANUAL, "Manual Mode"); // 1 -> MODE_MANUAL
   }
-  else if (cmd == "M3" || cmd == "Y2") { // 설정 모드 (3번으로 승격)
-    currentMode = 3;
-    Serial.println(C_YELLOW "[NX] 설정 모드 진입" C_RESET);
-    updateDisplay(0, "Settings");
+  else if (cmd == "M3" || cmd == "Y2") {
+    setSystemMode(MODE_SETTING, "Setting Mode"); // 3 -> MODE_SETTING
   }
   else if (cmd == "ST") {
-    stopSystem();
-    currentMode = 0;
-    updateDisplay(0, "Stopped");
+    setSystemMode(MODE_READY, "Stopped"); // 0 -> MODE_READY
   }
   else if (cmd.startsWith("S")) {
     int scent = cmd.substring(1).toInt();
     if (scent >= 1 && scent <= 4) {
-      currentMode = 1;
-      lastWebMessage = "Nextion 수동 S" + String(scent);
+      setSystemMode(MODE_MANUAL); // 1 -> MODE_MANUAL
       runManualMode(String(scent));
     }
   }
@@ -293,8 +278,10 @@ void executeVoiceCommand(String jsonResponse) {
 
 void recordAndSendVoice() {
   if (WiFi.status() != WL_CONNECTED) return;
-  int prevMode = currentMode;
-  currentMode = 5; // 음성 모드 번호 고정
+  
+  SystemMode prevMode = currentMode;
+  currentMode = MODE_VOICE; // 5 -> MODE_VOICE
+
   uint8_t* audioBuffer = NULL;
   uint32_t totalSize = 0;
   if (recordAudio(&audioBuffer, &totalSize)) {
@@ -304,7 +291,9 @@ void recordAndSendVoice() {
     }
   }
   if (audioBuffer != NULL) free(audioBuffer);
-  currentMode = (prevMode == 5) ? 0 : prevMode; 
+  
+  // 타입 불일치 해결: 0 대신 MODE_READY 사용
+  currentMode = (prevMode == MODE_VOICE) ? MODE_READY : prevMode; 
   showPrompt();
 }
 
@@ -312,7 +301,7 @@ void recordAndSendVoice() {
 // 기타 유틸리티
 // ==========================================
 void autoWeatherScheduler() {
-  if (currentMode != 2 || isRunning) return; // 2번 날씨
+  if (currentMode != MODE_WEATHER || isRunning) return; // 2 -> MODE_WEATHER
   if (millis() - lastWeatherCallMillis >= WEATHER_INTERVAL) {
     lastWeatherCallMillis = millis(); 
     sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\"}");
