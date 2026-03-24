@@ -187,10 +187,19 @@ void pollServer() {
     if (http.begin(sharedClient, serverName)) {
       http.addHeader("Content-Type", "application/json");
 
-      String payload = "{\"action\": \"POLL\", \"deviceId\": \"App_User\", \"weights\": [";
-      for (int i=0; i<4; i++) {
-        payload += String(weights[i], 1) + (i < 3 ? ", " : "]}");
+      // [변경 코드 - ArduinoJson 직렬화 적용]
+      JsonDocument reqDoc;
+      reqDoc["action"] = "POLL";
+      reqDoc["deviceId"] = "App_User";
+
+      JsonArray weightsArray = reqDoc["weights"].to<JsonArray>();
+      for (int i = 0; i < 4; i++) {
+        // 소수점 첫째 자리까지만 안전하게 담기 위해 float 캐스팅 후 삽입
+        weightsArray.add( (float)((int)(weights[i] * 10)) / 10.0 ); 
       }
+
+      String payload;
+      serializeJson(reqDoc, payload); // 완성된 JSON 구조를 안전하게 String으로 직렬화
 
       int code = http.POST(payload);
       
