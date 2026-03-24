@@ -7,19 +7,35 @@ void initNetworkSession() {
   if (!isSessionInit) { sharedClient.setInsecure(); isSessionInit = true; }
 }
 
+// NetworkUI.cpp 파일의 triggerSpray 함수 수정
 void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   forceAllOff();
-  if (cmd == 1) activePin = PIN_SUNNY; else if (cmd == 2) activePin = PIN_CLOUDY;
-  else if (cmd == 3) activePin = PIN_RAIN; else if (cmd == 4) activePin = PIN_SNOW;
+  
+  // ★ 중요: activePin을 여기서 설정해줘야 runSprayLogic이 작동함
+  int targetPin = getPinFromCommand(cmd);
+  if (targetPin == -1) return;
+  
+  activePin = targetPin; // 시스템이 현재 제어할 핀을 기억하게 함
+  if (cmd >= 1 && cmd <= 4) lastNozzleSprayTime[cmd - 1] = millis();
 
-  isRunning = true; isSpraying = true; sprayDuration = dur * 1000;
-  prevMotorMillis = millis(); startTimeMillis = millis(); digitalWrite(activePin, LOW);
+  isRunning = true; 
+  isSpraying = true; 
+  sprayDuration = dur * 1000;
+  prevMotorMillis = millis(); 
+  startTimeMillis = millis(); 
+  
+  digitalWrite(activePin, LOW); // 분사 시작
   
   if (music > 0 && music <= 20) playSound(music); else playSound(cmd);
 
   lastWebMessage = "성공: " + txt; 
   if (!isWeatherMode) updateDisplay(cmd, txt);
-  Serial.printf(C_GREEN "✅ 분사 실행: %s (핀:%d)\r\n" C_RESET, txt.c_str(), activePin);
+
+  // ★ 수정: 앞에 \r\n을 넣어서 이전 라인(프롬프트)과 겹치지 않게 함
+  Serial.printf("\r\n" C_GREEN "✅ 분사 실행: %s (%d번 분사구)\r\n" C_RESET, txt.c_str(), cmd);
+
+  // ★ 추가: 출력이 끝났으니 다시 입력 대기 프롬프트를 그려줌
+  showPrompt();
 }
 
 void checkNextionInput() {
@@ -78,6 +94,7 @@ void manageWiFi() {
   } else { if (!wasConnected) { wasConnected = true; wifiRetryInterval = 5000; } }
 }
 
+// 2초마다 폴링도 큐를 이용하도록 수정
 void pollServer() {
   if (currentMode == MODE_DEMO || isCommunicate) return; 
   unsigned long now = millis();
@@ -87,15 +104,54 @@ void pollServer() {
       JsonDocument reqDoc; reqDoc["action"] = "POLL"; reqDoc["deviceId"] = "App_User";
       JsonArray wArray = reqDoc["weights"].to<JsonArray>();
       for (int i = 0; i < 4; i++) wArray.add((float)((int)(weights[i] * 10)) / 10.0);
-      serializeJson(reqDoc, globalPayload); xEventGroupSetBits(networkEventGroup, BIT_SEND_POLL);
+      String payload; serializeJson(reqDoc, payload);
+      sendServerRequest(payload); 
     }
   }
 }
 
+// 네트워크 전용 태스크가 큐를 감시함
+void networkTaskLoop(void *pvParameters) {
+  for (;;) {
+    String* currentMsgPtr;
+    if (xQueueReceive(networkQueue, &currentMsgPtr, portMAX_DELAY) == pdTRUE) {
+      String payload = *currentMsgPtr;
+      delete currentMsgPtr; 
+
+      isCommunicate = true; 
+      initNetworkSession(); HTTPClient http; http.setTimeout(10000); 
+      if (http.begin(sharedClient, serverName)) {
+        http.addHeader("Content-Type", "application/json");
+        int httpCode = http.POST(payload);
+        if (httpCode == HTTP_CODE_OK) {
+          String response = http.getString();
+          JsonDocument doc;
+          if (!deserializeJson(doc, response)) {
+            int cmd = doc["spray"] | 0;
+            if (cmd > 0) {
+              int dur = doc["duration"] | 3; int music = doc["music"] | 0; 
+              String txt = doc["result_text"] | "명령 수신";
+              triggerSpray(cmd, dur, music, txt, (currentMode == MODE_WEATHER));
+            }
+          }
+        }
+        http.end();
+      }
+      isCommunicate = false;
+    }
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+}
+
+// 입구컷 안 당하게 큐에 넣는 방식으로 변경
 void sendServerRequest(String payload) {
-  if (WiFi.status() != WL_CONNECTED || isCommunicate) return;
-  globalPayload = payload; xEventGroupSetBits(networkEventGroup, BIT_SEND_REQUEST);
-  showPrompt(); Serial.print(inputBuffer);
+  if (WiFi.status() != WL_CONNECTED) return;
+  
+  String* msg = new String(payload);
+  if (xQueueSend(networkQueue, &msg, 0) != pdTRUE) {
+    delete msg; // 큐가 꽉 찼으면 메모리 해제
+    Serial.println(C_RED "⚠️ 통신 대기열이 꽉 찼습니다!" C_RESET);
+  }
 }
 
 bool recordAudio(uint8_t** audioBuffer, uint32_t* totalSize) {
@@ -170,32 +226,3 @@ void printDashboard() { Serial.printf("\r\nWiFi: %d dBm | Weights: %.1f %.1f %.1
 void changeVolume(int vol) { currentVolume = constrain(vol, 0, 30); myDFPlayer.volume(currentVolume); Serial.printf("\r\033[K" C_GREEN "🔊 볼륨: %d\r\n" C_RESET, currentVolume); showPrompt(); }
 void initOTA() { ArduinoOTA.setHostname("SmartDiffuser"); ArduinoOTA.begin(); }
 void handleOTA() { ArduinoOTA.handle(); }
-
-void networkTaskLoop(void *pvParameters) {
-  for (;;) {
-    EventBits_t bits = xEventGroupWaitBits(networkEventGroup, BIT_SEND_POLL | BIT_SEND_VOICE | BIT_SEND_REQUEST, pdTRUE, pdFALSE, portMAX_DELAY);
-    if (WiFi.status() != WL_CONNECTED) { vTaskDelay(100 / portTICK_PERIOD_MS); continue; }
-
-    isCommunicate = true; initNetworkSession(); HTTPClient http; http.setTimeout(10000); 
-    if (http.begin(sharedClient, serverName)) {
-      http.addHeader("Content-Type", "application/json");
-      int httpCode = http.POST(globalPayload);
-      if (httpCode == HTTP_CODE_OK) {
-        String response = http.getString();
-        if (bits & BIT_SEND_VOICE) { executeVoiceCommand(response); } 
-        else {
-          JsonDocument doc;
-          if (!deserializeJson(doc, response)) {
-            int cmd = doc["spray"] | 0;
-            if (cmd > 0) {
-              int dur = doc["duration"] | 3; int music = doc["music"] | 0; String txt = doc["result_text"] | "명령 수신";
-              triggerSpray(cmd, dur, music, txt, (currentMode == MODE_WEATHER));
-            }
-          }
-        }
-      }
-      http.end();
-    }
-    isCommunicate = false; vTaskDelay(10 / portTICK_PERIOD_MS);
-  }
-}
