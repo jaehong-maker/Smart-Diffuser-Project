@@ -92,7 +92,7 @@ void initSystem() {
 
   Serial.print("\r\n\r\n");
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
-  Serial.printf(C_BOLD    " 🚀 SMART DIFFUSER V12.4.0 (REFACTORED) \r\n" C_RESET);
+  Serial.printf(C_BOLD    " 🚀 SMART DIFFUSER V12.5.0 (EEPROM ALARM) \r\n" C_RESET);
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
 
   mySoftwareSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
@@ -100,9 +100,12 @@ void initSystem() {
 
   initMicrophone();
 
+  // ★ 저장소에서 알람 시간 불러오기 추가!
   prefs.begin("diffuser", false);
   calibration_factor = prefs.getFloat("cal_factor", 430.0);
   currentVolume = prefs.getInt("volume", 20); myDFPlayer.volume(currentVolume);
+  alarmHour = prefs.getInt("al_h", 7);
+  alarmMinute = prefs.getInt("al_m", 30);
 
   for (int i = 0; i < 4; i++) {
     scales[i].begin(LOADCELL_DT[i], LOADCELL_SCK[i]);
@@ -112,7 +115,7 @@ void initSystem() {
   connectWiFi();
   
   configTime(9 * 3600, 0, "pool.ntp.org", "time.nist.gov");
-  Serial.println(C_CYAN "🌐 인터넷 시간 동기화 완료!" C_RESET);
+  Serial.printf(C_CYAN "🌐 인터넷 시간 완료! (현재 알람 설정: %02d시 %02d분)\r\n" C_RESET, alarmHour, alarmMinute);
 
   audioEventQueue = xQueueCreate(5, sizeof(int));
   networkEventGroup = xEventGroupCreate();
@@ -126,7 +129,7 @@ void initSystem() {
   xTaskCreatePinnedToCore(sensorTaskLoop, "SensorTask", 8192, NULL, 1, &SensorTaskHandle, 0);
 }
 
-// --- 메인 루프 (리팩토링 완료) ---
+// --- 메인 루프 ---
 void runSystem() {
   esp_task_wdt_reset();
   handleOTA();
@@ -194,8 +197,19 @@ void checkSerialInput() {
     char c = Serial.read();
     if (c == '\n' || c == '\r') {
       if (inputBuffer.length() > 0) {
-        if (inputBuffer == "0") setSystemMode(MODE_READY, "Stopped");
+        
+        // ★ 알람 세팅 명령어 추가 (예: A0730 -> 7시 30분)
+        if (inputBuffer.startsWith("A") && inputBuffer.length() == 5) {
+          alarmHour = inputBuffer.substring(1, 3).toInt();
+          alarmMinute = inputBuffer.substring(3, 5).toInt();
+          prefs.putInt("al_h", alarmHour);
+          prefs.putInt("al_m", alarmMinute);
+          Serial.printf(C_GREEN "\r\n⏰ 알람 시간 변경: %02d시 %02d분 저장 완료!\r\n" C_RESET, alarmHour, alarmMinute);
+          showPrompt();
+        }
+        else if (inputBuffer == "0") setSystemMode(MODE_READY, "Stopped");
         else handleInput(inputBuffer);
+        
         inputBuffer = "";
       }
     } else if (c == '\b' || c == 0x7F) {
