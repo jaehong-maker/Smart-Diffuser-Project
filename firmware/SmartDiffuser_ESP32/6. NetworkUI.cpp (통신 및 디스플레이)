@@ -1,215 +1,126 @@
 #include "Globals.h"
 
-// --- 전역 네트워크 세션 객체 (TLS 커넥션 유지용) ---
+// 비동기 통신용 전방 선언 (에러 방지용)
+void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode);
+void executeVoiceCommand(String jsonResponse);
+
 static WiFiClientSecure sharedClient;
 static bool isSessionInit = false;
 
 void initNetworkSession() {
   if (!isSessionInit) {
-    sharedClient.setInsecure(); // SSL 인증서 검사 건너뛰기
+    sharedClient.setInsecure();
     isSessionInit = true;
   }
 }
 
-// --- 중복 분사 제어 로직 통합 함수 ---
-void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode = false) {
+void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   forceAllOff();
   if (cmd == 1) activePin = PIN_SUNNY; 
   else if (cmd == 2) activePin = PIN_CLOUDY;
   else if (cmd == 3) activePin = PIN_RAIN; 
   else if (cmd == 4) activePin = PIN_SNOW;
 
-  isRunning = true; 
-  isSpraying = true; 
-  sprayDuration = dur * 1000;
-  prevMotorMillis = millis(); 
-  startTimeMillis = millis(); 
-  
+  isRunning = true; isSpraying = true; sprayDuration = dur * 1000;
+  prevMotorMillis = millis(); startTimeMillis = millis(); 
   digitalWrite(activePin, LOW);
   
   if (music > 0 && music <= 20) playSound(music);
   else playSound(cmd);
 
   lastWebMessage = "성공: " + txt; 
-  
-  if (!isWeatherMode) {
-    updateDisplay(cmd, txt);
-  }
+  if (!isWeatherMode) updateDisplay(cmd, txt);
   Serial.printf(C_GREEN "✅ 분사 실행: %s (핀:%d)\r\n" C_RESET, txt.c_str(), activePin);
 }
 
-// ==========================================
-// 넥션 디스플레이 및 유틸 함수들
-// ==========================================
 void checkNextionInput() {
   static String buf = ""; 
   while (nexSerial.available()) {
     char c = (char)nexSerial.read();
-    if (isalnum(c) || c == '_' || c == ' ') { 
-      buf += c;
+    if (isalnum(c) || c == '_' || c == ' ') buf += c;
+    if (buf == "M1" || buf == "M2" || buf == "M3" || buf == "Y1" || buf == "Y2" || buf == "Y3" || buf == "ST" || (buf.startsWith("S") && buf.length() == 2)) {
+      handleNextionCmd(buf); buf = "";
     }
-   if (buf == "M1" || buf == "M2" || buf == "M3" || 
-        buf == "Y1" || buf == "Y2" || buf == "Y3" || 
-        buf == "ST" ||
-        (buf.startsWith("S") && buf.length() == 2)) {
-      handleNextionCmd(buf);
-      buf = "";
-    }
-    else if (buf.length() > 64) { buf = ""; }
+    else if (buf.length() > 64) buf = ""; 
   }
 }
 
 void handleNextionCmd(const String &cmd) {
   if (cmd.startsWith("p0") || cmd.startsWith("t_region") || cmd.startsWith("j0")) return;
-
-  if (cmd == "M2" || cmd == "Y3") {
-    setSystemMode(MODE_WEATHER, "Weather Mode"); // 2 -> MODE_WEATHER
-    enterWeatherMode(false); 
-  }
-  else if (cmd == "M1" || cmd == "Y1") {
-    setSystemMode(MODE_MANUAL, "Manual Mode"); // 1 -> MODE_MANUAL
-  }
-  else if (cmd == "M3" || cmd == "Y2") {
-    setSystemMode(MODE_SETTING, "Setting Mode"); // 3 -> MODE_SETTING
-  }
-  else if (cmd == "ST") {
-    setSystemMode(MODE_READY, "Stopped"); // 0 -> MODE_READY
-  }
+  if (cmd == "M2" || cmd == "Y3") { setSystemMode(MODE_WEATHER, "Weather Mode"); enterWeatherMode(false); }
+  else if (cmd == "M1" || cmd == "Y1") { setSystemMode(MODE_MANUAL, "Manual Mode"); }
+  else if (cmd == "M3" || cmd == "Y2") { setSystemMode(MODE_SETTING, "Setting Mode"); }
+  else if (cmd == "ST") { setSystemMode(MODE_READY, "Stopped"); }
   else if (cmd.startsWith("S")) {
     int scent = cmd.substring(1).toInt();
-    if (scent >= 1 && scent <= 4) {
-      setSystemMode(MODE_MANUAL); // 1 -> MODE_MANUAL
-      runManualMode(String(scent));
-    }
+    if (scent >= 1 && scent <= 4) { setSystemMode(MODE_MANUAL); runManualMode(String(scent)); }
   }
 }
 
 void nexSend(const String &cmd) { 
-  nexSerial.print(cmd);
-  nexSerial.write(0xFF); nexSerial.write(0xFF); nexSerial.write(0xFF); 
+  nexSerial.print(cmd); nexSerial.write(0xFF); nexSerial.write(0xFF); nexSerial.write(0xFF); 
 }
 
 void updateDisplay(int iconID, String text) { 
-  if (currentMode == 2 && lastWeatherIconId >= 1 && lastWeatherIconId <= 4) {
-    iconID = lastWeatherIconId;
-  }
-  if (currentMode == 2) {
-    if (text.length() == 0) text = lastWeatherLabel;
-  }
+  if (currentMode == MODE_WEATHER && lastWeatherIconId >= 1 && lastWeatherIconId <= 4) iconID = lastWeatherIconId;
+  if (currentMode == MODE_WEATHER && text.length() == 0) text = lastWeatherLabel;
   nexSend("p0.pic=" + String(iconID));
-  text.replace("\"", "'");
-  nexSend("t_region.txt=\"" + text + "\"");
+  text.replace("\"", "'"); nexSend("t_region.txt=\"" + text + "\"");
 }
 
 void updateTempHumi(float tempC, float humi) {
-  nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\"");
-  nexSend("t_humi.txt=\"" + String(humi, 0) + "%\"");
+  nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\""); nexSend("t_humi.txt=\"" + String(humi, 0) + "%\"");
 }
 
-void updateProgressBar(int val) { 
-  nexSend("j0.val=" + String(constrain(val, 0, 100))); 
-}
+void updateProgressBar(int val) { nexSend("j0.val=" + String(constrain(val, 0, 100))); }
 
-// ==========================================
-// 통신 및 서버 폴링 로직
-// ==========================================
 void connectWiFi() {
   Serial.printf(C_YELLOW "[System] WiFi Connecting" C_RESET);
-  WiFi.begin(ssid, password);
-  int retry = 0;
+  WiFi.begin(ssid, password); int retry = 0;
   while (WiFi.status() != WL_CONNECTED && retry < 15) { delay(200); Serial.print("."); retry++; }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\r\n" C_GREEN "Connected!\r\n" C_RESET);
-    Serial.printf(C_CYAN "🌐 http://%s/\r\n" C_RESET, WiFi.localIP().toString().c_str());
+    Serial.printf("\r\n" C_GREEN "Connected!\r\n" C_RESET C_CYAN "🌐 http://%s/\r\n" C_RESET, WiFi.localIP().toString().c_str());
   } else { Serial.printf(C_RED "\r\nWiFi Failed.\r\n" C_RESET); }
 }
 
 void manageWiFi() {
-  static bool wasConnected = true;
-  unsigned long currentTime = millis();
+  static bool wasConnected = true; unsigned long currentTime = millis();
   if (WiFi.status() != WL_CONNECTED) {
-    if (wasConnected) {
-      wasConnected = false;
-      Serial.println(C_RED "\r\n🚨 WiFi 끊김! 복구 진입" C_RESET);
-      wifiRetryInterval = 5000; 
-    }
+    if (wasConnected) { wasConnected = false; Serial.println(C_RED "\r\n🚨 WiFi 끊김! 복구 진입" C_RESET); wifiRetryInterval = 5000; }
     if (currentTime - lastWifiRetryMillis >= wifiRetryInterval) {
-      lastWifiRetryMillis = currentTime;
-      WiFi.disconnect(); WiFi.reconnect();
-      wifiRetryInterval = min(wifiRetryInterval * 2, 60000UL); // 백오프
+      lastWifiRetryMillis = currentTime; WiFi.disconnect(); WiFi.reconnect();
+      wifiRetryInterval = min(wifiRetryInterval * 2, 60000UL);
     }
-  } else {
-    if (!wasConnected) { wasConnected = true; wifiRetryInterval = 5000; }
-  }
+  } else { if (!wasConnected) { wasConnected = true; wifiRetryInterval = 5000; } }
 }
 
 void pollServer() {
-  if (currentMode == 4 || isCommunicate) return; // 데모 중이거나 통신 중이면 리턴
+  if (currentMode == MODE_DEMO || isCommunicate) return; 
   unsigned long now = millis();
   if (now - lastPollTime >= POLL_INTERVAL) {
     lastPollTime = now;
     if (WiFi.status() == WL_CONNECTED) {
-      isCommunicate = true; // 자물쇠 잠금
-      initNetworkSession();
-      HTTPClient http;
-      if (http.begin(sharedClient, serverName)) {
-        http.addHeader("Content-Type", "application/json");
-        JsonDocument reqDoc;
-        reqDoc["action"] = "POLL";
-        reqDoc["deviceId"] = "App_User";
-        JsonArray weightsArray = reqDoc["weights"].to<JsonArray>();
-        for (int i = 0; i < 4; i++) { weightsArray.add((float)((int)(weights[i] * 10)) / 10.0); }
-        String payload;
-        serializeJson(reqDoc, payload);
-        int code = http.POST(payload);
-        if (code == HTTP_CODE_OK) {
-          JsonDocument doc; 
-          if (!deserializeJson(doc, http.getString())) {
-            int cmd = doc["spray"] | 0; 
-            if (cmd > 0) triggerSpray(cmd, 3, (int)doc["music"], "앱 제어", false);
-          }
-        }
-        http.end(); 
-      }
-      isCommunicate = false; // 자물쇠 해제
+      JsonDocument reqDoc; reqDoc["action"] = "POLL"; reqDoc["deviceId"] = "App_User";
+      JsonArray wArray = reqDoc["weights"].to<JsonArray>();
+      for (int i = 0; i < 4; i++) wArray.add((float)((int)(weights[i] * 10)) / 10.0);
+      serializeJson(reqDoc, globalPayload);
+      xEventGroupSetBits(networkEventGroup, BIT_SEND_POLL);
     }
   }
 }
 
 void sendServerRequest(String payload) {
   if (WiFi.status() != WL_CONNECTED || isCommunicate) return;
-  isCommunicate = true; 
-  initNetworkSession();
-  HTTPClient http;
-  if (http.begin(sharedClient, serverName)) {
-    http.addHeader("Content-Type", "application/json");
-    int code = http.POST(payload);
-    if (code == HTTP_CODE_OK) {
-      JsonDocument doc; 
-      if (!deserializeJson(doc, http.getString())) {
-        int cmd = doc["spray"] | 0;
-        int dur = doc["duration"] | 3;
-        if (cmd > 0) triggerSpray(cmd, dur, (int)doc["music"], (const char*)doc["result_text"], (currentMode == 2));
-      }
-    }
-    http.end();
-  }
-  isCommunicate = false;
+  globalPayload = payload; xEventGroupSetBits(networkEventGroup, BIT_SEND_REQUEST);
   showPrompt(); Serial.print(inputBuffer);
 }
 
-// ==========================================
-// 음성 제어 관련 로직 (결과 출력 보강)
-// ==========================================
 bool recordAudio(uint8_t** audioBuffer, uint32_t* totalSize) {
   uint32_t dataSize = SAMPLE_RATE * RECORD_TIME * 2;
   *totalSize = sizeof(WavHeader) + dataSize;
-  if (ESP.getFreeHeap() < *totalSize + 20000) {
-    updateDisplay(0, "Memory Full"); return false;
-  }
+  if (ESP.getFreeHeap() < *totalSize + 20000) { updateDisplay(0, "Memory Full"); return false; }
   Serial.printf(C_YELLOW "\r\n[Voice] 🎤 녹음 시작 (2초)...\r\n" C_RESET);
-  *audioBuffer = (uint8_t*)malloc(*totalSize);
-  if (*audioBuffer == NULL) return false;
+  *audioBuffer = (uint8_t*)malloc(*totalSize); if (*audioBuffer == NULL) return false;
   WavHeader header; 
   memcpy(header.riff, "RIFF", 4); header.overall_size = *totalSize - 8; 
   memcpy(header.wave, "WAVE", 4); memcpy(header.fmt_chunk_marker, "fmt ", 4); 
@@ -220,124 +131,94 @@ bool recordAudio(uint8_t** audioBuffer, uint32_t* totalSize) {
   memcpy(*audioBuffer, &header, sizeof(WavHeader));
   size_t bytesRead = 0;
   i2s_read(I2S_PORT, (void*)(*audioBuffer + sizeof(WavHeader)), dataSize, &bytesRead, portMAX_DELAY);
-  
-  // (음성 필터링 로직 생략 - 기존과 동일)
-  Serial.println(C_GREEN "→ ✅ 필터링 완료" C_RESET);
-  return true;
-}
-
-bool sendAudioToServer(uint8_t* audioBuffer, uint32_t totalSize, String& response) {
-  if (isCommunicate) { Serial.println(C_RED "→ ⚠️ Lock" C_RESET); return false; }
-  isCommunicate = true; 
-  Serial.println(C_GREEN "→ 🗣️ 전송 중..." C_RESET); updateDisplay(0, "Thinking...");
-  esp_task_wdt_delete(NULL); 
-  bool success = false;
-  initNetworkSession();
-  HTTPClient http;
-  http.setTimeout(15000); 
-  if (http.begin(sharedClient, serverName)) {
-    http.addHeader("Content-Type", "audio/wav");
-    int httpCode = http.POST(audioBuffer, totalSize);
-    if (httpCode > 0) {
-      response = http.getString();
-      Serial.println(C_GREEN "→ ✅ 응답 수신 완료" C_RESET);
-      success = true;
-    } else { Serial.printf(C_RED "→ ❌ HTTP %d\r\n" C_RESET, httpCode); }
-    http.end();
-  }
-  esp_task_wdt_add(NULL);
-  isCommunicate = false; 
-  return success;
+  Serial.println(C_GREEN "→ ✅ 필터링 완료" C_RESET); return true;
 }
 
 void executeVoiceCommand(String jsonResponse) {
   JsonDocument doc; 
-  if (deserializeJson(doc, jsonResponse)) {
-    Serial.println(C_RED "⚠️ JSON 파싱 실패" C_RESET);
-    return;
+  if (deserializeJson(doc, jsonResponse)) { Serial.println(C_RED "⚠️ JSON 파싱 실패" C_RESET); return; }
+  String transcript = doc["transcript"] | "인식 실패"; String resultText = doc["result_text"] | "명령 수신";
+  int cmd = doc["spray"] | -1; int dur = doc["duration"] | 3; int music = doc["music"] | 0;
+
+  Serial.printf("\r\n" C_CYAN "[Voice Result]" C_RESET "\r\n 🗣️  인식: %s\r\n 🤖  서버: %s\r\n", transcript.c_str(), resultText.c_str());
+
+  if (cmd >= 1 && cmd <= 4) triggerSpray(cmd, dur, music, resultText, false);
+  else if (cmd == 0) { stopSystem(); updateDisplay(0, resultText); Serial.println(C_YELLOW "🛑 시스템 정지" C_RESET); }
+}
+
+bool sendAudioToServer(uint8_t* audioBuffer, uint32_t totalSize, String& response) {
+  if (isCommunicate) { Serial.println(C_RED "→ ⚠️ Lock" C_RESET); return false; }
+  isCommunicate = true; Serial.println(C_GREEN "→ 🗣️ 전송 중..." C_RESET); updateDisplay(0, "Thinking...");
+  esp_task_wdt_delete(NULL); bool success = false; initNetworkSession();
+  HTTPClient http; http.setTimeout(15000); 
+  if (http.begin(sharedClient, serverName)) {
+    http.addHeader("Content-Type", "audio/wav");
+    int httpCode = http.POST(audioBuffer, totalSize);
+    if (httpCode > 0) { response = http.getString(); Serial.println(C_GREEN "→ ✅ 응답 수신 완료" C_RESET); success = true; } 
+    else { Serial.printf(C_RED "→ ❌ HTTP %d\r\n" C_RESET, httpCode); }
+    http.end();
   }
-
-  // ★ 인식된 결과와 판단 내용을 시리얼에 출력
-  String transcript = doc["transcript"] | "인식 실패";
-  String resultText = doc["result_text"] | "명령 수신";
-  int cmd = doc["spray"] | -1; 
-  int dur = doc["duration"] | 3;
-  int music = doc["music"] | 0;
-
-  Serial.printf("\r\n" C_CYAN "[Voice Result]" C_RESET "\r\n");
-  Serial.printf(" 🗣️  인식: %s\r\n", transcript.c_str());
-  Serial.printf(" 🤖  서버: %s\r\n", resultText.c_str());
-
-  if (cmd >= 1 && cmd <= 4) {
-    triggerSpray(cmd, dur, music, resultText, false);
-  } else if (cmd == 0) { 
-    stopSystem(); updateDisplay(0, resultText); 
-    Serial.println(C_YELLOW "🛑 시스템 정지" C_RESET);
-  }
+  esp_task_wdt_add(NULL); isCommunicate = false; return success;
 }
 
 void recordAndSendVoice() {
   if (WiFi.status() != WL_CONNECTED) return;
-  
-  SystemMode prevMode = currentMode;
-  currentMode = MODE_VOICE; // 5 -> MODE_VOICE
-
-  uint8_t* audioBuffer = NULL;
-  uint32_t totalSize = 0;
+  SystemMode prevMode = currentMode; currentMode = MODE_VOICE; 
+  uint8_t* audioBuffer = NULL; uint32_t totalSize = 0;
   if (recordAudio(&audioBuffer, &totalSize)) {
     String response = "";
-    if (sendAudioToServer(audioBuffer, totalSize, response)) {
-      executeVoiceCommand(response);
-    }
+    if (sendAudioToServer(audioBuffer, totalSize, response)) executeVoiceCommand(response);
   }
   if (audioBuffer != NULL) free(audioBuffer);
-  
-  // 타입 불일치 해결: 0 대신 MODE_READY 사용
   currentMode = (prevMode == MODE_VOICE) ? MODE_READY : prevMode; 
   showPrompt();
 }
 
-// ==========================================
-// 기타 유틸리티
-// ==========================================
 void autoWeatherScheduler() {
-  if (currentMode != MODE_WEATHER || isRunning) return; // 2 -> MODE_WEATHER
+  if (currentMode != MODE_WEATHER || isRunning) return; 
   if (millis() - lastWeatherCallMillis >= WEATHER_INTERVAL) {
-    lastWeatherCallMillis = millis(); 
-    sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\"}");
+    lastWeatherCallMillis = millis(); sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\"}");
   }
 }
 
 void handleWebClient() {
-  WiFiClient client = webServer.available(); 
-  if (!client) return;
-  client.println("HTTP/1.1 200 OK\r\nConnection: close\r\n");
-  client.stop();
+  WiFiClient client = webServer.available(); if (!client) return;
+  client.println("HTTP/1.1 200 OK\r\nConnection: close\r\n"); client.stop();
 }
 
 void showPrompt() { Serial.print("\r\033[K" C_YELLOW "👉 명령 입력 >>" C_RESET); }
-
-void printMainMenu() { 
-  Serial.println("\r\n[1]수동 [2]날씨 [3]설정 [4]데모 [5]음성 [6]파형 [7]반응 [8]정보"); 
-  showPrompt(); 
-}
-
+void printMainMenu() { Serial.println("\r\n[1]수동 [2]날씨 [3]설정 [4]데모 [5]음성 [6]파형 [7]반응 [8]정보"); showPrompt(); }
 void redrawInputLine(String &buffer) { Serial.print("\r\033[K" C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(buffer); }
-void printDashboard() {
-  Serial.printf("\r\nWiFi: %d dBm | Weights: %.1f %.1f %.1f %.1f\n", WiFi.RSSI(), weights[0], weights[1], weights[2], weights[3]);
-  printMainMenu();
-}
-void changeVolume(int vol) {
-  currentVolume = constrain(vol, 0, 30); myDFPlayer.volume(currentVolume);
-  Serial.printf("\r\033[K" C_GREEN "🔊 볼륨: %d\r\n" C_RESET, currentVolume); showPrompt();
-}
-
+void printDashboard() { Serial.printf("\r\nWiFi: %d dBm | Weights: %.1f %.1f %.1f %.1f\n", WiFi.RSSI(), weights[0], weights[1], weights[2], weights[3]); printMainMenu(); }
+void changeVolume(int vol) { currentVolume = constrain(vol, 0, 30); myDFPlayer.volume(currentVolume); Serial.printf("\r\033[K" C_GREEN "🔊 볼륨: %d\r\n" C_RESET, currentVolume); showPrompt(); }
 void initOTA() { ArduinoOTA.setHostname("SmartDiffuser"); ArduinoOTA.begin(); }
 void handleOTA() { ArduinoOTA.handle(); }
 
 void networkTaskLoop(void *pvParameters) {
   for (;;) {
-    xEventGroupWaitBits(networkEventGroup, BIT_SEND_POLL | BIT_SEND_VOICE | BIT_SEND_REQUEST, pdTRUE, pdFALSE, portMAX_DELAY);
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+    EventBits_t bits = xEventGroupWaitBits(networkEventGroup, BIT_SEND_POLL | BIT_SEND_VOICE | BIT_SEND_REQUEST, pdTRUE, pdFALSE, portMAX_DELAY);
+    if (WiFi.status() != WL_CONNECTED) { vTaskDelay(100 / portTICK_PERIOD_MS); continue; }
+
+    isCommunicate = true; initNetworkSession(); HTTPClient http; http.setTimeout(10000); 
+    if (http.begin(sharedClient, serverName)) {
+      http.addHeader("Content-Type", "application/json");
+      int httpCode = http.POST(globalPayload);
+      if (httpCode == HTTP_CODE_OK) {
+        String response = http.getString();
+        if (bits & BIT_SEND_VOICE) { executeVoiceCommand(response); } 
+        else {
+          JsonDocument doc;
+          if (!deserializeJson(doc, response)) {
+            int cmd = doc["spray"] | 0;
+            if (cmd > 0) {
+              int dur = doc["duration"] | 3; int music = doc["music"] | 0; String txt = doc["result_text"] | "명령 수신";
+              triggerSpray(cmd, dur, music, txt, (currentMode == MODE_WEATHER));
+            }
+          }
+        }
+      }
+      http.end();
+    }
+    isCommunicate = false; vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 }
