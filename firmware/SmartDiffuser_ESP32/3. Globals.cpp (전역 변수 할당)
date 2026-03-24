@@ -5,12 +5,12 @@ HardwareSerial mySoftwareSerial(2);
 HardwareSerial nexSerial(1);
 DFRobotDFPlayerMini myDFPlayer;
 HX711 scales[4];
+
 TaskHandle_t SensorTaskHandle = NULL;
 QueueHandle_t audioEventQueue = NULL;
-
-// README에 적어두신 핀 번호를 배열로 묶어줍니다.
-const int LOADCELL_DT[4]  = {34, 36, 39, 32};
-const int LOADCELL_SCK[4] = {33, 18, 21, 23};
+QueueHandle_t networkQueue = NULL;
+EventGroupHandle_t networkEventGroup = NULL;
+TaskHandle_t NetworkTaskHandle = NULL;
 
 Preferences prefs;
 WiFiServer webServer(80);
@@ -20,22 +20,30 @@ const char* ssid      = "Jaehong_WiFi";
 const char* password  = "12345678";
 String serverName     = "https://tgrwszo3iwurntqeq76s5rro640asnwq.lambda-url.ap-northeast-2.on.aws/";
 
+// 노즐별 마지막 분사 시간 (초기값은 부팅 시점)
+unsigned long lastNozzleSprayTime[4] = {0, 0, 0, 0};
+
 unsigned long sprayDuration = 3000;
 long REST_TIME        = 6000;
 int currentIntensity  = 2;
 const long MAX_RUN_TIME     = 270000;
 float calibration_factor = 430.0;
 int currentVolume = 20;
-int currentMode   = 0;
+
+SystemMode currentMode = MODE_READY; 
 bool isRunning    = false;
+bool isCommunicate = false; 
 int activePin     = -1;
 bool isSpraying   = false;
 
 String lastWebMessage = "Ready";
 String inputBuffer    = "";
 String lastWeatherLabel = "Weather";
+String globalPayload = ""; 
 
 unsigned long lastPollTime = 0;
+unsigned long wifiRetryInterval = 5000;
+unsigned long lastWifiRetryMillis = 0;
 const unsigned long POLL_INTERVAL = 2000;
 float weights[4] = {0.0, 0.0, 0.0, 0.0};
 unsigned long lastWeightCheckTime = 0;
@@ -58,12 +66,14 @@ unsigned long lastWeatherCallMillis = 0;
 const unsigned long WEATHER_INTERVAL = 3600000;
 String lastWeatherRegion = "서울";
 
-// 함수 선언 및 구현
+unsigned long lastActivityTime = 0;
+const unsigned long SLEEP_TIMEOUT = 300000; // 5분 절전 시간
+
 void setSprayIntensity(int intensityVal) {
     currentIntensity = intensityVal;
-    if (currentIntensity == 1) REST_TIME = 9000;      // 약
-    else if (currentIntensity == 2) REST_TIME = 6000; // 중
-    else REST_TIME = 3000;                            // 강
+    if (currentIntensity == 1) REST_TIME = 9000;      
+    else if (currentIntensity == 2) REST_TIME = 6000; 
+    else REST_TIME = 3000;                            
 }
 
 int getPinFromCommand(int cmd) {
