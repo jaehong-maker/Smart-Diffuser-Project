@@ -44,14 +44,31 @@ void bootAnimation() {
 }
 
 void systemHeartbeat() {
-  if (isRunning) return; // 실행 중일 때는 심장박동 LED 점멸 생략
-  
   unsigned long currentTime = millis();
+  static unsigned long lastBlinkTime = 0;
+  static bool ledState = false;
+
+  // 1순위: 분사 중일 때는 LED 계속 켜두기
+  if (isSpraying) {
+    analogWrite(PIN_LED, 255);
+    return;
+  }
+
+  // 2순위: WiFi 연결 끊겼을 때 (빠르게 깜빡임)
+  if (WiFi.status() != WL_CONNECTED) {
+    if (currentTime - lastBlinkTime >= 200) {
+      lastBlinkTime = currentTime;
+      ledState = !ledState;
+      analogWrite(PIN_LED, ledState ? 200 : 0);
+    }
+    return;
+  }
+
+  // 3순위: 정상 상태 (은은하게 페이드 - Breathing)
   if (currentTime - prevLedMillis >= 30) {
     prevLedMillis = currentTime;
     ledBrightness += ledFadeAmount;
-    
-    if (ledBrightness <= 0 || ledBrightness >= 255) {
+    if (ledBrightness <= 10 || ledBrightness >= 200) { // 너무 눈부시지 않게 범위 조절
       ledFadeAmount = -ledFadeAmount;
     }
     analogWrite(PIN_LED, ledBrightness);
