@@ -186,8 +186,7 @@ void runSprayLogic() {
       digitalWrite(activePin, HIGH);
       isSpraying = false;
       prevMotorMillis = millis();
-      if (currentMode == MODE_MANUAL) { setSystemMode(MODE_READY, "Ready"); return; }
-      
+
       updateDisplay((currentMode == MODE_WEATHER) ? lastWeatherIconId : 0, "Resting...");
     }
   } else {
