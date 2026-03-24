@@ -1,15 +1,12 @@
 #include "Globals.h"
 
+// --- 시스템 초기화 ---
 void initSystem() {
   Serial.begin(115200);
   Serial.setTimeout(5000);
 
   nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
-  
-  delay(300); 
-  nexSend("bauds=9600"); 
-  delay(100);
-  nexSend("dim=100");    
+  delay(300); nexSend("bauds=9600"); delay(100); nexSend("dim=100");    
   
   esp_task_wdt_deinit();
   esp_task_wdt_config_t wdt_config = {
@@ -27,20 +24,16 @@ void initSystem() {
 
   Serial.print("\r\n\r\n");
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
-  Serial.printf(C_BOLD    " 🚀 SMART DIFFUSER V11.0.1 (OTA TEST) \r\n" C_RESET);
+  Serial.printf(C_BOLD    " 🚀 SMART DIFFUSER V12.0.0 (REFACTORED) \r\n" C_RESET);
   Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
 
   mySoftwareSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
   if (!myDFPlayer.begin(mySoftwareSerial)) Serial.println("Audio Fail");
-  else Serial.println("Audio OK");
 
-  updateDisplay(0, "System Ready");
   initMicrophone();
 
   prefs.begin("diffuser", false);
-  float savedFactor = prefs.getFloat("cal_factor", 0.0);
-  if (savedFactor != 0.0) calibration_factor = savedFactor;
-
+  calibration_factor = prefs.getFloat("cal_factor", 430.0);
   currentVolume = prefs.getInt("volume", 20);
   myDFPlayer.volume(currentVolume);
 
@@ -49,51 +42,37 @@ void initSystem() {
     scales[i].set_scale(calibration_factor);
     scales[i].tare();
   }
-  weights[0] = scales[0].get_units(5);
 
   connectWiFi();
-
-  // FreeRTOS 큐 생성 (크기 5, 담을 데이터 타입 int)
   audioEventQueue = xQueueCreate(5, sizeof(int));
+  networkEventGroup = xEventGroupCreate();
 
   initOTA();
   webServer.begin();
   bootAnimation();
+  
+  setSystemMode(MODE_READY, "System Ready");
   printMainMenu();
 
-  // 이벤트 그룹 생성
-  networkEventGroup = xEventGroupCreate();
-
-  // ★ 네트워크 전담 태스크 생성 (Core 1 할당)
-  xTaskCreatePinnedToCore(
-    networkTaskLoop, "NetworkTask", 8192, NULL, 1, &NetworkTaskHandle, 1
-  );
-
-  xTaskCreatePinnedToCore(
-    sensorTaskLoop, "SensorTask", 8192, NULL, 1, &SensorTaskHandle, 0
-  );
+  xTaskCreatePinnedToCore(networkTaskLoop, "NetworkTask", 8192, NULL, 1, &NetworkTaskHandle, 1);
+  xTaskCreatePinnedToCore(sensorTaskLoop, "SensorTask", 8192, NULL, 1, &SensorTaskHandle, 0);
 }
 
+// --- 메인 루프 ---
 void runSystem() {
   esp_task_wdt_reset();
   handleOTA();
   checkNextionInput();
 
-  if (currentMode == 7) { runSoundVisualizer(); checkSerialInput(); return; }
-  if (currentMode == 8) { runSoundReaction();   checkSerialInput(); return; }
-  if (currentMode == 6) { return; }
+  if (currentMode == MODE_VISUAL) { runSoundVisualizer(); checkSerialInput(); return; }
+  if (currentMode == MODE_REACTIVE) { runSoundReaction(); checkSerialInput(); return; }
   
-  // FreeRTOS 큐(Queue)에서 이벤트 수신 검사
   int eventCode = 0;
   if (audioEventQueue != NULL && xQueueReceive(audioEventQueue, &eventCode, 0) == pdTRUE) {
-    Serial.printf("\r\n[Core 1] 큐(Queue) 수신 완료! (이벤트: %d)\r\n", eventCode);
-    
-    int previousMode = currentMode;
-    currentMode = 6; 
-    
+    SystemMode prev = currentMode;
+    setSystemMode(MODE_VOICE, "Voice Command");
     recordAndSendVoice(); 
-    
-    currentMode = isRunning ? previousMode : 0;
+    setSystemMode(isRunning ? prev : MODE_READY);
     showPrompt();
     Serial.print(inputBuffer);
   }
@@ -105,128 +84,101 @@ void runSystem() {
   pollServer();
   monitorWeight();
 
-  if (currentMode == 5) runAutoDemoLoop();
-  else if (isRunning) { runSprayLogic(); checkSafety(); }
+  if (currentMode == MODE_DEMO) runAutoDemoLoop(); 
+  else if (isRunning) { runSprayLogic(); checkSafety(); } 
 
   checkSerialInput();
 }
 
+// --- 시리얼 입력 감시 ---
 void checkSerialInput() {
-  if (currentMode == 8) {
-      if (Serial.available() > 0) {
-          char c = Serial.read();
-          if (c == '\n' || c == '\r') return;
-          if (c == '+') { soundThreshold += 2; Serial.printf("\r\n🆙 감도: %d dB\r\n", soundThreshold); }
-          else if (c == '-') { soundThreshold -= 2; Serial.printf("\r\n⬇️ 감도: %d dB\r\n", soundThreshold); }
-          else if (c == '0') { currentMode = 0; stopSystem(); printMainMenu(); }
-          showPrompt();
-      }
-      return;
-  }
-  if (currentMode == 4) {
-    if (Serial.available() > 0) {
-      char c = Serial.read(); if (c=='\n'||c=='\r') return;
-      if (c == '+') { calibration_factor += 10; for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); printCalibrationInfo(); }
-      else if (c == '-') { calibration_factor -= 10; for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); printCalibrationInfo(); }
-      else if (c == 't') { for(int i=0; i<4; i++) scales[i].tare(); Serial.println("영점"); printCalibrationInfo(); }
-      else if (c == 's') { prefs.putFloat("cal_factor", calibration_factor); Serial.println("저장"); }
-      else if (c == 'p') {
-        String payload = "{\"action\": \"POLL\", \"deviceId\": \"App_User\", \"weights\": [";
-        payload += String(weights[0], 1) + ", "; 
-        payload += String(weights[1], 1) + ", ";
-        payload += String(weights[2], 1) + ", ";
-        payload += String(weights[3], 1) + "]}";
-        Serial.println("\r\n🚀 [서버 전송 데이터 미리보기]:");
-        Serial.println(payload);
-      }
-      else if (c == '0') { currentMode = 0; printMainMenu(); }
-    }
+  if (Serial.available() <= 0) return;
+
+  if (currentMode == MODE_REACTIVE) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') return;
+    if (c == '+') { soundThreshold += 2; Serial.printf("\r\n🆙 감도: %d dB\r\n", soundThreshold); }
+    else if (c == '-') { soundThreshold -= 2; Serial.printf("\r\n⬇️ 감도: %d dB\r\n", soundThreshold); }
+    else if (c == '0') setSystemMode(MODE_READY, "Stopped");
     return;
   }
+
+  if (currentMode == MODE_SETTING) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') return;
+    if (c == '+') { calibration_factor += 10; for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); printCalibrationInfo(); }
+    else if (c == '-') { calibration_factor -= 10; for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); printCalibrationInfo(); }
+    else if (c == 't') { for(int i=0; i<4; i++) scales[i].tare(); Serial.println("영점 완료"); }
+    else if (c == 's') { prefs.putFloat("cal_factor", calibration_factor); Serial.println("저장 완료"); }
+    else if (c == 'p') {
+        String payload = "{\"action\": \"POLL\", \"weights\": [";
+        payload += String(weights[0], 1) + ", " + String(weights[1], 1) + ", " + String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
+        Serial.println("\r\n🚀 [JSON 미리보기]: " + payload);
+    }
+    else if (c == '0') setSystemMode(MODE_READY, "Main Menu");
+    return;
+  }
+
   while (Serial.available() > 0) {
-    char c = Serial.read(); 
-    if (c == '\n' || c == '\r') { 
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
       if (inputBuffer.length() > 0) {
-        Serial.println(); 
-        if (inputBuffer == "0") { stopSystem(); currentMode = 0; printMainMenu(); } 
-        else { handleInput(inputBuffer); }
-        inputBuffer = ""; 
+        if (inputBuffer == "0") setSystemMode(MODE_READY, "Stopped");
+        else handleInput(inputBuffer);
+        inputBuffer = "";
       }
-    } 
-    else if (c == '\b' || c == 0x7F) { 
+    } else if (c == '\b' || c == 0x7F) {
       if (inputBuffer.length() > 0) { inputBuffer.remove(inputBuffer.length() - 1); redrawInputLine(inputBuffer); }
-    }
-    else { inputBuffer += c; redrawInputLine(inputBuffer); }
+    } else { inputBuffer += c; redrawInputLine(inputBuffer); }
   }
 }
 
+// --- 통합 입력 처리 ---
 void handleInput(String input) {
-  if (currentMode == 0) {
-    if (input == "1") { currentMode = 1; Serial.println(C_BLUE "\r\n--- [ Mode 1: 수동 ] ---" C_RESET); updateDisplay(0, "Manual Mode"); showPrompt(); }
-    else if (input == "2") { currentMode = 2; Serial.println(C_BLUE "\r\n--- [ Mode 2: 감성 ] ---" C_RESET); updateDisplay(0, "Emotion Mode"); showPrompt(); }
-    else if (input == "3") { currentMode = 3; Serial.println(C_BLUE "\r\n--- [ Mode 3: 날씨 ] ---" C_RESET); updateDisplay(0, "Weather Mode"); showPrompt(); }
-    else if (input == "4") { 
-      currentMode = 4; 
-      Serial.println(C_YELLOW "\r\n--- [ Setting (저울 보정 설정) ] ---" C_RESET); 
-      Serial.println(" [+] 보정값 +10 증가");
-      Serial.println(" [-] 보정값 -10 감소");
-      Serial.println(" [t] 현재 무게를 0g으로 맞추기 (영점/Tare)");
-      Serial.println(" [s] 현재 보정값 저장 (Save)");
-      Serial.println(" [p] 서버 전송용 데이터 (JSON) 미리보기"); 
-      Serial.println(" [0] 메인 메뉴로 돌아가기");
-      showPrompt(); 
-    }
-    else if (input == "5") { currentMode = 5; demoStep=0; Serial.println(C_MAGENTA "\r\n--- [ Demo ] ---" C_RESET); }
-    else if (input == "6") { currentMode = 6; recordAndSendVoice(); currentMode=0; printMainMenu(); } 
-    else if (input == "7") { currentMode = 7; Serial.println(C_MAGENTA "\r\n--- [ Sound Visualizer ] ---" C_RESET); updateDisplay(0, "Visualizer"); } 
-    else if (input == "8") { currentMode = 8; Serial.printf(C_MAGENTA "\r\n--- [ Sound Reactive (%ddB) ] ---\r\n" C_RESET, soundThreshold); updateDisplay(0, "Reactive"); } 
-    else if (input == "9") { printDashboard(); } 
-    else { Serial.println(C_RED "Error" C_RESET); printMainMenu(); }
+  if (currentMode == MODE_READY) {
+    if (input == "1")      setSystemMode(MODE_MANUAL, "Manual Mode");
+    else if (input == "2") setSystemMode(MODE_WEATHER, "Weather Mode");
+    else if (input == "3") setSystemMode(MODE_SETTING, "Setting Mode");
+    else if (input == "4") { demoStep = 0; setSystemMode(MODE_DEMO, "Demo Mode"); }
+    else if (input == "5") { setSystemMode(MODE_VOICE); recordAndSendVoice(); setSystemMode(MODE_READY, "Main Menu"); printMainMenu(); }
+    else if (input == "6") setSystemMode(MODE_VISUAL, "Visualizer");
+    else if (input == "7") setSystemMode(MODE_REACTIVE, "Sound Reaction");
+    else if (input == "8") printDashboard();
+    else { Serial.println(C_RED "Unknown Command" C_RESET); printMainMenu(); }
+  } 
+  else if (currentMode == MODE_MANUAL) {
+    if (input == "+") changeVolume(currentVolume + 2); 
+    else if (input == "-") changeVolume(currentVolume - 2); 
+    else runManualMode(input); 
   }
-  else if (currentMode == 1) { 
-      if (input == "+") changeVolume(currentVolume + 2); 
-      else if (input == "-") changeVolume(currentVolume - 2); 
-      else runManualMode(input); 
-  }
-  else if (currentMode == 2) { Serial.println("감성 분석 중..."); updateDisplay(0, "Analyzing..."); sendServerRequest("{\"mode\": \"emotion\", \"user_emotion\": \"" + input + "\"}"); }
-  else if (currentMode == 3) { 
-    lastWeatherRegion = input; 
-    float w = scales[0].get_units(10); 
-    Serial.printf("날씨 조회: %s\r\n", input.c_str()); 
+  else if (currentMode == MODE_WEATHER) {
+    lastWeatherRegion = input;
     updateDisplay(0, "Checking " + input); 
-    sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\", \"w4\": " + String(w) + "}"); 
+    sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\"}");
   }
 }
 
+// --- 동작 제어 헬퍼 함수들 ---
 void runManualMode(String input) { 
-    int cmd = input.toInt();
-    int targetPin = getPinFromCommand(cmd); // 리팩토링: 핀 매핑 함수 활용
-    
-    if (targetPin != -1) {
-        forceAllOff(); activePin = targetPin; isRunning = true; isSpraying = true;
-        sprayDuration = 3000; prevMotorMillis = millis(); startTimeMillis = millis();
-        digitalWrite(activePin, LOW); playSound(cmd);
-        Serial.printf("\r\n[Manual] %d번 실행\r\n", cmd);
-        updateDisplay(cmd, "Manual Run");
-        showPrompt(); 
-    } else if (input == "0") {
-        currentMode = 0; stopSystem(); printMainMenu();
-    } else { showPrompt(); }
+  int cmd = input.toInt();
+  int targetPin = getPinFromCommand(cmd);
+  if (targetPin != -1) {
+    forceAllOff(); activePin = targetPin; isRunning = true; isSpraying = true;
+    sprayDuration = 3000; prevMotorMillis = millis(); startTimeMillis = millis();
+    digitalWrite(activePin, LOW); playSound(cmd);
+    updateDisplay(cmd, "Manual Run");
+  } else if (input == "0") {
+    setSystemMode(MODE_READY, "Stopped");
+  }
 }
 
 void enterWeatherMode(bool runNow) {
-  stopSystem(); currentMode = 3; lastWebMessage = "Nextion: 날씨";
-  Serial.print("\r\033[K"); Serial.println(C_BLUE "\r\n--- [ Mode 3: 날씨 모드 ] ---" C_RESET);
-  Serial.println(C_YELLOW "👉 날씨를 확인할 지역 이름을 입력하세요 (예: 부산)" C_RESET);
-  showPrompt();
-  if (runNow) {
-    float w = scales[0].get_units(10);
-    sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\", \"w4\": " + String(w) + "}");
-    lastWeatherCallMillis = millis(); 
-  } else { lastWeatherCallMillis = 0; }
+  setSystemMode(MODE_WEATHER, "Weather Mode");
+  Serial.println(C_YELLOW "👉 지역명을 입력하세요" C_RESET);
+  if (runNow) sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\"}");
 }
 
-void runSprayLogic() {
+void runSprayLogic() { 
   if (activePin == -1) return;
 
   if (isSpraying) {
@@ -234,23 +186,9 @@ void runSprayLogic() {
       digitalWrite(activePin, HIGH);
       isSpraying = false;
       prevMotorMillis = millis();
-
-      if (currentMode == 1) {
-        stopSystem();
-        showPrompt();
-        return;
-      }
-
-      Serial.print("\r\033[K");
-      Serial.printf(C_CYAN "      └── [Idle] 휴식...\r\n" C_RESET);
-      showPrompt();
-      Serial.print(inputBuffer);
-
-      if (currentMode == 3) {
-        updateDisplay(lastWeatherIconId, lastWeatherLabel);
-      } else {
-        updateDisplay(0, "Resting...");
-      }
+      if (currentMode == MODE_MANUAL) { setSystemMode(MODE_READY, "Ready"); return; }
+      
+      updateDisplay((currentMode == MODE_WEATHER) ? lastWeatherIconId : 0, "Resting...");
     }
   } else {
     if (millis() - prevMotorMillis >= REST_TIME) {
@@ -258,47 +196,39 @@ void runSprayLogic() {
       digitalWrite(activePin, LOW);
       isSpraying = true;
       prevMotorMillis = millis();
-
-      Serial.print("\r\033[K");
-      Serial.printf(C_GREEN "      ┌── [Action] 재분사!\r\n" C_RESET);
-      showPrompt();
-      Serial.print(inputBuffer);
-
+      
       int icon = 0;
       if (activePin == PIN_SUNNY) icon = 1;
       else if (activePin == PIN_CLOUDY) icon = 2;
       else if (activePin == PIN_RAIN) icon = 3;
       else if (activePin == PIN_SNOW) icon = 4;
-
-      if (currentMode == 3) {
-        updateDisplay(lastWeatherIconId, lastWeatherLabel);
-      } else {
-        updateDisplay(icon, "Spraying...");
-      }
+      
+      updateDisplay(icon, "Spraying...");
     }
   }
 }
 
-void runAutoDemoLoop() {
+void runAutoDemoLoop() { 
   if (millis() - prevDemoMillis >= 4000) {
     prevDemoMillis = millis(); forceAllOff(); demoStep++;
     if (demoStep > 4) demoStep = 1;
-    
-    int targetPin = getPinFromCommand(demoStep); // 리팩토링: 핀 매핑 함수 활용
-    
-    Serial.print("\r\033[K");
-    Serial.printf(C_MAGENTA "[Auto Demo] %s 모드\r\n" C_RESET, (demoStep == 1) ? "맑음" : (demoStep == 2) ? "흐림" : (demoStep == 3) ? "비" : "눈");
-    
+    int targetPin = getPinFromCommand(demoStep);
     if (targetPin != -1) digitalWrite(targetPin, LOW); 
-    
     playSound(demoStep); updateDisplay(demoStep, "Demo Mode");
   }
 }
 
 void checkSafety() {
   if (millis() - startTimeMillis > MAX_RUN_TIME) {
-    Serial.print("\r\033[K"); Serial.printf(C_RED "\r\n🚨 [Emergency] 안전 타이머 작동!\r\n" C_RESET);
-    stopSystem(); updateDisplay(0, "Error: Timeout");
-    currentMode = 0; printMainMenu(); Serial.print(inputBuffer);
+    setSystemMode(MODE_READY, "Safety Timeout");
   }
+}
+
+void setSystemMode(SystemMode mode, String msg) { 
+  currentMode = mode;
+  if (msg != "") {
+    Serial.printf(C_CYAN "\r\n[Mode] %s\r\n" C_RESET, msg.c_str());
+    updateDisplay(0, msg);
+  }
+  if (mode == MODE_READY) stopSystem();
 }
