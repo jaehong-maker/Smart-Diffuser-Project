@@ -58,33 +58,51 @@ void systemHeartbeat() {
   }
 }
 
+// 중간값을 찾기 위한 간단한 정렬 함수 (샘플 개수가 적어서 버블 정렬로 충분해)
+void sortArray(float* arr, int size) {
+  for (int i = 0; i < size - 1; i++) {
+    for (int j = 0; j < size - i - 1; j++) {
+      if (arr[j] > arr[j + 1]) {
+        float temp = arr[j];
+        arr[j] = arr[j + 1];
+        arr[j + 1] = temp;
+      }
+    }
+  }
+}
+
 void monitorWeight() {
   unsigned long currentTime = millis();
   
-  // 센서값을 더 자주 읽어와서 필터링 정밀도를 높입니다 (500ms -> 200ms)
+  // 센서 읽기 주기 (HX711 속도 고려해서 200ms 유지)
   if (currentTime - lastWeightCheckTime <= 200) return;
-  
   lastWeightCheckTime = currentTime;
   
-  // 필터링 강도 계수 (0.0 ~ 1.0)
-  // 값이 작을수록 이전 값의 비중이 커져서 부드러워지지만, 반응 속도는 느려집니다.
-  const float alpha = 0.15; 
+  const float alpha = 0.15; // EMA 가중치
+  const int sampleCount = 3; // Median 필터용 샘플 개수 (3~5개 추천)
 
   for (int i = 0; i < 4; i++) {
     if (scales[i].is_ready()) {
-      float rawVal = scales[i].get_units(1);
+      float samples[sampleCount];
       
-      // 1차 방어: 통신 노이즈로 인한 비정상적인 쓰레기값(스파이크) 무시
-      // 디퓨저 용액의 범위를 고려하여 -50g ~ 1000g 사이의 값만 유효하게 처리합니다.
-      if (rawVal > 1000.0 || rawVal < -50.0) continue; 
+      // 1단계: 연속으로 여러 번 읽어서 샘플 수집
+      for (int s = 0; s < sampleCount; s++) {
+        samples[s] = scales[i].get_units(1);
+        delay(2); // 아주 짧은 간격을 둬서 읽기
+      }
 
-      // 2차 방어: EMA 필터를 이용한 부드러운 값 갱신
+      // 2단계: 정렬 후 중간값(Median) 선택 (노이즈 제거)
+      sortArray(samples, sampleCount);
+      float medianVal = samples[sampleCount / 2];
+
+      // 3단계: 유효 범위 검사 (-50g ~ 1000g)
+      if (medianVal > 1000.0 || medianVal < -50.0) continue; 
+
+      // 4단계: EMA 필터 적용 (부드러운 값 갱신)
       if (weights[i] == 0.0) {
-        // 시스템 시작 시 초기값은 그대로 수용
-        weights[i] = rawVal;
+        weights[i] = medianVal; // 초기값 설정
       } else {
-        // 기존 값에 새로운 값을 15%만 반영하여 흔들림 최소화
-        weights[i] = (alpha * rawVal) + ((1.0 - alpha) * weights[i]);
+        weights[i] = (alpha * medianVal) + ((1.0 - alpha) * weights[i]);
       }
     }
   }
@@ -225,10 +243,11 @@ void checkBackgroundNoise() {
     trigger_count = 0; 
     
     Serial.print("\r\033[K"); 
-    Serial.printf("\033[36m[Core 0] %d dB 감지! Core 1에 음성 인식 신호를 전달합니다.\033[0m\r\n", final_db);
+    Serial.printf("\033[36m[Core 0] %d dB 감지! Core 1로 큐(Queue) 전송...\033[0m\r\n", final_db);
     
-    // ★ 통신을 직접 실행하지 않고 플래그만 활성화 (Core 1로 토스)
-    wakeWordDetected = true; 
+    // ★ [업그레이드] 직접 통신하지 않고 큐(Queue)에 이벤트 코드(1) 삽입
+    int eventCode = 1; // 1 = 음성 인식 시작 트리거
+    xQueueSend(audioEventQueue, &eventCode, 0); 
   }
 }
 
