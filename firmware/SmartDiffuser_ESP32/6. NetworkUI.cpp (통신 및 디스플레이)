@@ -1,21 +1,5 @@
 #include "Globals.h"
 
-// ==========================================
-// 리팩토링: 상수 및 유틸리티 함수
-// (추후 시스템 확장 시 Globals.h 로 이동을 권장합니다)
-// ==========================================
-
-// 핀 매핑 로직 통합
-int getPinFromCommand(int cmd) {
-  switch(cmd) {
-    case 1: return PIN_SUNNY;
-    case 2: return PIN_CLOUDY;
-    case 3: return PIN_RAIN;
-    case 4: return PIN_SNOW;
-    default: return -1;
-  }
-}
-
 // --- 전역 네트워크 세션 객체 (TLS 커넥션 유지용) ---
 static WiFiClientSecure sharedClient;
 static bool isSessionInit = false;
@@ -30,10 +14,10 @@ void initNetworkSession() {
 // --- 중복 분사 제어 로직 통합 함수 ---
 void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode = false) {
   forceAllOff();
-  
-  // 리팩토링: 핀 매핑 함수 사용
-  activePin = getPinFromCommand(cmd);
-  if (activePin == -1) return;
+  if (cmd == 1) activePin = PIN_SUNNY; 
+  else if (cmd == 2) activePin = PIN_CLOUDY;
+  else if (cmd == 3) activePin = PIN_RAIN; 
+  else if (cmd == 4) activePin = PIN_SNOW;
 
   isRunning = true; 
   isSpraying = true; 
@@ -69,13 +53,14 @@ void checkNextionInput() {
     }
 
     // 50ms 대기 없이, 명령어가 완성되는 즉시(길이 2 이상) 실시간 검사 및 실행
-    if (buf == "M1" || buf == "M2" || buf == "M3" || 
+   if (buf == "M1" || buf == "M2" || buf == "M3" || 
         buf == "Y1" || buf == "Y2" || buf == "Y3" || 
+        buf == "ST" ||
         (buf.startsWith("S") && buf.length() == 2)) {
-      
+
       handleNextionCmd(buf);
-      buf = ""; // 실행 후 버퍼 즉시 초기화
-    } 
+      buf = "";
+    }
     // 가비지 데이터가 쌓여 버퍼가 넘치는 것을 방지
     else if (buf.length() > 64) {
       buf = ""; 
@@ -86,8 +71,10 @@ void checkNextionInput() {
 void handleNextionCmd(const String &cmd) {
   if (cmd.startsWith("p0") || cmd.startsWith("t_region") || cmd.startsWith("j0")) return;
 
-  bool isCommand = (cmd == "M1" || cmd == "M2" || cmd == "M3" || cmd.startsWith("S") || cmd == "Y1" || cmd == "Y2" || cmd == "Y3");
-
+  bool isCommand = (cmd == "M1" || cmd == "M2" || cmd == "M3" || 
+                  cmd.startsWith("S") || 
+                  cmd == "Y1" || cmd == "Y2" || cmd == "Y3" ||
+                  cmd == "ST");
   if (isCommand) {
     Serial.print("\r\033[K");
     Serial.printf(C_CYAN "[NX] 터치: %s\r\n" C_RESET, cmd.c_str());
@@ -106,6 +93,13 @@ void handleNextionCmd(const String &cmd) {
     updateDisplay(0, "Emotion Mode");
     showPrompt();
   }
+  else if (cmd == "ST") {
+      Serial.println(C_RED "--- [ STOP ] ---" C_RESET);
+      stopSystem();
+      currentMode = 0;
+      lastWebMessage = "정지";
+      updateDisplay(0, "Stopped");
+    }
   else if (cmd.startsWith("S")) {
     int scent = cmd.substring(1).toInt();
     if (scent >= 1 && scent <= 4) {
@@ -188,7 +182,7 @@ void pollServer() {
     if (WiFi.status() != WL_CONNECTED) return;
     
     initNetworkSession();
-    HTTPClient http; 
+    HTTPClient http; // 지역 변수로 생성하여 독립성 확보
 
     if (http.begin(sharedClient, serverName)) {
       http.addHeader("Content-Type", "application/json");
@@ -202,7 +196,7 @@ void pollServer() {
       
       if (code == HTTP_CODE_OK) {
         JsonDocument doc; 
-        DeserializationError error = deserializeJson(doc, http.getString()); 
+        DeserializationError error = deserializeJson(doc, http.getString()); // http 객체 사용
         
         if (error) {
           Serial.println(C_RED "⚠️ [APP] JSON 파싱 에러" C_RESET);
@@ -211,10 +205,14 @@ void pollServer() {
         
         int cmd = doc["spray"] | 0; 
         int music = doc["music"] | 0; 
-        
-        // 리팩토링: 강도 설정 함수 호출
-        setSprayIntensity(doc["intensity"] | 2);
-
+        currentIntensity = doc["intensity"] | 2; 
+        if (currentIntensity == 1) {
+            REST_TIME = 9000; // 약: 3초 쏘고 9초 쉼
+        } else if (currentIntensity == 2) {
+            REST_TIME = 6000; // 중: 3초 쏘고 6초 쉼
+        } else {
+            REST_TIME = 3000; // 강: 3초 쏘고 3초 쉼
+        }
         static int lastAppCmd = 0; 
 
         if (cmd > 0) {
@@ -225,11 +223,8 @@ void pollServer() {
 
           Serial.printf("\r\n" C_GREEN "📲 [APP] 명령: %d\r\n" C_RESET, cmd);
           
-          // 리팩토링: 상수 적용
-          if (cmd == CMD_SYSTEM_STOP) { 
-            stopSystem(); currentMode = 0; updateDisplay(0, "Reset"); http.end(); return; 
-          }
-          if (cmd == CMD_WEATHER_MODE) { 
+          if (cmd == 90) { stopSystem(); currentMode = 0; updateDisplay(0, "Reset"); http.end(); return; }
+          if (cmd == 30) { 
               currentMode = 3;
               String region = doc["region"] | "";
               if (region.length() == 0) region = doc["target_region"] | "";
@@ -239,8 +234,8 @@ void pollServer() {
               updateDisplay(lastWeatherIconId, lastWeatherLabel);
               http.end(); return;
             }
-          if (cmd >= CMD_VOL_MUTE && cmd <= CMD_VOL_UP) {
-            changeVolume((cmd == CMD_VOL_MUTE) ? 0 : (cmd == CMD_VOL_DOWN ? currentVolume - 2 : currentVolume + 2)); 
+          if (cmd >= 80 && cmd <= 82) {
+            changeVolume((cmd == 80) ? 0 : (cmd == 81 ? currentVolume - 2 : currentVolume + 2)); 
             updateDisplay(0, "Volume Set"); lastWebMessage = "볼륨 조절 완료"; http.end(); return; 
           }
 
@@ -252,7 +247,7 @@ void pollServer() {
       } else if (code < 0) {
         Serial.printf(C_RED "⚠️ [APP] 서버 에러: %s\r\n" C_RESET, http.errorToString(code).c_str());
       }
-      http.end();
+      http.end(); // 세션 종료
     }
   }
 }
@@ -261,7 +256,7 @@ void sendServerRequest(String payload) {
   if (WiFi.status() != WL_CONNECTED) { Serial.println("WiFi Err"); return; }
   
   initNetworkSession();
-  HTTPClient http; 
+  HTTPClient http; // 지역 변수화
 
   if (!http.begin(sharedClient, serverName)) return;
   http.addHeader("Content-Type", "application/json");
@@ -269,7 +264,7 @@ void sendServerRequest(String payload) {
   int code = http.POST(payload);
   if (code == HTTP_CODE_OK) {
     JsonDocument doc; 
-    if (deserializeJson(doc, http.getString())) { 
+    if (deserializeJson(doc, http.getString())) { // http 사용
        Serial.println(C_RED "⚠️ 서버 응답 JSON 오류" C_RESET);
        http.end(); return;
     }
@@ -277,9 +272,14 @@ void sendServerRequest(String payload) {
     int cmd = doc["spray"] | 0;
     int dur = doc["duration"] | 3;
     String txt = doc["result_text"] | "명령 수신";
-    
-    // 리팩토링: 강도 설정 함수 호출
-    setSprayIntensity(doc["intensity"] | 2);
+    currentIntensity = doc["intensity"] | 2; 
+    if (currentIntensity == 1) {
+        REST_TIME = 9000; // 약: 3초 쏘고 9초 쉼
+    } else if (currentIntensity == 2) {
+        REST_TIME = 6000; // 중: 3초 쏘고 6초 쉼
+    } else {
+        REST_TIME = 3000; // 강: 3초 쏘고 3초 쉼
+    }
     
     String region = doc["region"] | "";
     if (region.length() == 0) region = doc["target_region"] | "";
@@ -311,9 +311,8 @@ void sendServerRequest(String payload) {
     }
 
     if (cmd > 0) {
-      // 리팩토링: 상수 적용
-      if (cmd >= CMD_VOL_MUTE && cmd <= CMD_VOL_UP) {
-        changeVolume((cmd == CMD_VOL_MUTE) ? 0 : (cmd == CMD_VOL_DOWN ? currentVolume - 2 : currentVolume + 2)); 
+      if (cmd >= 80 && cmd <= 82) {
+        changeVolume((cmd == 80) ? 0 : (cmd == 81 ? currentVolume - 2 : currentVolume + 2)); 
         updateDisplay(0, "Volume Set"); lastWebMessage = "볼륨 조절 완료"; http.end(); return; 
       }
       triggerSpray(cmd, dur, music, txt, (currentMode == 3));
@@ -324,7 +323,7 @@ void sendServerRequest(String payload) {
       else { stopSystem(); updateDisplay(0, txt); }
     }
   }
-  http.end(); 
+  http.end(); // 세션 종료
   showPrompt(); Serial.print(inputBuffer);
 }
 
@@ -397,8 +396,8 @@ bool sendAudioToServer(uint8_t* audioBuffer, uint32_t totalSize, String& respons
   bool success = false;
   
   initNetworkSession();
-  HTTPClient http; 
-  http.setTimeout(10000); 
+  HTTPClient http; // 지역 변수화
+  http.setTimeout(10000); // 대용량 데이터 전송을 위해 타임아웃 넉넉히 설정
 
   if (http.begin(sharedClient, serverName)) {
     http.addHeader("Content-Type", "audio/wav");
@@ -411,7 +410,7 @@ bool sendAudioToServer(uint8_t* audioBuffer, uint32_t totalSize, String& respons
       Serial.printf("HTTP Error: %s\n", http.errorToString(httpCode).c_str());
       updateDisplay(0, "Network Error");
     }
-    http.end(); 
+    http.end(); // 세션 종료
   } else { Serial.println("Conn Fail"); updateDisplay(0, "Conn Fail"); }
 
   esp_task_wdt_add(NULL);
@@ -419,6 +418,8 @@ bool sendAudioToServer(uint8_t* audioBuffer, uint32_t totalSize, String& respons
 }
 
 void executeVoiceCommand(String jsonResponse) {
+  // 추가된 디버깅 코드: 서버에서 온 원본 JSON 데이터를 그대로 출력
+  Serial.println("\r\n[디버깅] 서버 원본 응답: " + jsonResponse);
   JsonDocument doc; 
   if (deserializeJson(doc, jsonResponse)) {
     Serial.println(C_RED "⚠️ 파싱 실패" C_RESET); return;
@@ -521,6 +522,8 @@ void changeVolume(int vol) {
 
 void initOTA() {
   ArduinoOTA.setHostname("SmartDiffuser");
+
+  // ★ 여기에 비밀번호를 설정해! (사진의 그 창에 입력할 번호)
   ArduinoOTA.setPassword("1234");
   
   ArduinoOTA.onStart([]() {
