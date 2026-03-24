@@ -91,38 +91,45 @@ void sortArray(float* arr, int size) {
 void monitorWeight() {
   unsigned long currentTime = millis();
   
-  // 센서 읽기 주기 (HX711 속도 고려해서 200ms 유지)
   if (currentTime - lastWeightCheckTime <= 200) return;
   lastWeightCheckTime = currentTime;
   
-  const float alpha = 0.15; // EMA 가중치
-  const int sampleCount = 3; // Median 필터용 샘플 개수 (3~5개 추천)
+  const float alpha = 0.15;
+  const int sampleCount = 3;
 
   for (int i = 0; i < 4; i++) {
     if (scales[i].is_ready()) {
       float samples[sampleCount];
       
-      // 1단계: 연속으로 여러 번 읽어서 샘플 수집
       for (int s = 0; s < sampleCount; s++) {
         samples[s] = scales[i].get_units(1);
-        delay(2); // 아주 짧은 간격을 둬서 읽기
+        delay(2);
       }
 
-      // 2단계: 정렬 후 중간값(Median) 선택 (노이즈 제거)
       sortArray(samples, sampleCount);
       float medianVal = samples[sampleCount / 2];
 
-      // 3단계: 유효 범위 검사 (-50g ~ 1000g)
-      if (medianVal > 1000.0 || medianVal < -50.0) continue; 
+      if (medianVal > 1000.0 || medianVal < -50.0) continue;
 
-      // 4단계: EMA 필터 적용 (부드러운 값 갱신)
       if (weights[i] == 0.0) {
-        weights[i] = medianVal; // 초기값 설정
+        weights[i] = medianVal;
       } else {
         weights[i] = (alpha * medianVal) + ((1.0 - alpha) * weights[i]);
       }
     }
   }
+
+  // 카트리지 잔량 표시 (150g = 100%)
+  float cartridgeWeight = weights[0];   // 카트리지 연결 채널에 맞게 변경
+  if (cartridgeWeight < 0) cartridgeWeight = 0;
+
+  int remainPercent = (int)((cartridgeWeight / 150.0f) * 100.0f);
+  remainPercent = constrain(remainPercent, 0, 100);
+
+  updateProgressBar(remainPercent);
+
+  // 텍스트 표시용 컴포넌트가 있으면 사용
+  // nexSend("t_percent.txt=\"" + String(remainPercent) + "%\"");
 }
 
 void printCalibrationInfo() {
