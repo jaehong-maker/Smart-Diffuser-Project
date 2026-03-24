@@ -1,32 +1,21 @@
 #include "Globals.h"
 
-// 비동기 통신용 전방 선언 (에러 방지용)
-void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode);
-void executeVoiceCommand(String jsonResponse);
-
 static WiFiClientSecure sharedClient;
 static bool isSessionInit = false;
 
 void initNetworkSession() {
-  if (!isSessionInit) {
-    sharedClient.setInsecure();
-    isSessionInit = true;
-  }
+  if (!isSessionInit) { sharedClient.setInsecure(); isSessionInit = true; }
 }
 
-void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
+void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode = false) {
   forceAllOff();
-  if (cmd == 1) activePin = PIN_SUNNY; 
-  else if (cmd == 2) activePin = PIN_CLOUDY;
-  else if (cmd == 3) activePin = PIN_RAIN; 
-  else if (cmd == 4) activePin = PIN_SNOW;
+  if (cmd == 1) activePin = PIN_SUNNY; else if (cmd == 2) activePin = PIN_CLOUDY;
+  else if (cmd == 3) activePin = PIN_RAIN; else if (cmd == 4) activePin = PIN_SNOW;
 
   isRunning = true; isSpraying = true; sprayDuration = dur * 1000;
-  prevMotorMillis = millis(); startTimeMillis = millis(); 
-  digitalWrite(activePin, LOW);
+  prevMotorMillis = millis(); startTimeMillis = millis(); digitalWrite(activePin, LOW);
   
-  if (music > 0 && music <= 20) playSound(music);
-  else playSound(cmd);
+  if (music > 0 && music <= 20) playSound(music); else playSound(cmd);
 
   lastWebMessage = "성공: " + txt; 
   if (!isWeatherMode) updateDisplay(cmd, txt);
@@ -37,6 +26,10 @@ void checkNextionInput() {
   static String buf = ""; 
   while (nexSerial.available()) {
     char c = (char)nexSerial.read();
+    
+    lastActivityTime = millis(); // 화면 터치 시 타이머 리셋
+    if (currentMode == MODE_SLEEP) wakeUpSystem(); 
+
     if (isalnum(c) || c == '_' || c == ' ') buf += c;
     if (buf == "M1" || buf == "M2" || buf == "M3" || buf == "Y1" || buf == "Y2" || buf == "Y3" || buf == "ST" || (buf.startsWith("S") && buf.length() == 2)) {
       handleNextionCmd(buf); buf = "";
@@ -57,30 +50,21 @@ void handleNextionCmd(const String &cmd) {
   }
 }
 
-void nexSend(const String &cmd) { 
-  nexSerial.print(cmd); nexSerial.write(0xFF); nexSerial.write(0xFF); nexSerial.write(0xFF); 
-}
-
+void nexSend(const String &cmd) { nexSerial.print(cmd); nexSerial.write(0xFF); nexSerial.write(0xFF); nexSerial.write(0xFF); }
 void updateDisplay(int iconID, String text) { 
   if (currentMode == MODE_WEATHER && lastWeatherIconId >= 1 && lastWeatherIconId <= 4) iconID = lastWeatherIconId;
   if (currentMode == MODE_WEATHER && text.length() == 0) text = lastWeatherLabel;
-  nexSend("p0.pic=" + String(iconID));
-  text.replace("\"", "'"); nexSend("t_region.txt=\"" + text + "\"");
+  nexSend("p0.pic=" + String(iconID)); text.replace("\"", "'"); nexSend("t_region.txt=\"" + text + "\"");
 }
-
-void updateTempHumi(float tempC, float humi) {
-  nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\""); nexSend("t_humi.txt=\"" + String(humi, 0) + "%\"");
-}
-
+void updateTempHumi(float tempC, float humi) { nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\""); nexSend("t_humi.txt=\"" + String(humi, 0) + "%\""); }
 void updateProgressBar(int val) { nexSend("j0.val=" + String(constrain(val, 0, 100))); }
 
 void connectWiFi() {
   Serial.printf(C_YELLOW "[System] WiFi Connecting" C_RESET);
   WiFi.begin(ssid, password); int retry = 0;
   while (WiFi.status() != WL_CONNECTED && retry < 15) { delay(200); Serial.print("."); retry++; }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\r\n" C_GREEN "Connected!\r\n" C_RESET C_CYAN "🌐 http://%s/\r\n" C_RESET, WiFi.localIP().toString().c_str());
-  } else { Serial.printf(C_RED "\r\nWiFi Failed.\r\n" C_RESET); }
+  if (WiFi.status() == WL_CONNECTED) Serial.printf("\r\n" C_GREEN "Connected!\r\n" C_RESET C_CYAN "🌐 http://%s/\r\n" C_RESET, WiFi.localIP().toString().c_str());
+  else Serial.printf(C_RED "\r\nWiFi Failed.\r\n" C_RESET); 
 }
 
 void manageWiFi() {
@@ -103,8 +87,7 @@ void pollServer() {
       JsonDocument reqDoc; reqDoc["action"] = "POLL"; reqDoc["deviceId"] = "App_User";
       JsonArray wArray = reqDoc["weights"].to<JsonArray>();
       for (int i = 0; i < 4; i++) wArray.add((float)((int)(weights[i] * 10)) / 10.0);
-      serializeJson(reqDoc, globalPayload);
-      xEventGroupSetBits(networkEventGroup, BIT_SEND_POLL);
+      serializeJson(reqDoc, globalPayload); xEventGroupSetBits(networkEventGroup, BIT_SEND_POLL);
     }
   }
 }
@@ -121,27 +104,22 @@ bool recordAudio(uint8_t** audioBuffer, uint32_t* totalSize) {
   if (ESP.getFreeHeap() < *totalSize + 20000) { updateDisplay(0, "Memory Full"); return false; }
   Serial.printf(C_YELLOW "\r\n[Voice] 🎤 녹음 시작 (2초)...\r\n" C_RESET);
   *audioBuffer = (uint8_t*)malloc(*totalSize); if (*audioBuffer == NULL) return false;
-  WavHeader header; 
-  memcpy(header.riff, "RIFF", 4); header.overall_size = *totalSize - 8; 
+  WavHeader header; memcpy(header.riff, "RIFF", 4); header.overall_size = *totalSize - 8; 
   memcpy(header.wave, "WAVE", 4); memcpy(header.fmt_chunk_marker, "fmt ", 4); 
   header.length_of_fmt = 16; header.format_type = 1; header.channels = 1; 
   header.sample_rate = SAMPLE_RATE; header.byterate = SAMPLE_RATE * 2; 
   header.block_align = 2; header.bits_per_sample = 16; 
   memcpy(header.data_chunk_header, "data", 4); header.data_size = dataSize; 
   memcpy(*audioBuffer, &header, sizeof(WavHeader));
-  size_t bytesRead = 0;
-  i2s_read(I2S_PORT, (void*)(*audioBuffer + sizeof(WavHeader)), dataSize, &bytesRead, portMAX_DELAY);
+  size_t bytesRead = 0; i2s_read(I2S_PORT, (void*)(*audioBuffer + sizeof(WavHeader)), dataSize, &bytesRead, portMAX_DELAY);
   Serial.println(C_GREEN "→ ✅ 필터링 완료" C_RESET); return true;
 }
 
 void executeVoiceCommand(String jsonResponse) {
-  JsonDocument doc; 
-  if (deserializeJson(doc, jsonResponse)) { Serial.println(C_RED "⚠️ JSON 파싱 실패" C_RESET); return; }
+  JsonDocument doc; if (deserializeJson(doc, jsonResponse)) { Serial.println(C_RED "⚠️ JSON 파싱 실패" C_RESET); return; }
   String transcript = doc["transcript"] | "인식 실패"; String resultText = doc["result_text"] | "명령 수신";
   int cmd = doc["spray"] | -1; int dur = doc["duration"] | 3; int music = doc["music"] | 0;
-
   Serial.printf("\r\n" C_CYAN "[Voice Result]" C_RESET "\r\n 🗣️  인식: %s\r\n 🤖  서버: %s\r\n", transcript.c_str(), resultText.c_str());
-
   if (cmd >= 1 && cmd <= 4) triggerSpray(cmd, dur, music, resultText, false);
   else if (cmd == 0) { stopSystem(); updateDisplay(0, resultText); Serial.println(C_YELLOW "🛑 시스템 정지" C_RESET); }
 }
@@ -155,7 +133,7 @@ bool sendAudioToServer(uint8_t* audioBuffer, uint32_t totalSize, String& respons
     http.addHeader("Content-Type", "audio/wav");
     int httpCode = http.POST(audioBuffer, totalSize);
     if (httpCode > 0) { response = http.getString(); Serial.println(C_GREEN "→ ✅ 응답 수신 완료" C_RESET); success = true; } 
-    else { Serial.printf(C_RED "→ ❌ HTTP %d\r\n" C_RESET, httpCode); }
+    else Serial.printf(C_RED "→ ❌ HTTP %d\r\n" C_RESET, httpCode);
     http.end();
   }
   esp_task_wdt_add(NULL); isCommunicate = false; return success;
@@ -170,8 +148,7 @@ void recordAndSendVoice() {
     if (sendAudioToServer(audioBuffer, totalSize, response)) executeVoiceCommand(response);
   }
   if (audioBuffer != NULL) free(audioBuffer);
-  currentMode = (prevMode == MODE_VOICE) ? MODE_READY : prevMode; 
-  showPrompt();
+  currentMode = (prevMode == MODE_VOICE) ? MODE_READY : prevMode; showPrompt();
 }
 
 void autoWeatherScheduler() {
