@@ -7,7 +7,7 @@ void initNetworkSession() {
   if (!isSessionInit) { sharedClient.setInsecure(); isSessionInit = true; }
 }
 
-void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode = false) {
+void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   forceAllOff();
   if (cmd == 1) activePin = PIN_SUNNY; else if (cmd == 2) activePin = PIN_CLOUDY;
   else if (cmd == 3) activePin = PIN_RAIN; else if (cmd == 4) activePin = PIN_SNOW;
@@ -57,7 +57,7 @@ void updateDisplay(int iconID, String text) {
   nexSend("p0.pic=" + String(iconID)); text.replace("\"", "'"); nexSend("t_region.txt=\"" + text + "\"");
 }
 void updateTempHumi(float tempC, float humi) { nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\""); nexSend("t_humi.txt=\"" + String(humi, 0) + "%\""); }
-void updateProgressBar(int val) { nexSend("j0.val=" + String(constrain(val, 0, 100))); }
+void updateProgressBar(int val) { nexSend("j1.val=" + String(constrain(val, 0, 100))); }
 
 void connectWiFi() {
   Serial.printf(C_YELLOW "[System] WiFi Connecting" C_RESET);
