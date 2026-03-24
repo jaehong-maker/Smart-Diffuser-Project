@@ -6,11 +6,10 @@ void initSystem() {
 
   nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
   
-  // ★ 디스플레이 초기화 최적화 (99, 100번 임시 코드 대체)
-  delay(300); // 디스플레이 부팅 대기
-  nexSend("bauds=9600"); // 통신 속도 9600 영구 고정
+  delay(300); 
+  nexSend("bauds=9600"); 
   delay(100);
-  nexSend("dim=100");    // 화면 밝기 100% 초기화
+  nexSend("dim=100");    
   
   esp_task_wdt_deinit();
   esp_task_wdt_config_t wdt_config = {
@@ -54,39 +53,40 @@ void initSystem() {
 
   connectWiFi();
 
-  // WiFi가 연결된 후에 호출하는 게 좋음
-  initOTA();
+  // FreeRTOS 큐 생성 (크기 5, 담을 데이터 타입 int)
+  audioEventQueue = xQueueCreate(5, sizeof(int));
 
+  initOTA();
   webServer.begin();
   bootAnimation();
   printMainMenu();
 
+  // 이벤트 그룹 생성
+  networkEventGroup = xEventGroupCreate();
+
+  // ★ 네트워크 전담 태스크 생성 (Core 1 할당)
   xTaskCreatePinnedToCore(
-    sensorTaskLoop,     // 실행할 함수
-    "SensorTask",       // 태스크 이름
-    8192,               // 스택 크기
-    NULL,               // 파라미터
-    1,                  // 우선순위
-    &SensorTaskHandle,  // 태스크 핸들
-    0                   // 실행할 코어 번호 (Core 0)
+    networkTaskLoop, "NetworkTask", 8192, NULL, 1, &NetworkTaskHandle, 1
+  );
+
+  xTaskCreatePinnedToCore(
+    sensorTaskLoop, "SensorTask", 8192, NULL, 1, &SensorTaskHandle, 0
   );
 }
 
 void runSystem() {
   esp_task_wdt_reset();
-
-  // 매 루프마다 업데이트 요청이 있는지 감시
   handleOTA();
-  
   checkNextionInput();
 
   if (currentMode == 7) { runSoundVisualizer(); checkSerialInput(); return; }
   if (currentMode == 8) { runSoundReaction();   checkSerialInput(); return; }
   if (currentMode == 6) { return; }
   
-  // Core 0가 소음을 감지하여 플래그를 켜면, Core 1이 안전하게 통신(record) 실행
-  if (wakeWordDetected) {
-    wakeWordDetected = false; // 플래그 초기화
+  // FreeRTOS 큐(Queue)에서 이벤트 수신 검사
+  int eventCode = 0;
+  if (audioEventQueue != NULL && xQueueReceive(audioEventQueue, &eventCode, 0) == pdTRUE) {
+    Serial.printf("\r\n[Core 1] 큐(Queue) 수신 완료! (이벤트: %d)\r\n", eventCode);
     
     int previousMode = currentMode;
     currentMode = 6; 
@@ -94,7 +94,6 @@ void runSystem() {
     recordAndSendVoice(); 
     
     currentMode = isRunning ? previousMode : 0;
-    
     showPrompt();
     Serial.print(inputBuffer);
   }
@@ -131,8 +130,6 @@ void checkSerialInput() {
       else if (c == '-') { calibration_factor -= 10; for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); printCalibrationInfo(); }
       else if (c == 't') { for(int i=0; i<4; i++) scales[i].tare(); Serial.println("영점"); printCalibrationInfo(); }
       else if (c == 's') { prefs.putFloat("cal_factor", calibration_factor); Serial.println("저장"); }
-      // =======================================================
-      // ★ 'p'를 누르면 현재 무게를 JSON 형태로 한 번만 출력
       else if (c == 'p') {
         String payload = "{\"action\": \"POLL\", \"deviceId\": \"App_User\", \"weights\": [";
         payload += String(weights[0], 1) + ", "; 
@@ -142,7 +139,6 @@ void checkSerialInput() {
         Serial.println("\r\n🚀 [서버 전송 데이터 미리보기]:");
         Serial.println(payload);
       }
-      // =======================================================
       else if (c == '0') { currentMode = 0; printMainMenu(); }
     }
     return;
@@ -185,7 +181,6 @@ void handleInput(String input) {
     else if (input == "7") { currentMode = 7; Serial.println(C_MAGENTA "\r\n--- [ Sound Visualizer ] ---" C_RESET); updateDisplay(0, "Visualizer"); } 
     else if (input == "8") { currentMode = 8; Serial.printf(C_MAGENTA "\r\n--- [ Sound Reactive (%ddB) ] ---\r\n" C_RESET, soundThreshold); updateDisplay(0, "Reactive"); } 
     else if (input == "9") { printDashboard(); } 
-    // ★ [업그레이드 2] 지저분한 99, 100번 예외 처리 삭제 완료!
     else { Serial.println(C_RED "Error" C_RESET); printMainMenu(); }
   }
   else if (currentMode == 1) { 
@@ -194,22 +189,25 @@ void handleInput(String input) {
       else runManualMode(input); 
   }
   else if (currentMode == 2) { Serial.println("감성 분석 중..."); updateDisplay(0, "Analyzing..."); sendServerRequest("{\"mode\": \"emotion\", \"user_emotion\": \"" + input + "\"}"); }
-  else if (currentMode == 3) { lastWeatherRegion = input; 
-  float w = scales[0].get_units(10); 
-  Serial.printf("날씨 조회: %s\r\n", input.c_str()); updateDisplay(0, "Checking " + input); sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\", \"w4\": " + String(w) + "}"); }
+  else if (currentMode == 3) { 
+    lastWeatherRegion = input; 
+    float w = scales[0].get_units(10); 
+    Serial.printf("날씨 조회: %s\r\n", input.c_str()); 
+    updateDisplay(0, "Checking " + input); 
+    sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\", \"w4\": " + String(w) + "}"); 
+  }
 }
 
 void runManualMode(String input) { 
-    int t = -1; 
-    if (input == "1") t = PIN_SUNNY; else if (input == "2") t = PIN_CLOUDY;
-    else if (input == "3") t = PIN_RAIN; else if (input == "4") t = PIN_SNOW; 
+    int cmd = input.toInt();
+    int targetPin = getPinFromCommand(cmd); // 리팩토링: 핀 매핑 함수 활용
     
-    if (t != -1) {
-        forceAllOff(); activePin = t; isRunning = true; isSpraying = true;
+    if (targetPin != -1) {
+        forceAllOff(); activePin = targetPin; isRunning = true; isSpraying = true;
         sprayDuration = 3000; prevMotorMillis = millis(); startTimeMillis = millis();
-        digitalWrite(activePin, LOW); playSound(input.toInt());
-        Serial.printf("\r\n[Manual] %s번 실행\r\n", input.c_str());
-        updateDisplay(input.toInt(), "Manual Run");
+        digitalWrite(activePin, LOW); playSound(cmd);
+        Serial.printf("\r\n[Manual] %d번 실행\r\n", cmd);
+        updateDisplay(cmd, "Manual Run");
         showPrompt(); 
     } else if (input == "0") {
         currentMode = 0; stopSystem(); printMainMenu();
@@ -285,12 +283,15 @@ void runAutoDemoLoop() {
   if (millis() - prevDemoMillis >= 4000) {
     prevDemoMillis = millis(); forceAllOff(); demoStep++;
     if (demoStep > 4) demoStep = 1;
-    int t = -1;
-    if (demoStep == 1) t = PIN_SUNNY; else if (demoStep == 2) t = PIN_CLOUDY;
-    else if (demoStep == 3) t = PIN_RAIN; else if (demoStep == 4) t = PIN_SNOW;
+    
+    int targetPin = getPinFromCommand(demoStep); // 리팩토링: 핀 매핑 함수 활용
+    
     Serial.print("\r\033[K");
     Serial.printf(C_MAGENTA "[Auto Demo] %s 모드\r\n" C_RESET, (demoStep == 1) ? "맑음" : (demoStep == 2) ? "흐림" : (demoStep == 3) ? "비" : "눈");
-    digitalWrite(t, LOW); playSound(demoStep); updateDisplay(demoStep, "Demo Mode");
+    
+    if (targetPin != -1) digitalWrite(targetPin, LOW); 
+    
+    playSound(demoStep); updateDisplay(demoStep, "Demo Mode");
   }
 }
 
