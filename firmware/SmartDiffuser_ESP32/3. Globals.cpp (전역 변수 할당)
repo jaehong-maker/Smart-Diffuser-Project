@@ -6,7 +6,7 @@ HardwareSerial nexSerial(1);
 DFRobotDFPlayerMini myDFPlayer;
 HX711 scales[4];
 TaskHandle_t SensorTaskHandle = NULL;
-volatile bool wakeWordDetected = false;
+QueueHandle_t audioEventQueue = NULL;
 
 // README에 적어두신 핀 번호를 배열로 묶어줍니다.
 const int LOADCELL_DT[4]  = {34, 36, 39, 32};
@@ -57,3 +57,21 @@ int ledFadeAmount = 5;
 unsigned long lastWeatherCallMillis = 0;
 const unsigned long WEATHER_INTERVAL = 3600000;
 String lastWeatherRegion = "서울";
+
+// 함수 선언 및 구현
+void setSprayIntensity(int intensityVal) {
+    currentIntensity = intensityVal;
+    if (currentIntensity == 1) REST_TIME = 9000;      // 약
+    else if (currentIntensity == 2) REST_TIME = 6000; // 중
+    else REST_TIME = 3000;                            // 강
+}
+
+int getPinFromCommand(int cmd) {
+  switch(cmd) {
+    case 1: return PIN_SUNNY;
+    case 2: return PIN_CLOUDY;
+    case 3: return PIN_RAIN;
+    case 4: return PIN_SNOW;
+    default: return -1;
+  }
+}
