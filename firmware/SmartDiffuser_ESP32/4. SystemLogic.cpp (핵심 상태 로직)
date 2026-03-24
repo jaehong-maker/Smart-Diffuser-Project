@@ -58,31 +58,48 @@ void checkFluidLevels() {
   }
 }
 
+// --- 서브 루틴: 노즐 막힘 방지 (Auto-Cleaning) ---
+void runAutoCleaning() {
+  if (isRunning || currentMode == MODE_SLEEP || currentMode == MODE_VOICE) return;
+  unsigned long currentTime = millis();
+  for (int i = 0; i < 4; i++) {
+    if (currentTime - lastNozzleSprayTime[i] > CLEANING_INTERVAL) {
+      Serial.printf(C_YELLOW "\r\n[Auto-Cleaning] %d번 노즐 청소 실행!\r\n" C_RESET, i + 1);
+      triggerSpray(i + 1, 1, 0, "Nozzle Cleaning", false);
+      // triggerSpray 내부에서 lastNozzleSprayTime이 갱신됨
+      break; 
+    }
+  }
+}
+
 // --- 시스템 초기화 ---
 void initSystem() {
   Serial.begin(115200); Serial.setTimeout(5000);
   nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
   delay(300); nexSend("bauds=9600"); delay(100); nexSend("dim=100");    
   
-  esp_task_wdt_deinit();
-  esp_task_wdt_config_t wdt_config = { .timeout_ms = 60000, .idle_core_mask = (1 << 0) | (1 << 1), .trigger_panic = true };
-  esp_task_wdt_init(&wdt_config); esp_task_wdt_add(NULL);
+  // ★ 와치독 설정 수정 (task not found 에러 해결)
+  esp_task_wdt_config_t wdt_config = {
+      .timeout_ms = 60000, 
+      .idle_core_mask = (1 << 0) | (1 << 1), 
+      .trigger_panic = true
+  };
+  esp_task_wdt_reconfigure(&wdt_config); // 최신 API 방식 사용
+  esp_task_wdt_add(NULL); // 현재 Loop Task 등록
+
+  // 통신 큐 생성
+  networkQueue = xQueueCreate(10, sizeof(String*));
 
   pinMode(PIN_SUNNY, OUTPUT); pinMode(PIN_CLOUDY, OUTPUT);
   pinMode(PIN_RAIN, OUTPUT); pinMode(PIN_SNOW, OUTPUT); pinMode(PIN_LED, OUTPUT);
   forceAllOff();
 
-  Serial.print("\r\n\r\n");
-  Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
-  Serial.printf(C_BOLD    " 🚀 SMART DIFFUSER V12.5.0 (APP ALARM MODE) \r\n" C_RESET);
-  Serial.printf(C_MAGENTA "****************************************\r\n" C_RESET);
+  Serial.printf(C_BOLD "\r\n 🚀 SMART DIFFUSER V12.6.5 (STABLE & CLEAN) \r\n" C_RESET);
 
   mySoftwareSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
   if (!myDFPlayer.begin(mySoftwareSerial)) Serial.println("Audio Fail");
 
   initMicrophone();
-
-  // 저장소 데이터 로드 (알람 관련 로드 삭제됨) [cite: 1]
   prefs.begin("diffuser", false);
   calibration_factor = prefs.getFloat("cal_factor", 430.0);
   currentVolume = prefs.getInt("volume", 20); myDFPlayer.volume(currentVolume);
@@ -90,12 +107,11 @@ void initSystem() {
   for (int i = 0; i < 4; i++) {
     scales[i].begin(LOADCELL_DT[i], LOADCELL_SCK[i]);
     scales[i].set_scale(calibration_factor); scales[i].tare();
+    lastNozzleSprayTime[i] = millis(); // 타이머 초기화
   }
 
   connectWiFi();
-  
   configTime(9 * 3600, 0, "pool.ntp.org", "time.nist.gov");
-  Serial.printf(C_CYAN "🌐 인터넷 시간 동기화 완료!\r\n" C_RESET);
 
   audioEventQueue = xQueueCreate(5, sizeof(int));
   networkEventGroup = xEventGroupCreate();
@@ -103,7 +119,6 @@ void initSystem() {
   
   lastActivityTime = millis(); 
   setSystemMode(MODE_READY, "System Ready");
-  printMainMenu();
 
   xTaskCreatePinnedToCore(networkTaskLoop, "NetworkTask", 8192, NULL, 1, &NetworkTaskHandle, 1);
   xTaskCreatePinnedToCore(sensorTaskLoop, "SensorTask", 8192, NULL, 1, &SensorTaskHandle, 0);
@@ -111,7 +126,7 @@ void initSystem() {
 
 // --- 메인 루프 ---
 void runSystem() {
-  esp_task_wdt_reset();
+  esp_task_wdt_reset(); // 와치독 리셋
   handleOTA();
   checkNextionInput();
 
@@ -133,6 +148,7 @@ void runSystem() {
   pollServer(); 
   monitorWeight();
   
+  runAutoCleaning(); // 청소 로직 가동
   checkFluidLevels(); 
 
   if (currentMode == MODE_DEMO) runAutoDemoLoop(); 
@@ -156,31 +172,57 @@ void checkSerialInput() {
     return;
   }
 
-  if (currentMode == MODE_SETTING) {
-    char c = Serial.read(); if (c == '\n' || c == '\r') return;
-    if (c == '+') { calibration_factor += 10; for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); printCalibrationInfo(); }
-    else if (c == '-') { calibration_factor -= 10; for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); printCalibrationInfo(); }
-    else if (c == 't') { for(int i=0; i<4; i++) scales[i].tare(); Serial.println("영점 완료"); }
-    else if (c == 's') { prefs.putFloat("cal_factor", calibration_factor); Serial.println("저장 완료"); }
-    else if (c == 'p') {
-        String payload = "{\"action\": \"POLL\", \"weights\": [";
-        payload += String(weights[0], 1) + ", " + String(weights[1], 1) + ", " + String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
-        Serial.println("\r\n🚀 [JSON 미리보기]: " + payload);
-    }
-    else if (c == '0') setSystemMode(MODE_READY, "Main Menu");
-    return;
+  // SystemLogic.cpp 내 checkSerialInput 함수 수정
+if (currentMode == MODE_SETTING) {
+  char c = Serial.read(); 
+  if (c == '\n' || c == '\r') return;
+
+  if (c == '+') { 
+    calibration_factor += 10; 
+    for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); 
+    Serial.print("\r\n"); // ★ 줄바꿈 추가
+    printCalibrationInfo(); 
+    showPrompt(); // ★ 프롬프트 다시 그리기
   }
+  else if (c == '-') { 
+    calibration_factor -= 10; 
+    for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); 
+    Serial.print("\r\n"); 
+    printCalibrationInfo(); 
+    showPrompt(); 
+  }
+  else if (c == 't') { 
+    for(int i=0; i<4; i++) scales[i].tare(); 
+    Serial.println("\r\n✅ [영점 완료]"); // ★ 줄바꿈과 체크 표시로 가독성 업!
+    showPrompt(); 
+  }
+  else if (c == 's') { 
+    prefs.putFloat("cal_factor", calibration_factor); 
+    Serial.println("\r\n💾 [저장 완료]"); 
+    showPrompt(); 
+  }
+  else if (c == 'p') {
+    String payload = "{\"action\": \"POLL\", \"weights\": [";
+    payload += String(weights[0], 1) + ", " + String(weights[1], 1) + ", " + String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
+    Serial.println("\r\n🚀 [JSON 미리보기]:\r\n" + payload);
+    showPrompt();
+  }
+  else if (c == '0') setSystemMode(MODE_READY, "Main Menu");
+  
+  return;
+}
 
   while (Serial.available() > 0) {
     char c = Serial.read();
     if (c == '\n' || c == '\r') {
       if (inputBuffer.length() > 0) {
-        
-        // ★ 알람 세팅 명령어(AXXXX) 로직 완전 삭제 [cite: 1]
         if (inputBuffer == "0") setSystemMode(MODE_READY, "Stopped");
         else handleInput(inputBuffer);
-        
         inputBuffer = "";
+        // ★ 이 부분을 추가해! (입력이 끝난 뒤 프롬프트를 바로 띄워줌)
+        if (currentMode != MODE_SLEEP && currentMode != MODE_VOICE) {
+            showPrompt(); 
+        }
       }
     } else if (c == '\b' || c == 0x7F) {
       if (inputBuffer.length() > 0) { inputBuffer.remove(inputBuffer.length() - 1); redrawInputLine(inputBuffer); }
@@ -191,9 +233,17 @@ void checkSerialInput() {
 // --- 통합 입력 처리 ---
 void handleInput(String input) {
   if (currentMode == MODE_READY) {
-    if (input == "1")      setSystemMode(MODE_MANUAL, "Manual Mode");
+    if (input == "1") { 
+      setSystemMode(MODE_MANUAL, "Manual Mode"); 
+      printManualMenu(); // ★ 수동 모드 진입 시 가이드 출력
+      showPrompt(); 
+    }
     else if (input == "2") setSystemMode(MODE_WEATHER, "Weather Mode");
-    else if (input == "3") setSystemMode(MODE_SETTING, "Setting Mode");
+    else if (input == "3") { 
+      setSystemMode(MODE_SETTING, "Setting Mode"); 
+      printSettingMenu(); // ★ 여기서 메뉴 가이드를 띄워줌!
+      showPrompt(); 
+    }
     else if (input == "4") { demoStep = 0; setSystemMode(MODE_DEMO, "Demo Mode"); }
     else if (input == "5") { setSystemMode(MODE_VOICE); recordAndSendVoice(); setSystemMode(MODE_READY, "Main Menu"); printMainMenu(); }
     else if (input == "6") setSystemMode(MODE_VISUAL, "Visualizer");
@@ -202,12 +252,20 @@ void handleInput(String input) {
     else { Serial.println(C_RED "Unknown Command" C_RESET); printMainMenu(); }
   } 
   else if (currentMode == MODE_MANUAL) {
-    if (input == "+") changeVolume(currentVolume + 2); 
-    else if (input == "-") changeVolume(currentVolume - 2); 
+    if (input == "+") { 
+      changeVolume(currentVolume + 2); 
+      showPrompt(); // ★ 볼륨 변경 후 입력창 다시 띄우기
+    }
+    else if (input == "-") { 
+      changeVolume(currentVolume - 2); 
+      showPrompt(); // ★ 볼륨 변경 후 입력창 다시 띄우기
+    }
     else runManualMode(input); 
   }
   else if (currentMode == MODE_WEATHER) {
     lastWeatherRegion = input;
+    // ★ 추가: 입력한 지역명을 로그에 확실히 남김
+    Serial.printf("\r\n🔍 [%s] 지역 날씨 조회 요청 중...\r\n", input.c_str());
     updateDisplay(0, "Checking " + input); 
     sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\"}");
   }
@@ -218,10 +276,7 @@ void runManualMode(String input) {
   int cmd = input.toInt();
   int targetPin = getPinFromCommand(cmd);
   if (targetPin != -1) {
-    forceAllOff(); activePin = targetPin; isRunning = true; isSpraying = true;
-    sprayDuration = 3000; prevMotorMillis = millis(); startTimeMillis = millis();
-    digitalWrite(activePin, LOW); playSound(cmd);
-    updateDisplay(cmd, "Manual Run");
+    triggerSpray(cmd, 3, cmd, "Manual Run", false);
   } else if (input == "0") { setSystemMode(MODE_READY, "Stopped"); }
 }
 
@@ -231,22 +286,23 @@ void enterWeatherMode(bool runNow) {
   if (runNow) sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\"}");
 }
 
+// SystemLogic.cpp의 runSprayLogic은 그대로 둬도 이제 잘 돌아갈 거야
 void runSprayLogic() { 
-  if (activePin == -1) return;
+  if (activePin == -1) return; // 이제 위에서 설정을 해줬으니 통과!
 
   if (isSpraying) {
-    if (millis() - prevMotorMillis >= sprayDuration) {
-      digitalWrite(activePin, HIGH); isSpraying = false; prevMotorMillis = millis();
-      if (currentMode == MODE_MANUAL) { setSystemMode(MODE_READY, "Ready"); return; }
-      updateDisplay((currentMode == MODE_WEATHER) ? lastWeatherIconId : 0, "Resting...");
+    if (millis() - prevMotorMillis >= sprayDuration) { // 3초 지나면
+      digitalWrite(activePin, HIGH); // 끄기
+      isSpraying = false; 
+      prevMotorMillis = millis();
+      // 수동 모드일 때는 한 번만 뿌리고 싶다면 아래 주석을 해제해
+      // if (currentMode == MODE_MANUAL) { setSystemMode(MODE_READY, "Ready"); return; }
     }
   } else {
-    if (millis() - prevMotorMillis >= REST_TIME) {
-      forceAllOff(); digitalWrite(activePin, LOW); isSpraying = true; prevMotorMillis = millis();
-      int icon = 0;
-      if (activePin == PIN_SUNNY) icon = 1; else if (activePin == PIN_CLOUDY) icon = 2;
-      else if (activePin == PIN_RAIN) icon = 3; else if (activePin == PIN_SNOW) icon = 4;
-      updateDisplay(icon, "Spraying...");
+    if (millis() - prevMotorMillis >= REST_TIME) { // 쉬는 시간(기본 6초) 지나면
+      digitalWrite(activePin, LOW); // 다시 켜기
+      isSpraying = true; 
+      prevMotorMillis = millis();
     }
   }
 }
@@ -256,7 +312,10 @@ void runAutoDemoLoop() {
     prevDemoMillis = millis(); forceAllOff(); demoStep++;
     if (demoStep > 4) demoStep = 1;
     int targetPin = getPinFromCommand(demoStep);
-    if (targetPin != -1) digitalWrite(targetPin, LOW); 
+    if (targetPin != -1) {
+      digitalWrite(targetPin, LOW);
+      lastNozzleSprayTime[demoStep - 1] = millis(); 
+    }
     playSound(demoStep); updateDisplay(demoStep, "Demo Mode");
   }
 }
@@ -271,5 +330,31 @@ void setSystemMode(SystemMode mode, String msg) {
     Serial.printf(C_CYAN "\r\n[Mode] %s\r\n" C_RESET, msg.c_str());
     updateDisplay(0, msg);
   }
-  if (mode == MODE_READY) stopSystem();
+  
+  if (mode == MODE_READY) {
+    stopSystem();
+    printMainMenu(); // 0 눌러서 메인 올 때 메뉴판 다시 그려주기 ㅋㅋ
+  }
+}
+
+// SystemLogic.cpp 파일 뒷부분에 추가
+void printSettingMenu() {
+  Serial.println("\r\n" C_YELLOW "--- [설정 모드 명령어 가이드] ---" C_RESET);
+  Serial.println(" [+] 로드셀 보정값 10 증가");
+  Serial.println(" [-] 로드셀 보정값 10 감소");
+  Serial.println(" [t] 저울 영점 조절 (Tare)");
+  Serial.println(" [s] 현재 보정값 저장 (Save to Flash)");
+  Serial.println(" [p] 서버 전송용 JSON 데이터 미리보기");
+  Serial.println(" [0] 메인 메뉴로 돌아가기");
+  Serial.println(C_YELLOW "--------------------------------" C_RESET);
+}
+
+// --- 수동 모드 메뉴 가이드 출력 ---
+void printManualMenu() {
+  Serial.println("\r\n" C_YELLOW "--- [수동 모드 명령어 가이드] ---" C_RESET);
+  Serial.println(" [1-4] 해당 번호의 분사구 작동 (3초)");
+  Serial.println(" [+] 스피커 볼륨 2 증가");
+  Serial.println(" [-] 스피커 볼륨 2 감소");
+  Serial.println(" [0] 메인 메뉴로 돌아가기");
+  Serial.println(C_YELLOW "--------------------------------" C_RESET);
 }
