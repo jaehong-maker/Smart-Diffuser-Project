@@ -232,11 +232,8 @@ void runSoundReaction() {
     activeNozzles[cmd - 1] = true;
     lastNozzleSprayTime[cmd - 1] = currentTime;
     
-    int musicTrack = 1; 
-    if (cmd == 1) { musicTrack = random(1, 6); } 
-    else if (cmd == 2) { musicTrack = random(6, 11); } 
-    else if (cmd == 3) { musicTrack = random(11, 16); } 
-    else if (cmd == 4) { musicTrack = random(16, 21); }
+    // 수학적 맵핑 알고리즘 적용 (cmd 1~4 값을 기반으로 트랙 범위 자동 계산)
+    int musicTrack = random((cmd - 1) * 5 + 1, cmd * 5 + 1);
     
     isRunning = true; 
     isSpraying = true; 
