@@ -78,7 +78,7 @@ void initSystem() {
   nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
   delay(300); nexSend("bauds=9600"); delay(100); nexSend("dim=100");    
   
-  // ★ 와치독 설정 수정 (task not found 에러 해결)
+  // 와치독 설정 수정 (task not found 에러 해결)
   esp_task_wdt_config_t wdt_config = {
       .timeout_ms = 60000, 
       .idle_core_mask = (1 << 0) | (1 << 1), 
@@ -180,9 +180,9 @@ if (currentMode == MODE_SETTING) {
   if (c == '+') { 
     calibration_factor += 10; 
     for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); 
-    Serial.print("\r\n"); // ★ 줄바꿈 추가
+    Serial.print("\r\n"); // 줄바꿈 추가
     printCalibrationInfo(); 
-    showPrompt(); // ★ 프롬프트 다시 그리기
+    showPrompt(); // 프롬프트 다시 그리기
   }
   else if (c == '-') { 
     calibration_factor -= 10; 
@@ -193,7 +193,7 @@ if (currentMode == MODE_SETTING) {
   }
   else if (c == 't') { 
     for(int i=0; i<4; i++) scales[i].tare(); 
-    Serial.println("\r\n✅ [영점 완료]"); // ★ 줄바꿈과 체크 표시로 가독성 업!
+    Serial.println("\r\n✅ [영점 완료]"); // 줄바꿈과 체크 표시
     showPrompt(); 
   }
   else if (c == 's') { 
@@ -219,7 +219,7 @@ if (currentMode == MODE_SETTING) {
         if (inputBuffer == "0") setSystemMode(MODE_READY, "Stopped");
         else handleInput(inputBuffer);
         inputBuffer = "";
-        // ★ 이 부분을 추가해! (입력이 끝난 뒤 프롬프트를 바로 띄워줌)
+        // 입력이 끝난 뒤 프롬프트를 바로 띄워줌
         if (currentMode != MODE_SLEEP && currentMode != MODE_VOICE) {
             showPrompt(); 
         }
@@ -235,13 +235,13 @@ void handleInput(String input) {
   if (currentMode == MODE_READY) {
     if (input == "1") { 
       setSystemMode(MODE_MANUAL, "Manual Mode"); 
-      printManualMenu(); // ★ 수동 모드 진입 시 가이드 출력
+      printManualMenu(); // 수동 모드 진입 시 가이드 출력
       showPrompt(); 
     }
     else if (input == "2") setSystemMode(MODE_WEATHER, "Weather Mode");
     else if (input == "3") { 
       setSystemMode(MODE_SETTING, "Setting Mode"); 
-      printSettingMenu(); // ★ 여기서 메뉴 가이드를 띄워줌!
+      printSettingMenu(); // 여기서 메뉴 가이드를 띄워줌!
       showPrompt(); 
     }
     else if (input == "4") { demoStep = 0; setSystemMode(MODE_DEMO, "Demo Mode"); }
@@ -254,17 +254,17 @@ void handleInput(String input) {
   else if (currentMode == MODE_MANUAL) {
     if (input == "+") { 
       changeVolume(currentVolume + 2); 
-      showPrompt(); // ★ 볼륨 변경 후 입력창 다시 띄우기
+      showPrompt(); // 볼륨 변경 후 입력창 다시 띄우기
     }
     else if (input == "-") { 
       changeVolume(currentVolume - 2); 
-      showPrompt(); // ★ 볼륨 변경 후 입력창 다시 띄우기
+      showPrompt(); // 볼륨 변경 후 입력창 다시 띄우기
     }
     else runManualMode(input); 
   }
   else if (currentMode == MODE_WEATHER) {
     lastWeatherRegion = input;
-    // ★ 추가: 입력한 지역명을 로그에 확실히 남김
+    // 입력한 지역명을 로그에 확실히 남김
     Serial.printf("\r\n🔍 [%s] 지역 날씨 조회 요청 중...\r\n", input.c_str());
     updateDisplay(0, "Checking " + input); 
     sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\"}");
@@ -273,11 +273,60 @@ void handleInput(String input) {
 
 // --- 동작 제어 헬퍼 함수들 ---
 void runManualMode(String input) { 
-  int cmd = input.toInt();
-  int targetPin = getPinFromCommand(cmd);
-  if (targetPin != -1) {
-    triggerSpray(cmd, 3, cmd, "Manual Run", false);
-  } else if (input == "0") { setSystemMode(MODE_READY, "Stopped"); }
+  if (input == "0") { 
+    setSystemMode(MODE_READY, "Stopped"); 
+    return; 
+  }
+  
+  forceAllOff();
+  for (int i = 0; i < 4; i++) {
+    activeNozzles[i] = false;
+  }
+  
+  bool isValid = false;
+  int activeCount = 0; // 실제 활성화된 독립적인 노즐의 개수를 저장
+  
+  // 문자열 파싱 및 노즐 활성화 검증
+  for (int i = 0; i < input.length(); i++) {
+    int cmd = input.charAt(i) - '0';
+    if (cmd >= 1 && cmd <= 4) {
+      if (!activeNozzles[cmd - 1]) { // 동일 번호 중복 입력 방지
+        activeNozzles[cmd - 1] = true;
+        activeCount++;
+        isValid = true;
+      }
+    }
+  }
+
+  if (isValid) {
+    isRunning = true; 
+    isSpraying = true;
+    sprayDuration = 3000; 
+    prevMotorMillis = millis(); 
+    startTimeMillis = millis();
+    
+    // 모터 구동 릴레이 핀 제어
+    for (int i = 0; i < 4; i++) {
+      if (activeNozzles[i]) {
+        int targetPin = getPinFromCommand(i + 1);
+        if (targetPin != -1) {
+          digitalWrite(targetPin, LOW); 
+        }
+      }
+    }
+    playSound(1); 
+    
+    // 활성화된 노즐 개수에 따른 조건부 출력 로직
+    if (activeCount > 1) {
+      updateDisplay(0, "Blending Mode");
+      Serial.printf("\r\n✅ 시그니처 향(혼합) 분사 시작 (명령: %s)\r\n", input.c_str());
+    } else {
+      updateDisplay(0, "Manual Mode");
+      Serial.printf("\r\n✅ 단일 향 분사 시작 (명령: %s)\r\n", input.c_str());
+    }
+  } else {
+    Serial.println("\r\n❌ 잘못된 명령입니다.");
+  }
 }
 
 void enterWeatherMode(bool runNow) {
@@ -288,21 +337,40 @@ void enterWeatherMode(bool runNow) {
 
 // SystemLogic.cpp의 runSprayLogic은 그대로 둬도 이제 잘 돌아갈 거야
 void runSprayLogic() { 
-  if (activePin == -1) return; // 이제 위에서 설정을 해줬으니 통과!
+  bool hasActive = false;
+  for (int i = 0; i < 4; i++) {
+    if (activeNozzles[i]) hasActive = true;
+  }
+  if (!hasActive) return;
 
   if (isSpraying) {
-    if (millis() - prevMotorMillis >= sprayDuration) { // 3초 지나면
-      digitalWrite(activePin, HIGH); // 끄기
+    // 설정된 분사 지속 시간(기본 3초) 경과 시
+    if (millis() - prevMotorMillis >= sprayDuration) {
+      forceAllOff();
       isSpraying = false; 
       prevMotorMillis = millis();
-      // 수동 모드일 때는 한 번만 뿌리고 싶다면 아래 주석을 해제해
-      // if (currentMode == MODE_MANUAL) { setSystemMode(MODE_READY, "Ready"); return; }
+      
+      // 수동 모드(MODE_MANUAL)일 경우 모터 구동을 중단하지 않고 사이클을 그대로 유지합니다.
+      if (currentMode != MODE_MANUAL) {
+        updateDisplay((currentMode == MODE_WEATHER) ? lastWeatherIconId : 0, "Resting...");
+      }
     }
   } else {
-    if (millis() - prevMotorMillis >= REST_TIME) { // 쉬는 시간(기본 6초) 지나면
-      digitalWrite(activePin, LOW); // 다시 켜기
+    // 설정된 대기 시간(기본 6초) 경과 시 분사 재개
+    if (millis() - prevMotorMillis >= REST_TIME) {
+      forceAllOff(); 
+      for (int i = 0; i < 4; i++) {
+        if (activeNozzles[i]) {
+          int pin = getPinFromCommand(i + 1);
+          if (pin != -1) digitalWrite(pin, LOW); // 릴레이 제어 신호 인가
+        }
+      }
       isSpraying = true; 
       prevMotorMillis = millis();
+      
+      if (currentMode != MODE_MANUAL) {
+        updateDisplay(0, "Spraying...");
+      }
     }
   }
 }
@@ -337,7 +405,6 @@ void setSystemMode(SystemMode mode, String msg) {
   }
 }
 
-// SystemLogic.cpp 파일 뒷부분에 추가
 void printSettingMenu() {
   Serial.println("\r\n" C_YELLOW "--- [설정 모드 명령어 가이드] ---" C_RESET);
   Serial.println(" [+] 로드셀 보정값 10 증가");
@@ -352,7 +419,8 @@ void printSettingMenu() {
 // --- 수동 모드 메뉴 가이드 출력 ---
 void printManualMenu() {
   Serial.println("\r\n" C_YELLOW "--- [수동 모드 명령어 가이드] ---" C_RESET);
-  Serial.println(" [1-4] 해당 번호의 분사구 작동 (3초)");
+  Serial.println(" [1-4] 단일 분사구 작동 (예: 1)");
+  Serial.println(" [혼합] 번호 연속 입력 시 시그니처 향 분사 (예: 13, 24)");
   Serial.println(" [+] 스피커 볼륨 2 증가");
   Serial.println(" [-] 스피커 볼륨 2 감소");
   Serial.println(" [0] 메인 메뉴로 돌아가기");
