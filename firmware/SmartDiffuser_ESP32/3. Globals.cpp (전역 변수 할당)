@@ -35,6 +35,9 @@ bool isRunning    = false;
 bool isCommunicate = false; 
 bool activeNozzles[4] = {false, false, false, false};
 bool isSpraying   = false;
+bool blendModeEnabled = false;
+String blendSelection = "";
+bool blendSprayActive = false;
 
 String lastWebMessage = "Ready";
 String inputBuffer    = "";
