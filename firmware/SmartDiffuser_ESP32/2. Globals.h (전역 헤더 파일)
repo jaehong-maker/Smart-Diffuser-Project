@@ -13,7 +13,7 @@
 #include <driver/i2s.h>
 #include <math.h>
 #include <ArduinoOTA.h>
-#include <time.h> // ★ NTP 시간을 위한 헤더 추가
+#include <time.h> // NTP 시간을 위한 헤더
 
 #include <freertos/queue.h> // 큐 사용을 위한 헤더 추가
 
@@ -97,7 +97,7 @@ extern float calibration_factor;
 extern int currentVolume;
 extern bool isRunning;
 extern bool isCommunicate;
-extern int activePin;
+extern bool activeNozzles[4];
 extern bool isSpraying;
 extern String lastWebMessage;
 extern String inputBuffer;
@@ -176,8 +176,8 @@ void updateTempHumi(float tempC, float humi);
 void updateProgressBar(int val);
 void showPrompt();
 void printMainMenu();
-void printSettingMenu(); // ★ 이 줄을 추가!
-void printManualMenu(); // ★ 수동 모드 가이드 함수 추가
+void printSettingMenu(); 
+void printManualMenu(); // 수동 모드 가이드 함수
 void redrawInputLine(String &buffer);
 void printDashboard();
 void changeVolume(int vol);
