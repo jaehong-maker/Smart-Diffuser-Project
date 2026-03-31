@@ -31,8 +31,9 @@ void wakeUpSystem() {
   Serial.println(C_GREEN "\r\n☀️ 시스템 기상! Wi-Fi 재연결 중...\r\n" C_RESET);
   WiFi.mode(WIFI_STA);
   connectWiFi();
+  
+  // 상태 변경과 동시에 내부에서 printMainMenu()가 1회 실행됨
   setSystemMode(MODE_READY, "System Ready");
-  printMainMenu();
 }
 
 // --- 서브 루틴: 오디오 큐 이벤트 처리 ---
@@ -53,7 +54,7 @@ void processAudioEvents() {
 
 // --- 서브 루틴: 스마트 절전 관리 ---
 void manageSleepState() {
-  if (currentMode == MODE_READY && (millis() - lastActivityTime > SLEEP_TIMEOUT)) {
+  if (currentMode != MODE_SLEEP && (millis() - lastActivityTime > SLEEP_TIMEOUT)) {
     setSystemMode(MODE_SLEEP, "");
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
@@ -97,7 +98,10 @@ void runAutoCleaning() {
 void initSystem() {
   Serial.begin(115200); Serial.setTimeout(5000);
   nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
-  delay(300); nexSend("bauds=9600"); delay(100); nexSend("dim=100");    
+  delay(300); 
+  nexSend("sleep=0");  // ★ 추가: 부팅 시 디스플레이 수면 모드 강제 해제
+  delay(100);
+  nexSend("bauds=9600"); delay(100); nexSend("dim=100");    
   
   esp_task_wdt_config_t wdt_config = {
       .timeout_ms = 60000, 
