@@ -127,6 +127,10 @@ extern String globalPayload;
 extern unsigned long lastActivityTime;
 extern const unsigned long SLEEP_TIMEOUT;
 
+extern bool blendModeEnabled;
+extern String blendSelection;
+extern bool blendSprayActive;
+
 // --- 노즐 막힘 방지 관련 ---
 extern unsigned long lastNozzleSprayTime[4]; // 각 노즐별 마지막 분사 시간
 const unsigned long CLEANING_INTERVAL = 86400000; // 24시간 (밀리초 단위)
