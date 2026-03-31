@@ -1,5 +1,23 @@
 #include "Globals.h"
 
+// --- 유틸리티: 노즐 파싱 및 활성화 ---
+int parseAndSetNozzles(String cmdStr) {
+  int activeCount = 0;
+  for (int i = 0; i < 4; i++) activeNozzles[i] = false;
+
+  for (int i = 0; i < cmdStr.length(); i++) {
+    int cmd = cmdStr.charAt(i) - '0';
+    if (cmd >= 1 && cmd <= 4) {
+      if (!activeNozzles[cmd - 1]) {
+        activeNozzles[cmd - 1] = true;
+        lastNozzleSprayTime[cmd - 1] = millis(); // 타이머 일괄 갱신
+        activeCount++;
+      }
+    }
+  }
+  return activeCount;
+}
+
 // --- 서브 루틴: 시스템 기상 ---
 void wakeUpSystem() {
   if (currentMode != MODE_SLEEP) return;
@@ -66,7 +84,6 @@ void runAutoCleaning() {
     if (currentTime - lastNozzleSprayTime[i] > CLEANING_INTERVAL) {
       Serial.printf(C_YELLOW "\r\n[Auto-Cleaning] %d번 노즐 청소 실행!\r\n" C_RESET, i + 1);
       triggerSpray(i + 1, 1, 0, "Nozzle Cleaning", false);
-      // triggerSpray 내부에서 lastNozzleSprayTime이 갱신됨
       break; 
     }
   }
@@ -78,23 +95,21 @@ void initSystem() {
   nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
   delay(300); nexSend("bauds=9600"); delay(100); nexSend("dim=100");    
   
-  // 와치독 설정 수정 (task not found 에러 해결)
   esp_task_wdt_config_t wdt_config = {
       .timeout_ms = 60000, 
       .idle_core_mask = (1 << 0) | (1 << 1), 
       .trigger_panic = true
   };
-  esp_task_wdt_reconfigure(&wdt_config); // 최신 API 방식 사용
-  esp_task_wdt_add(NULL); // 현재 Loop Task 등록
+  esp_task_wdt_reconfigure(&wdt_config); 
+  esp_task_wdt_add(NULL); 
 
-  // 통신 큐 생성
   networkQueue = xQueueCreate(10, sizeof(String*));
 
   pinMode(PIN_SUNNY, OUTPUT); pinMode(PIN_CLOUDY, OUTPUT);
   pinMode(PIN_RAIN, OUTPUT); pinMode(PIN_SNOW, OUTPUT); pinMode(PIN_LED, OUTPUT);
   forceAllOff();
 
-  Serial.printf(C_BOLD "\r\n 🚀 SMART DIFFUSER V12.6.5 (STABLE & CLEAN) \r\n" C_RESET);
+  Serial.printf(C_BOLD "\r\n 🚀 SMART DIFFUSER V12.7.0 (REFACTORED ARCHITECTURE) \r\n" C_RESET);
 
   mySoftwareSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
   if (!myDFPlayer.begin(mySoftwareSerial)) Serial.println("Audio Fail");
@@ -107,7 +122,7 @@ void initSystem() {
   for (int i = 0; i < 4; i++) {
     scales[i].begin(LOADCELL_DT[i], LOADCELL_SCK[i]);
     scales[i].set_scale(calibration_factor); scales[i].tare();
-    lastNozzleSprayTime[i] = millis(); // 타이머 초기화
+    lastNozzleSprayTime[i] = millis(); 
   }
 
   connectWiFi();
@@ -126,7 +141,7 @@ void initSystem() {
 
 // --- 메인 루프 ---
 void runSystem() {
-  esp_task_wdt_reset(); // 와치독 리셋
+  esp_task_wdt_reset(); 
   handleOTA();
   checkNextionInput();
 
@@ -148,7 +163,7 @@ void runSystem() {
   pollServer(); 
   monitorWeight();
   
-  runAutoCleaning(); // 청소 로직 가동
+  runAutoCleaning(); 
   checkFluidLevels(); 
 
   if (currentMode == MODE_DEMO) runAutoDemoLoop(); 
@@ -157,7 +172,7 @@ void runSystem() {
   checkSerialInput();
 }
 
-// --- 시리얼 입력 감시 ---
+// --- 시리얼 입력 감시 (모듈화 적용) ---
 void checkSerialInput() {
   if (Serial.available() <= 0) return;
   
@@ -172,46 +187,47 @@ void checkSerialInput() {
     return;
   }
 
-  // SystemLogic.cpp 내 checkSerialInput 함수 수정
-if (currentMode == MODE_SETTING) {
+  if (currentMode == MODE_SETTING) {
+    processSettingModeInput();
+    return;
+  }
+
+  processStandardInput();
+}
+
+// --- 서브 루틴: 설정 모드 입력 처리 ---
+void processSettingModeInput() {
   char c = Serial.read(); 
   if (c == '\n' || c == '\r') return;
 
   if (c == '+') { 
     calibration_factor += 10; 
     for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); 
-    Serial.print("\r\n"); // 줄바꿈 추가
-    printCalibrationInfo(); 
-    showPrompt(); // 프롬프트 다시 그리기
+    Serial.print("\r\n"); printCalibrationInfo(); showPrompt(); 
   }
   else if (c == '-') { 
     calibration_factor -= 10; 
     for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); 
-    Serial.print("\r\n"); 
-    printCalibrationInfo(); 
-    showPrompt(); 
+    Serial.print("\r\n"); printCalibrationInfo(); showPrompt(); 
   }
   else if (c == 't') { 
     for(int i=0; i<4; i++) scales[i].tare(); 
-    Serial.println("\r\n✅ [영점 완료]"); // 줄바꿈과 체크 표시
-    showPrompt(); 
+    Serial.println("\r\n✅ [영점 완료]"); showPrompt(); 
   }
   else if (c == 's') { 
     prefs.putFloat("cal_factor", calibration_factor); 
-    Serial.println("\r\n💾 [저장 완료]"); 
-    showPrompt(); 
+    Serial.println("\r\n💾 [저장 완료]"); showPrompt(); 
   }
   else if (c == 'p') {
     String payload = "{\"action\": \"POLL\", \"weights\": [";
     payload += String(weights[0], 1) + ", " + String(weights[1], 1) + ", " + String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
-    Serial.println("\r\n🚀 [JSON 미리보기]:\r\n" + payload);
-    showPrompt();
+    Serial.println("\r\n🚀 [JSON 미리보기]:\r\n" + payload); showPrompt();
   }
   else if (c == '0') setSystemMode(MODE_READY, "Main Menu");
-  
-  return;
 }
 
+// --- 서브 루틴: 일반 모드 입력 처리 ---
+void processStandardInput() {
   while (Serial.available() > 0) {
     char c = Serial.read();
     if (c == '\n' || c == '\r') {
@@ -219,7 +235,7 @@ if (currentMode == MODE_SETTING) {
         if (inputBuffer == "0") setSystemMode(MODE_READY, "Stopped");
         else handleInput(inputBuffer);
         inputBuffer = "";
-        // 입력이 끝난 뒤 프롬프트를 바로 띄워줌
+        
         if (currentMode != MODE_SLEEP && currentMode != MODE_VOICE) {
             showPrompt(); 
         }
@@ -235,13 +251,13 @@ void handleInput(String input) {
   if (currentMode == MODE_READY) {
     if (input == "1") { 
       setSystemMode(MODE_MANUAL, "Manual Mode"); 
-      printManualMenu(); // 수동 모드 진입 시 가이드 출력
+      printManualMenu(); 
       showPrompt(); 
     }
     else if (input == "2") setSystemMode(MODE_WEATHER, "Weather Mode");
     else if (input == "3") { 
       setSystemMode(MODE_SETTING, "Setting Mode"); 
-      printSettingMenu(); // 여기서 메뉴 가이드를 띄워줌!
+      printSettingMenu(); 
       showPrompt(); 
     }
     else if (input == "4") { demoStep = 0; setSystemMode(MODE_DEMO, "Demo Mode"); }
@@ -252,19 +268,12 @@ void handleInput(String input) {
     else { Serial.println(C_RED "Unknown Command" C_RESET); printMainMenu(); }
   } 
   else if (currentMode == MODE_MANUAL) {
-    if (input == "+") { 
-      changeVolume(currentVolume + 2); 
-      showPrompt(); // 볼륨 변경 후 입력창 다시 띄우기
-    }
-    else if (input == "-") { 
-      changeVolume(currentVolume - 2); 
-      showPrompt(); // 볼륨 변경 후 입력창 다시 띄우기
-    }
+    if (input == "+") { changeVolume(currentVolume + 2); showPrompt(); }
+    else if (input == "-") { changeVolume(currentVolume - 2); showPrompt(); }
     else runManualMode(input); 
   }
   else if (currentMode == MODE_WEATHER) {
     lastWeatherRegion = input;
-    // 입력한 지역명을 로그에 확실히 남김
     Serial.printf("\r\n🔍 [%s] 지역 날씨 조회 요청 중...\r\n", input.c_str());
     updateDisplay(0, "Checking " + input); 
     sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\"}");
@@ -279,44 +288,23 @@ void runManualMode(String input) {
   }
   
   forceAllOff();
-  for (int i = 0; i < 4; i++) {
-    activeNozzles[i] = false;
-  }
-  
-  bool isValid = false;
-  int activeCount = 0; // 실제 활성화된 독립적인 노즐의 개수를 저장
-  
-  // 문자열 파싱 및 노즐 활성화 검증
-  for (int i = 0; i < input.length(); i++) {
-    int cmd = input.charAt(i) - '0';
-    if (cmd >= 1 && cmd <= 4) {
-      if (!activeNozzles[cmd - 1]) { // 동일 번호 중복 입력 방지
-        activeNozzles[cmd - 1] = true;
-        activeCount++;
-        isValid = true;
-      }
-    }
-  }
+  int activeCount = parseAndSetNozzles(input);
 
-  if (isValid) {
+  if (activeCount > 0) {
     isRunning = true; 
     isSpraying = true;
     sprayDuration = 3000; 
     prevMotorMillis = millis(); 
     startTimeMillis = millis();
     
-    // 모터 구동 릴레이 핀 제어
     for (int i = 0; i < 4; i++) {
       if (activeNozzles[i]) {
         int targetPin = getPinFromCommand(i + 1);
-        if (targetPin != -1) {
-          digitalWrite(targetPin, LOW); 
-        }
+        if (targetPin != -1) digitalWrite(targetPin, LOW); 
       }
     }
     playSound(1); 
     
-    // 활성화된 노즐 개수에 따른 조건부 출력 로직
     if (activeCount > 1) {
       updateDisplay(0, "Blending Mode");
       Serial.printf("\r\n✅ 시그니처 향(혼합) 분사 시작 (명령: %s)\r\n", input.c_str());
@@ -335,7 +323,6 @@ void enterWeatherMode(bool runNow) {
   if (runNow) sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\"}");
 }
 
-// SystemLogic.cpp의 runSprayLogic은 그대로 둬도 이제 잘 돌아갈 거야
 void runSprayLogic() { 
   bool hasActive = false;
   for (int i = 0; i < 4; i++) {
@@ -344,25 +331,22 @@ void runSprayLogic() {
   if (!hasActive) return;
 
   if (isSpraying) {
-    // 설정된 분사 지속 시간(기본 3초) 경과 시
     if (millis() - prevMotorMillis >= sprayDuration) {
       forceAllOff();
       isSpraying = false; 
       prevMotorMillis = millis();
       
-      // 수동 모드(MODE_MANUAL)일 경우 모터 구동을 중단하지 않고 사이클을 그대로 유지합니다.
       if (currentMode != MODE_MANUAL) {
         updateDisplay((currentMode == MODE_WEATHER) ? lastWeatherIconId : 0, "Resting...");
       }
     }
   } else {
-    // 설정된 대기 시간(기본 6초) 경과 시 분사 재개
     if (millis() - prevMotorMillis >= REST_TIME) {
       forceAllOff(); 
       for (int i = 0; i < 4; i++) {
         if (activeNozzles[i]) {
           int pin = getPinFromCommand(i + 1);
-          if (pin != -1) digitalWrite(pin, LOW); // 릴레이 제어 신호 인가
+          if (pin != -1) digitalWrite(pin, LOW);
         }
       }
       isSpraying = true; 
@@ -401,7 +385,7 @@ void setSystemMode(SystemMode mode, String msg) {
   
   if (mode == MODE_READY) {
     stopSystem();
-    printMainMenu(); // 0 눌러서 메인 올 때 메뉴판 다시 그려주기 ㅋㅋ
+    printMainMenu(); 
   }
 }
 
@@ -416,7 +400,6 @@ void printSettingMenu() {
   Serial.println(C_YELLOW "--------------------------------" C_RESET);
 }
 
-// --- 수동 모드 메뉴 가이드 출력 ---
 void printManualMenu() {
   Serial.println("\r\n" C_YELLOW "--- [수동 모드 명령어 가이드] ---" C_RESET);
   Serial.println(" [1-4] 단일 분사구 작동 (예: 1)");
