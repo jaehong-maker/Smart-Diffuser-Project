@@ -5,6 +5,7 @@ HardwareSerial mySoftwareSerial(2);
 HardwareSerial nexSerial(1);
 DFRobotDFPlayerMini myDFPlayer;
 HX711 scales[4];
+MFRC522 mfrc522(RFID_CS, RFID_RST);
 
 TaskHandle_t SensorTaskHandle = NULL;
 QueueHandle_t audioEventQueue = NULL;
@@ -70,6 +71,7 @@ const unsigned long WEATHER_INTERVAL = 3600000;
 String lastWeatherRegion = "서울";
 
 unsigned long lastActivityTime = 0;
+unsigned long lastAmbientTime = 0;    // 추가: 앰비언트 모드 타이머 초기화
 const unsigned long SLEEP_TIMEOUT = 300000; // 5분 절전 시간
 
 void setSprayIntensity(int intensityVal) {
@@ -88,3 +90,7 @@ int getPinFromCommand(int cmd) {
     default: return -1;
   }
 }
+
+int ambientSampleCount = 0;
+int ambientDbStorage[3] = {0, 0, 0};
+int currentAmbientTrack = 1;
