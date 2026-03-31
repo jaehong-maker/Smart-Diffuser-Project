@@ -79,7 +79,7 @@ void checkNextionInput() {
 }
 
 void handleNextionCmd(const String &cmd) {
-      if (cmd.startsWith("p0") || cmd.startsWith("t_region") || cmd.startsWith("j0")) return;
+      if (cmd.startsWith("p0") || cmd.startsWith("t_weather") || cmd.startsWith("j0")) return;
 
       if (cmd == "M2" || cmd == "Y3") {
         setSystemMode(MODE_WEATHER, "Weather Mode");
@@ -152,7 +152,7 @@ void nexSend(const String &cmd) { nexSerial.print(cmd); nexSerial.write(0xFF); n
 void updateDisplay(int iconID, String text) { 
   if (currentMode == MODE_WEATHER && lastWeatherIconId >= 1 && lastWeatherIconId <= 4) iconID = lastWeatherIconId;
   if (currentMode == MODE_WEATHER && text.length() == 0) text = lastWeatherLabel;
-  nexSend("p0.pic=" + String(iconID)); text.replace("\"", "'"); nexSend("t_region.txt=\"" + text + "\"");
+  nexSend("p0.pic=" + String(iconID)); text.replace("\"", "'"); nexSend("t_weather.txt=\"" + text + "\"");
 }
 void updateTempHumi(float tempC, float humi) { nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\""); nexSend("t_humi.txt=\"" + String(humi, 0) + "%\""); }
 void updateProgressBar(int val) { nexSend("j1.val=" + String(constrain(val, 0, 100))); }
