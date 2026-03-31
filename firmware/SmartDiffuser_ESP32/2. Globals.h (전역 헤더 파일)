@@ -14,8 +14,9 @@
 #include <math.h>
 #include <ArduinoOTA.h>
 #include <time.h> // NTP 시간을 위한 헤더
-
 #include <freertos/queue.h> // 큐 사용을 위한 헤더 추가
+#include <WiFiManager.h>
+
 
 // --- 통신 이벤트 비트 정의 ---
 #define BIT_SEND_POLL    (1 << 0)
