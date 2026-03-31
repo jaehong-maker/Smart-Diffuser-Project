@@ -7,28 +7,15 @@ void initNetworkSession() {
   if (!isSessionInit) { sharedClient.setInsecure(); isSessionInit = true; }
 }
 
-// NetworkUI.cpp 파일의 triggerSpray 함수 수정
+// --- NetworkUI.cpp 파일의 triggerSpray 함수 수정 ---
 void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   forceAllOff();
-  for (int i = 0; i < 4; i++) {
-    activeNozzles[i] = false;
-  }
   
-  if (cmd >= 10) { 
-    String cmdStr = String(cmd);
-    for (int i = 0; i < cmdStr.length(); i++) {
-      int c = cmdStr.charAt(i) - '0';
-      if (c >= 1 && c <= 4) {
-        activeNozzles[c - 1] = true;
-        lastNozzleSprayTime[c - 1] = millis();
-      }
-    }
-  } else if (cmd >= 1 && cmd <= 4) { 
-    activeNozzles[cmd - 1] = true;
-    lastNozzleSprayTime[cmd - 1] = millis();
-  } else {
-    return;
-  }
+  // DRY 원칙 적용: SystemLogic 모듈의 파싱 및 노즐 활성화 유틸리티 재사용
+  String cmdStr = String(cmd);
+  int activeCount = parseAndSetNozzles(cmdStr);
+  
+  if (activeCount == 0) return; // 유효하지 않은 명령어 필터링
 
   isRunning = true; 
   isSpraying = true; 
@@ -43,11 +30,9 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
     }
   }
   
-  if (music > 0 && music <= 20) {
-    playSound(music);
-  } else {
-    playSound((cmd >= 10) ? 1 : cmd);
-  }
+  // 삼항 연산자를 활용한 재생 트랙 선택 로직 간소화
+  int targetMusic = (music > 0 && music <= 20) ? music : ((cmd >= 10) ? 1 : cmd);
+  playSound(targetMusic);
 
   lastWebMessage = "성공: " + txt; 
   if (!isWeatherMode) {
