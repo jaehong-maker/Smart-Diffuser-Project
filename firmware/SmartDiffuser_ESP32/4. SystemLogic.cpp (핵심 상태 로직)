@@ -1,5 +1,9 @@
 #include "Globals.h"
 
+// --- 컴파일 에러 해결을 위한 함수 사전 선언 (Forward Declarations) ---
+void processSettingModeInput();
+void processStandardInput();
+
 // --- 유틸리티: 노즐 파싱 및 활성화 ---
 int parseAndSetNozzles(String cmdStr) {
   int activeCount = 0;
