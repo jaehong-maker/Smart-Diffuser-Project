@@ -102,7 +102,7 @@ void initSystem() {
   lastWeatherRegion.reserve(32);
   blendSelection.reserve(8);
   globalPayload.reserve(256);
-  
+
   Serial.begin(115200); Serial.setTimeout(5000);
   nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
   delay(300); 
@@ -261,26 +261,21 @@ void processStandardInput() {
   }
 }
 
-// --- 통합 입력 처리 ---
+// --- 통합 입력 처리 (Switch-Case 최적화) ---
 void handleInput(String input) {
   if (currentMode == MODE_READY) {
-    if (input == "1") { 
-      setSystemMode(MODE_MANUAL, "Manual Mode"); 
-      printManualMenu(); 
-      showPrompt(); 
+    int cmdInt = input.toInt();
+    switch (cmdInt) {
+      case 1: setSystemMode(MODE_MANUAL, "Manual Mode"); printManualMenu(); showPrompt(); break;
+      case 2: setSystemMode(MODE_WEATHER, "Weather Mode"); break;
+      case 3: setSystemMode(MODE_SETTING, "Setting Mode"); printSettingMenu(); showPrompt(); break;
+      case 4: demoStep = 0; setSystemMode(MODE_DEMO, "Demo Mode"); break;
+      case 5: Serial.println("\r\n[System] 음성 인식 기능이 비활성화되었습니다."); showPrompt(); break;
+      case 6: setSystemMode(MODE_VISUAL, "Visualizer"); break;
+      case 7: setSystemMode(MODE_REACTIVE, "Sound Reaction"); break;
+      case 8: printDashboard(); break;
+      default: Serial.println(C_RED "Unknown Command" C_RESET); printMainMenu(); break;
     }
-    else if (input == "2") setSystemMode(MODE_WEATHER, "Weather Mode");
-    else if (input == "3") { 
-      setSystemMode(MODE_SETTING, "Setting Mode"); 
-      printSettingMenu(); 
-      showPrompt(); 
-    }
-    else if (input == "4") { demoStep = 0; setSystemMode(MODE_DEMO, "Demo Mode"); }
-    else if (input == "5") { setSystemMode(MODE_VOICE); recordAndSendVoice(); setSystemMode(MODE_READY, "Main Menu"); printMainMenu(); }
-    else if (input == "6") setSystemMode(MODE_VISUAL, "Visualizer");
-    else if (input == "7") setSystemMode(MODE_REACTIVE, "Sound Reaction");
-    else if (input == "8") printDashboard();
-    else { Serial.println(C_RED "Unknown Command" C_RESET); printMainMenu(); }
   } 
   else if (currentMode == MODE_MANUAL) {
     if (input == "+") { changeVolume(currentVolume + 2); showPrompt(); }
