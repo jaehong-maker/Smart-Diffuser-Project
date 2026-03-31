@@ -67,24 +67,86 @@ void checkNextionInput() {
     if (currentMode == MODE_SLEEP) wakeUpSystem(); 
 
     if (isalnum(c) || c == '_' || c == ' ') buf += c;
-    if (buf == "M1" || buf == "M2" || buf == "M3" || buf == "Y1" || buf == "Y2" || buf == "Y3" || buf == "ST" || (buf.startsWith("S") && buf.length() == 2)) {
-      handleNextionCmd(buf); buf = "";
+    if (buf == "M1" || buf == "M2" || buf == "M3" ||
+        buf == "Y1" || buf == "Y2" || buf == "Y3" ||
+        buf == "ST" || buf == "BM" ||
+        (buf.startsWith("S") && buf.length() == 2)) {
+      handleNextionCmd(buf);
+      buf = "";
     }
     else if (buf.length() > 64) buf = ""; 
   }
 }
 
 void handleNextionCmd(const String &cmd) {
-  if (cmd.startsWith("p0") || cmd.startsWith("t_region") || cmd.startsWith("j0")) return;
-  if (cmd == "M2" || cmd == "Y3") { setSystemMode(MODE_WEATHER, "Weather Mode"); enterWeatherMode(false); }
-  else if (cmd == "M1" || cmd == "Y1") { setSystemMode(MODE_MANUAL, "Manual Mode"); }
-  else if (cmd == "M3" || cmd == "Y2") { setSystemMode(MODE_SETTING, "Setting Mode"); }
-  else if (cmd == "ST") { setSystemMode(MODE_READY, "Stopped"); }
-  else if (cmd.startsWith("S")) {
-    int scent = cmd.substring(1).toInt();
-    if (scent >= 1 && scent <= 4) { setSystemMode(MODE_MANUAL); runManualMode(String(scent)); }
-  }
-}
+      if (cmd.startsWith("p0") || cmd.startsWith("t_region") || cmd.startsWith("j0")) return;
+
+      if (cmd == "M2" || cmd == "Y3") {
+        setSystemMode(MODE_WEATHER, "Weather Mode");
+        enterWeatherMode(false);
+      }
+      else if (cmd == "M1" || cmd == "Y1") {
+        setSystemMode(MODE_MANUAL, "Manual Mode");
+      }
+      else if (cmd == "M3" || cmd == "Y2") {
+        setSystemMode(MODE_SETTING, "Setting Mode");
+      }
+      else if (cmd == "ST") {
+        blendModeEnabled = false;
+        blendSelection = "";
+        blendSprayActive = false;
+        nexSend("b_blend.txt=\"동시분사ON\"");
+        setSystemMode(MODE_READY, "Stopped");
+      }
+      else if (cmd == "BM") {
+        blendModeEnabled = !blendModeEnabled;
+        blendSelection = "";
+        blendSprayActive = false;
+
+        if (blendModeEnabled) {
+          nexSend("b_blend.txt=\"동시분사OFF\"");
+          updateDisplay(0, "혼합 향 2개 선택");
+          Serial.println("\r\n✅ 동시분사 모드 ON");
+        } else {
+          nexSend("b_blend.txt=\"동시분사ON\"");
+          updateDisplay(0, "수동 모드");
+          Serial.println("\r\n✅ 동시분사 모드 OFF");
+        }
+      }
+      else if (cmd.startsWith("S")) {
+        int scent = cmd.substring(1).toInt();
+        if (scent < 1 || scent > 4) return;
+
+        setSystemMode(MODE_MANUAL);
+
+        // 동시분사 모드가 아닐 때: 바로 단일 분사
+        if (!blendModeEnabled) {
+          runManualMode(String(scent));
+          return;
+        }
+
+        // 동시분사 모드일 때: 향 2개 선택
+        String scentStr = String(scent);
+
+        // 중복 선택 방지
+        if (blendSelection.indexOf(scentStr) == -1) {
+          blendSelection += scentStr;
+        }
+
+        Serial.printf("\r\n[동시분사 선택] %s\r\n", blendSelection.c_str());
+
+        if (blendSelection.length() == 1) {
+          updateDisplay(0, "첫 번째 향 선택됨");
+        }
+        else if (blendSelection.length() == 2) {
+          updateDisplay(0, "혼합 분사 시작");
+          runManualMode(blendSelection);
+
+          // 1회 실행 후 선택 초기화
+          blendSelection = "";
+        }
+      }
+    }
 
 void nexSend(const String &cmd) { nexSerial.print(cmd); nexSerial.write(0xFF); nexSerial.write(0xFF); nexSerial.write(0xFF); }
 void updateDisplay(int iconID, String text) { 
