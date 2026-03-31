@@ -338,7 +338,28 @@ void handleWebClient() {
 void showPrompt() { Serial.print("\r\033[K" C_YELLOW "👉 명령 입력 >>" C_RESET); }
 void printMainMenu() { Serial.println("\r\n[1]수동 [2]날씨 [3]설정 [4]데모 [5]음성 [6]파형 [7]반응 [8]정보"); showPrompt(); }
 void redrawInputLine(String &buffer) { Serial.print("\r\033[K" C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(buffer); }
-void printDashboard() { Serial.printf("\r\nWiFi: %d dBm | Weights: %.1f %.1f %.1f %.1f\n", WiFi.RSSI(), weights[0], weights[1], weights[2], weights[3]); printMainMenu(); }
+
+// --- 업그레이드: 시스템 자원 및 태스크 프로파일링 대시보드 (출력 포맷 최적화) ---
+void printDashboard() { 
+  Serial.println("\r\n" C_CYAN "=== [System Diagnostics Dashboard] ===" C_RESET);
+  Serial.printf("[Network] WiFi RSSI: %d dBm\r\n", WiFi.RSSI()); 
+  Serial.printf("[Sensors] Weights: W1:%.1f W2:%.1f W3:%.1f W4:%.1f (g)\r\n", weights[0], weights[1], weights[2], weights[3]); 
+  
+  // ESP32 하드웨어 메모리 단편화 및 누수 검증 데이터
+  Serial.printf("[Memory]  Free Heap: %d Bytes (Historical Min: %d Bytes)\r\n", ESP.getFreeHeap(), ESP.getMinFreeHeap());
+  
+  // FreeRTOS 태스크별 스택 여유 공간(High Water Mark) 추적
+  if (NetworkTaskHandle != NULL) {
+    Serial.printf("[Task 1]  NetworkTask Stack Watermark: %d Bytes\r\n", uxTaskGetStackHighWaterMark(NetworkTaskHandle));
+  }
+  if (SensorTaskHandle != NULL) {
+    Serial.printf("[Task 2]  SensorTask Stack Watermark: %d Bytes\r\n", uxTaskGetStackHighWaterMark(SensorTaskHandle));
+  }
+  Serial.println(C_CYAN "======================================" C_RESET);
+  
+  printMainMenu(); 
+}
+
 void changeVolume(int vol) { currentVolume = constrain(vol, 0, 30); myDFPlayer.volume(currentVolume); Serial.printf("\r\033[K" C_GREEN "🔊 볼륨: %d\r\n" C_RESET, currentVolume); showPrompt(); }
 void initOTA() { ArduinoOTA.setHostname("SmartDiffuser"); ArduinoOTA.begin(); }
 void handleOTA() { ArduinoOTA.handle(); }
