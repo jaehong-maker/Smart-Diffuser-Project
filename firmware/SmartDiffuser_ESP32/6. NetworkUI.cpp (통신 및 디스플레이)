@@ -10,13 +10,25 @@ void initNetworkSession() {
 // NetworkUI.cpp 파일의 triggerSpray 함수 수정
 void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   forceAllOff();
+  for (int i = 0; i < 4; i++) {
+    activeNozzles[i] = false;
+  }
   
-  // ★ 중요: activePin을 여기서 설정해줘야 runSprayLogic이 작동함
-  int targetPin = getPinFromCommand(cmd);
-  if (targetPin == -1) return;
-  
-  activePin = targetPin; // 시스템이 현재 제어할 핀을 기억하게 함
-  if (cmd >= 1 && cmd <= 4) lastNozzleSprayTime[cmd - 1] = millis();
+  if (cmd >= 10) { 
+    String cmdStr = String(cmd);
+    for (int i = 0; i < cmdStr.length(); i++) {
+      int c = cmdStr.charAt(i) - '0';
+      if (c >= 1 && c <= 4) {
+        activeNozzles[c - 1] = true;
+        lastNozzleSprayTime[c - 1] = millis();
+      }
+    }
+  } else if (cmd >= 1 && cmd <= 4) { 
+    activeNozzles[cmd - 1] = true;
+    lastNozzleSprayTime[cmd - 1] = millis();
+  } else {
+    return;
+  }
 
   isRunning = true; 
   isSpraying = true; 
@@ -24,17 +36,25 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   prevMotorMillis = millis(); 
   startTimeMillis = millis(); 
   
-  digitalWrite(activePin, LOW); // 분사 시작
+  for (int i = 0; i < 4; i++) {
+    if (activeNozzles[i]) {
+      int targetPin = getPinFromCommand(i + 1);
+      if (targetPin != -1) digitalWrite(targetPin, LOW);
+    }
+  }
   
-  if (music > 0 && music <= 20) playSound(music); else playSound(cmd);
+  if (music > 0 && music <= 20) {
+    playSound(music);
+  } else {
+    playSound((cmd >= 10) ? 1 : cmd);
+  }
 
   lastWebMessage = "성공: " + txt; 
-  if (!isWeatherMode) updateDisplay(cmd, txt);
+  if (!isWeatherMode) {
+    updateDisplay((cmd >= 10) ? 0 : cmd, txt);
+  }
 
-  // ★ 수정: 앞에 \r\n을 넣어서 이전 라인(프롬프트)과 겹치지 않게 함
-  Serial.printf("\r\n" C_GREEN "✅ 분사 실행: %s (%d번 분사구)\r\n" C_RESET, txt.c_str(), cmd);
-
-  // ★ 추가: 출력이 끝났으니 다시 입력 대기 프롬프트를 그려줌
+  Serial.printf("\r\n\033[32m✅ 분사 실행: %s (명령:%d)\033[0m\r\n", txt.c_str(), cmd);
   showPrompt();
 }
 
