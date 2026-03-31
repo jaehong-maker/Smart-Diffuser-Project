@@ -24,6 +24,10 @@ void forceAllOff() {
 }
 
 void stopSystem() {
+  blendSelection = "";
+  blendSprayActive = false;
+  nexSend("b_blend.txt=\"동시분사ON\"");
+  blendModeEnabled = false;
   forceAllOff();
   isRunning = false; 
   for (int i = 0; i < 4; i++) {
