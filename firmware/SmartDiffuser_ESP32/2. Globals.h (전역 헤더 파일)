@@ -16,6 +16,8 @@
 #include <time.h> // NTP 시간을 위한 헤더
 #include <freertos/queue.h> // 큐 사용을 위한 헤더 추가
 #include <WiFiManager.h>
+#include <SPI.h>
+#include <MFRC522.h>
 
 
 // --- 통신 이벤트 비트 정의 ---
@@ -41,7 +43,19 @@ const int PIN_SNOW   = 27;
 const int PIN_LED    = 2;
 
 const int LOADCELL_DT[4]  = {34, 36, 39, 32};
-const int LOADCELL_SCK[4] = {33, 18, 21, 23};
+// [수정 후: 솔루션 A 적용 - SCK 핀 공통 결선]
+const int LOADCELL_SCK[4] = {33, 33, 33, 33};
+
+// --- 추가 하드웨어 핀 할당 (RFID 및 추가 LED) ---
+const int PIN_EXTRA_LED = 21;
+
+// RC522 RFID 모듈을 위한 커스텀 SPI 통신 핀 정의
+const int RFID_SCK  = 18;
+const int RFID_MISO = 12;
+const int RFID_MOSI = 23;
+const int RFID_CS   = 15;
+const int RFID_RST  = 5;
+
 const int DFPLAYER_RX_PIN = 25; const int DFPLAYER_TX_PIN = 26;
 const int NEXTION_TX_PIN = 17;  const int NEXTION_RX_PIN = 16;
 
@@ -55,7 +69,8 @@ enum SystemMode {
   MODE_VISUAL,    // 6
   MODE_REACTIVE,  // 7
   MODE_DASHBOARD, // 8
-  MODE_SLEEP      // 9
+  MODE_SLEEP,      // 9
+  MODE_AMBIENT = 10
 };
 
 #define I2S_WS   19
@@ -84,7 +99,6 @@ extern TaskHandle_t NetworkTaskHandle;
 extern QueueHandle_t audioEventQueue;
 extern TaskHandle_t SensorTaskHandle;
 extern QueueHandle_t networkQueue;
-
 extern const char* ssid;
 extern const char* password;
 extern String serverName;
@@ -124,16 +138,27 @@ extern int lastWeatherIconId;
 extern String lastWeatherLabel;
 extern SystemMode currentMode;
 extern String globalPayload;
-
 extern unsigned long lastActivityTime;
+extern unsigned long lastAmbientTime;
 extern const unsigned long SLEEP_TIMEOUT;
-
 extern bool blendModeEnabled;
 extern String blendSelection;
 extern bool blendSprayActive;
-
-// --- 노즐 막힘 방지 관련 ---
 extern unsigned long lastNozzleSprayTime[4]; // 각 노즐별 마지막 분사 시간
+extern int ambientSampleCount;
+extern int ambientDbStorage[3];
+extern int currentAmbientTrack;
+
+// --- [기존 커스텀 SPI 핀 정의 확인] ---
+extern const int RFID_SCK;
+extern const int RFID_MISO;
+extern const int RFID_MOSI;
+extern const int RFID_CS;
+extern const int RFID_RST;
+
+// --- [전역 변수 (extern) 영역에 추가] ---
+extern MFRC522 mfrc522;
+
 const unsigned long CLEANING_INTERVAL = 86400000; // 24시간 (밀리초 단위)
 void runAutoCleaning(); // 청소 로직 함수
 
@@ -160,6 +185,8 @@ void checkBackgroundNoise();
 void sensorTaskLoop(void *parameter);
 void forceAllOff();
 void stopSystem();
+void stopSprayOnly();
+void resetManualState();
 void playSound(int trackNum);
 void bootAnimation();
 void systemHeartbeat();
@@ -191,5 +218,8 @@ void handleOTA();
 void setSprayIntensity(int intensityVal);
 int getPinFromCommand(int cmd);
 void networkTaskLoop(void *pvParameters);
+void initRFID();
+void checkRFIDTag();
+void runAmbientMode();
 
 #endif
