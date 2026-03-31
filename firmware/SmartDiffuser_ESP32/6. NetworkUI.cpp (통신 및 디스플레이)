@@ -31,8 +31,10 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   }
   
   // 삼항 연산자를 활용한 재생 트랙 선택 로직 간소화
-  int targetMusic = (music > 0 && music <= 20) ? music : ((cmd >= 10) ? 1 : cmd);
-  playSound(targetMusic);
+  if (music !=0) {
+    int targetMusic = (music > 0 && music <= 20) ? music : ((cmd >= 10) ? 1 : cmd);
+    playSound(targetMusic);
+  }
 
   lastWebMessage = "성공: " + txt; 
   if (!isWeatherMode) {
@@ -64,74 +66,87 @@ void checkNextionInput() {
 }
 
 void handleNextionCmd(const String &cmd) {
-      if (cmd.startsWith("p0") || cmd.startsWith("t_weather") || cmd.startsWith("j0")) return;
+  if (cmd.startsWith("p0") || cmd.startsWith("t_weather") || cmd.startsWith("j0")) return;
 
-      if (cmd == "M2" || cmd == "Y3") {
-        setSystemMode(MODE_WEATHER, "Weather Mode");
-        enterWeatherMode(false);
+  if (cmd == "M2" || cmd == "Y3") {
+    setSystemMode(MODE_WEATHER, "Weather Mode");
+    enterWeatherMode(false);
+  }
+  else if (cmd == "M1" || cmd == "Y1") {
+    setSystemMode(MODE_MANUAL, "Manual Mode");
+  }
+  else if (cmd == "M3" || cmd == "Y2") {
+    setSystemMode(MODE_SETTING, "Setting Mode");
+  }
+  else if (cmd == "ST") {
+      forceAllOff();
+      myDFPlayer.stop();
+
+      isRunning = false;
+      isSpraying = false;
+      sprayDuration = 0;
+      prevMotorMillis = 0;
+      startTimeMillis = 0;
+
+      for (int i = 0; i < 4; i++) {
+        activeNozzles[i] = false;
       }
-      else if (cmd == "M1" || cmd == "Y1") {
-        setSystemMode(MODE_MANUAL, "Manual Mode");
-      }
-      else if (cmd == "M3" || cmd == "Y2") {
-        setSystemMode(MODE_SETTING, "Setting Mode");
-      }
-      else if (cmd == "ST") {
-        blendModeEnabled = false;
-        blendSelection = "";
-        blendSprayActive = false;
-        nexSend("b_blend.txt=\"blendON\"");
-        setSystemMode(MODE_READY, "Stopped");
-      }
-      else if (cmd == "BM") {
-        blendModeEnabled = !blendModeEnabled;
-        blendSelection = "";
-        blendSprayActive = false;
 
-        if (blendModeEnabled) {
-          nexSend("b_blend.txt=\"blendOFF\"");
-          updateDisplay(0, "혼합 향 2개 선택");
-          Serial.println("\r\n✅ 동시분사 모드 ON");
-        } else {
-          nexSend("b_blend.txt=\"blendON\"");
-          updateDisplay(0, "수동 모드");
-          Serial.println("\r\n✅ 동시분사 모드 OFF");
-        }
-      }
-      else if (cmd.startsWith("S")) {
-        int scent = cmd.substring(1).toInt();
-        if (scent < 1 || scent > 4) return;
+      blendModeEnabled = false;
+      blendSelection = "";
+      blendSprayActive = false;
 
-        setSystemMode(MODE_MANUAL);
+      nexSend("b_blend.txt=\"blendON\"");
 
-        // 동시분사 모드가 아닐 때: 바로 단일 분사
-        if (!blendModeEnabled) {
-          runManualMode(String(scent));
-          return;
-        }
+      currentMode = MODE_MANUAL;
+      updateDisplay(0, "Manual Mode");
 
-        // 동시분사 모드일 때: 향 2개 선택
-        String scentStr = String(scent);
-
-        // 중복 선택 방지
-        if (blendSelection.indexOf(scentStr) == -1) {
-          blendSelection += scentStr;
-        }
-
-        Serial.printf("\r\n[동시분사 선택] %s\r\n", blendSelection.c_str());
-
-        if (blendSelection.length() == 1) {
-          updateDisplay(0, "첫 번째 향 선택됨");
-        }
-        else if (blendSelection.length() == 2) {
-          updateDisplay(0, "혼합 분사 시작");
-          runManualMode(blendSelection);
-
-          // 1회 실행 후 선택 초기화
-          blendSelection = "";
-        }
-      }
+      Serial.println("\r\n[STOP] manual page reset only");
     }
+  else if (cmd == "BM") {
+    blendModeEnabled = !blendModeEnabled;
+    blendSelection = "";
+    blendSprayActive = false;
+
+    if (blendModeEnabled) {
+      nexSend("b_blend.txt=\"blendOFF\"");
+      updateDisplay(0, "Pick 2 scents");
+      Serial.println("\r\n[BLEND] ON");
+    } else {
+      nexSend("b_blend.txt=\"blendON\"");
+      updateDisplay(0, "Manual Mode");
+      Serial.println("\r\n[BLEND] OFF");
+    }
+  }
+  else if (cmd.startsWith("S")) {
+    int scent = cmd.substring(1).toInt();
+    if (scent < 1 || scent > 4) return;
+
+    Serial.printf("\r\n[S BUTTON] %s\r\n", cmd.c_str());
+
+    currentMode = MODE_MANUAL;
+
+    if (!blendModeEnabled) {
+      runManualMode(String(scent));
+      return;
+    }
+
+    String scentStr = String(scent);
+
+    if (blendSelection.indexOf(scentStr) == -1) {
+      blendSelection += scentStr;
+    }
+
+    if (blendSelection.length() == 1) {
+      updateDisplay(0, "1st scent selected");
+    }
+    else if (blendSelection.length() == 2) {
+      runManualMode(blendSelection);
+      blendSelection = "";
+      updateDisplay(0, "Blending Mode");
+    }
+  }
+}
 
 void nexSend(const String &cmd) { nexSerial.print(cmd); nexSerial.write(0xFF); nexSerial.write(0xFF); nexSerial.write(0xFF); }
 void updateDisplay(int iconID, String text) { 
@@ -336,30 +351,9 @@ void handleWebClient() {
 }
 
 void showPrompt() { Serial.print("\r\033[K" C_YELLOW "👉 명령 입력 >>" C_RESET); }
-void printMainMenu() { Serial.println("\r\n[1]수동 [2]날씨 [3]설정 [4]데모 [5]음성 [6]파형 [7]반응 [8]정보"); showPrompt(); }
+void printMainMenu() { Serial.println("\r\n[1]수동 [2]날씨 [3]설정 [4]데모 [5]음성 [6]파형 [7]반응 [8]정보 [10]소음"); showPrompt(); }
 void redrawInputLine(String &buffer) { Serial.print("\r\033[K" C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(buffer); }
-
-// --- 업그레이드: 시스템 자원 및 태스크 프로파일링 대시보드 (출력 포맷 최적화) ---
-void printDashboard() { 
-  Serial.println("\r\n" C_CYAN "=== [System Diagnostics Dashboard] ===" C_RESET);
-  Serial.printf("[Network] WiFi RSSI: %d dBm\r\n", WiFi.RSSI()); 
-  Serial.printf("[Sensors] Weights: W1:%.1f W2:%.1f W3:%.1f W4:%.1f (g)\r\n", weights[0], weights[1], weights[2], weights[3]); 
-  
-  // ESP32 하드웨어 메모리 단편화 및 누수 검증 데이터
-  Serial.printf("[Memory]  Free Heap: %d Bytes (Historical Min: %d Bytes)\r\n", ESP.getFreeHeap(), ESP.getMinFreeHeap());
-  
-  // FreeRTOS 태스크별 스택 여유 공간(High Water Mark) 추적
-  if (NetworkTaskHandle != NULL) {
-    Serial.printf("[Task 1]  NetworkTask Stack Watermark: %d Bytes\r\n", uxTaskGetStackHighWaterMark(NetworkTaskHandle));
-  }
-  if (SensorTaskHandle != NULL) {
-    Serial.printf("[Task 2]  SensorTask Stack Watermark: %d Bytes\r\n", uxTaskGetStackHighWaterMark(SensorTaskHandle));
-  }
-  Serial.println(C_CYAN "======================================" C_RESET);
-  
-  printMainMenu(); 
-}
-
+void printDashboard() { Serial.printf("\r\nWiFi: %d dBm | Weights: %.1f %.1f %.1f %.1f\n", WiFi.RSSI(), weights[0], weights[1], weights[2], weights[3]); printMainMenu(); }
 void changeVolume(int vol) { currentVolume = constrain(vol, 0, 30); myDFPlayer.volume(currentVolume); Serial.printf("\r\033[K" C_GREEN "🔊 볼륨: %d\r\n" C_RESET, currentVolume); showPrompt(); }
 void initOTA() { ArduinoOTA.setHostname("SmartDiffuser"); ArduinoOTA.begin(); }
 void handleOTA() { ArduinoOTA.handle(); }
