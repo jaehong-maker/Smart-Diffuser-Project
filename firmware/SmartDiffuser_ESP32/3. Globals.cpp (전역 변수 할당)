@@ -33,7 +33,7 @@ int currentVolume = 20;
 SystemMode currentMode = MODE_READY; 
 bool isRunning    = false;
 bool isCommunicate = false; 
-int activePin     = -1;
+bool activeNozzles[4] = {false, false, false, false};
 bool isSpraying   = false;
 
 String lastWebMessage = "Ready";
