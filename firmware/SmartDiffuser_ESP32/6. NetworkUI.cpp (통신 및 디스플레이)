@@ -95,7 +95,7 @@ void handleNextionCmd(const String &cmd) {
         blendModeEnabled = false;
         blendSelection = "";
         blendSprayActive = false;
-        nexSend("b_blend.txt=\"동시분사ON\"");
+        nexSend("b_blend.txt=\"blendON\"");
         setSystemMode(MODE_READY, "Stopped");
       }
       else if (cmd == "BM") {
@@ -104,11 +104,11 @@ void handleNextionCmd(const String &cmd) {
         blendSprayActive = false;
 
         if (blendModeEnabled) {
-          nexSend("b_blend.txt=\"동시분사OFF\"");
+          nexSend("b_blend.txt=\"blendOFF\"");
           updateDisplay(0, "혼합 향 2개 선택");
           Serial.println("\r\n✅ 동시분사 모드 ON");
         } else {
-          nexSend("b_blend.txt=\"동시분사ON\"");
+          nexSend("b_blend.txt=\"blendON\"");
           updateDisplay(0, "수동 모드");
           Serial.println("\r\n✅ 동시분사 모드 OFF");
         }
