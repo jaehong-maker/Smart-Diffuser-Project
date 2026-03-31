@@ -158,11 +158,38 @@ void updateTempHumi(float tempC, float humi) { nexSend("t_temp.txt=\"" + String(
 void updateProgressBar(int val) { nexSend("j1.val=" + String(constrain(val, 0, 100))); }
 
 void connectWiFi() {
-  Serial.printf(C_YELLOW "[System] WiFi Connecting" C_RESET);
-  WiFi.begin(ssid, password); int retry = 0;
-  while (WiFi.status() != WL_CONNECTED && retry < 15) { delay(200); Serial.print("."); retry++; }
-  if (WiFi.status() == WL_CONNECTED) Serial.printf("\r\n" C_GREEN "Connected!\r\n" C_RESET C_CYAN "🌐 http://%s/\r\n" C_RESET, WiFi.localIP().toString().c_str());
-  else Serial.printf(C_RED "\r\nWiFi Failed.\r\n" C_RESET); 
+  Serial.printf("\r\n[System] 갤럭시 팝업 강제 트리거 모드 가동...\r\n");
+  
+  WiFiManager wifiManager;
+
+  // 1. [핵심] 안드로이드는 192.168.4.1을 캡티브 포털의 '성지'로 기억해.
+  // 이 주소로 고정해야 시스템이 리다이렉션을 더 빨리 눈치채.
+  wifiManager.setAPStaticIPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
+
+  // 2. [핵심] DNS 가로채기를 더 공격적으로 설정
+  wifiManager.setCaptivePortalEnable(true); 
+  
+  // 3. [핵심] 호스트네임을 지정하면 안드로이드가 장치를 식별하기 쉬워짐
+  WiFi.setHostname("SmartDiffuser");
+
+  wifiManager.setDebugOutput(true);
+  //wifiManager.resetSettings(); // 테스트를 위해 초기화 유지
+
+  wifiManager.setAPCallback([](WiFiManager *myWiFiManager) {
+    Serial.println("\r\n[WiFiManager] 갤럭시 대응 AP 모드 시작.");
+    updateDisplay(0, "AP: SmartDiffuser");
+  });
+
+  // 4. [중요] 비밀번호 없는 '개방형' 네트워크로 생성해.
+  // 비번이 있으면 안드로이드 보안 검사가 더 빡빡해져서 팝업이 잘 안 떠.
+  if (!wifiManager.autoConnect("SmartDiffuser_Setup")) {
+    Serial.println("\r\n[Error] 타임아웃! 재부팅.");
+    delay(3000);
+    ESP.restart(); 
+  }
+
+  Serial.printf("\r\nConnected! IP: %s\r\n", WiFi.localIP().toString().c_str());
+  updateDisplay(0, "WiFi Connected");
 }
 
 void manageWiFi() {
