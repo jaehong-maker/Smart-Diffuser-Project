@@ -151,7 +151,7 @@ void enterWeatherMode(bool runNow);
 void runSprayLogic();
 void runAutoDemoLoop();
 void checkSafety();
-
+int parseAndSetNozzles(String cmdStr);
 void initMicrophone();
 int32_t readMicrophone();
 void runSoundVisualizer();
