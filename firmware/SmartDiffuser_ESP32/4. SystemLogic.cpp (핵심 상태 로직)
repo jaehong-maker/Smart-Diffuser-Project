@@ -145,7 +145,13 @@ void initSystem() {
 
   audioEventQueue = xQueueCreate(5, sizeof(int));
   networkEventGroup = xEventGroupCreate();
-  initOTA(); webServer.begin(); bootAnimation();
+  initOTA(); 
+  webServer.begin(); 
+  
+  bootAnimation();
+  
+  // 메인 시스템 초기화 완료 직후 RFID 모듈 활성화
+  initRFID();
   
   lastActivityTime = millis(); 
   setSystemMode(MODE_READY, "System Ready");
@@ -160,8 +166,12 @@ void runSystem() {
   handleOTA();
   checkNextionInput();
 
+  // 매 사이클마다 RFID 태그 접촉 여부 비동기 검사
+  checkRFIDTag();
+
   if (currentMode == MODE_VISUAL) { runSoundVisualizer(); checkSerialInput(); return; }
   if (currentMode == MODE_REACTIVE) { runSoundReaction(); checkSerialInput(); return; }
+  if (currentMode == MODE_AMBIENT) { runSoundReaction(); checkSerialInput(); return; }
   
   processAudioEvents();
   manageSleepState();
@@ -257,7 +267,11 @@ void processStandardInput() {
       }
     } else if (c == '\b' || c == 0x7F) {
       if (inputBuffer.length() > 0) { inputBuffer.remove(inputBuffer.length() - 1); redrawInputLine(inputBuffer); }
-    } else { inputBuffer += c; redrawInputLine(inputBuffer); }
+    } else {
+      if (currentMode == MODE_AMBIENT && c == 'n') {
+          runAmbientMode(); // 수음 함수 호출
+      } else { inputBuffer += c; redrawInputLine(inputBuffer); }
+  }
   }
 }
 
@@ -274,6 +288,10 @@ void handleInput(String input) {
       case 6: setSystemMode(MODE_VISUAL, "Visualizer"); break;
       case 7: setSystemMode(MODE_REACTIVE, "Sound Reaction"); break;
       case 8: printDashboard(); break;
+      case 10: 
+        stopSystem();
+        lastAmbientTime = 0;
+        setSystemMode(MODE_AMBIENT, "Ambient Mode"); break;
       default: Serial.println(C_RED "Unknown Command" C_RESET); printMainMenu(); break;
     }
   } 
@@ -292,6 +310,7 @@ void handleInput(String input) {
 
 // --- 동작 제어 헬퍼 함수들 ---
 void runManualMode(String input) { 
+  Serial.printf("\r\n[runManualMode] input=%s\r\n", input.c_str());
   if (input == "0") { 
     setSystemMode(MODE_READY, "Stopped"); 
     return; 
