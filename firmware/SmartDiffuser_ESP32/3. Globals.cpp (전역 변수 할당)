@@ -91,6 +91,10 @@ int getPinFromCommand(int cmd) {
   }
 }
 
-int ambientSampleCount = 0;
-int ambientDbStorage[3] = {0, 0, 0};
-int currentAmbientTrack = 1;
+int ambientCycleCount = 0;
+int ambientCycleStorage[5] = {0, 0, 0, 0, 0};
+bool isFirstAmbientRun = true;
+int lastAmbientScent = 0;
+bool isWaitingForTestDb = false;
+int currentAmbientTrack = 0;
+bool forceAmbientSkip = false;
