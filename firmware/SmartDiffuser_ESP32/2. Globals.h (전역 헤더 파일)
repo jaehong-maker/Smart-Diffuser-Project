@@ -145,9 +145,7 @@ extern bool blendModeEnabled;
 extern String blendSelection;
 extern bool blendSprayActive;
 extern unsigned long lastNozzleSprayTime[4]; // 각 노즐별 마지막 분사 시간
-extern int ambientSampleCount;
-extern int ambientDbStorage[3];
-extern int currentAmbientTrack;
+
 
 // --- [기존 커스텀 SPI 핀 정의 확인] ---
 extern const int RFID_SCK;
@@ -161,6 +159,17 @@ extern MFRC522 mfrc522;
 
 const unsigned long CLEANING_INTERVAL = 86400000; // 24시간 (밀리초 단위)
 void runAutoCleaning(); // 청소 로직 함수
+
+#define PIN_BUSY 21 // DFPlayer 비지 핀 (로드셀 정리 후 남은 21번 핀 사용)
+
+extern int ambientCycleCount;
+extern int ambientCycleStorage[5];
+extern bool isFirstAmbientRun;
+extern int lastAmbientScent;
+extern bool isWaitingForTestDb;
+extern unsigned long lastAmbientTime;
+extern int currentAmbientTrack;
+extern bool forceAmbientSkip;
 
 void setSystemMode(SystemMode mode, String msg = "");
 void wakeUpSystem();
@@ -222,4 +231,4 @@ void initRFID();
 void checkRFIDTag();
 void runAmbientMode();
 
-#endif
+#endif 
