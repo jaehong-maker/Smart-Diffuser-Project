@@ -361,7 +361,7 @@ void handleWebClient() {
 }
 
 void showPrompt() { Serial.print("\r\033[K" C_YELLOW "👉 명령 입력 >>" C_RESET); }
-void printMainMenu() { Serial.println("\r\n[1]수동 [2]날씨 [3]설정 [4]데모 [5]음성 [6]파형 [7]반응 [8]정보 [10]소음"); showPrompt(); }
+void printMainMenu() { Serial.println("\r\n[1]수동 [2]날씨 [3]설정 [4]데모 [5]음성 [6]파형 [7]반응 [8]정보 [9]LED [10]소음"); showPrompt(); }
 void redrawInputLine(String &buffer) { Serial.print("\r\033[K" C_YELLOW "👉 명령 입력 >>" C_RESET); Serial.print(buffer); }
 void printDashboard() { Serial.printf("\r\nWiFi: %d dBm | Weights: %.1f %.1f %.1f %.1f\n", WiFi.RSSI(), weights[0], weights[1], weights[2], weights[3]); printMainMenu(); }
 void changeVolume(int vol) { currentVolume = constrain(vol, 0, 30); myDFPlayer.volume(currentVolume); Serial.printf("\r\033[K" C_GREEN "🔊 볼륨: %d\r\n" C_RESET, currentVolume); showPrompt(); }
