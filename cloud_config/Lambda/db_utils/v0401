@@ -136,20 +136,44 @@ def get_device_state(device_id):
             'deviceId': device_id,
             'last_spray_time': "2000-01-01T00:00:00",
             'current_capacity': Decimal(str(config.MAX_CAPACITY)),
-            'last_spray_code': 0
+            'last_spray_code': 0,
+            'weight_g': Decimal("0"),
+            'weights': [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")]
         }
     except: return None
 
-def update_device_state(device_id, last_time, new_capacity, spray_code, weight_g):
+def _normalize_weight_list(weights_value):
+    normalized = []
+
+    if isinstance(weights_value, list):
+        source_values = weights_value[:4]
+    else:
+        source_values = [weights_value]
+
+    for value in source_values:
+        try:
+            normalized.append(float(value))
+        except Exception:
+            normalized.append(0.0)
+
+    while len(normalized) < 4:
+        normalized.append(0.0)
+
+    return normalized[:4]
+
+
+def update_device_state(device_id, last_time, new_capacity, spray_code, weights_value):
     try:
+        normalized_weights = _normalize_weight_list(weights_value)
         state_table.update_item(
             Key={'deviceId': device_id},
-            UpdateExpression="set last_spray_time = :t, current_capacity = :c, last_spray_code = :s, weights = :w",
+            UpdateExpression="set last_spray_time = :t, current_capacity = :c, last_spray_code = :s, weight_g = :wg, weights = :w",
             ExpressionAttributeValues={
                 ':t': last_time,
                 ':c': Decimal(str(new_capacity)),
                 ':s': int(spray_code),
-                ':w': Decimal(str(weight_g))
+                ':wg': Decimal(str(normalized_weights[0])),
+                ':w': [Decimal(str(weight)) for weight in normalized_weights]
             }
         )
     except Exception as e:
