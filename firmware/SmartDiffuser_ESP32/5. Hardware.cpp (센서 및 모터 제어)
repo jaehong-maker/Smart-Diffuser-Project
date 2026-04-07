@@ -31,6 +31,14 @@ void sortArray(float* arr, int size) {
 
 // --- 하드웨어 출력 제어 ---
 
+// ★ 만능 LED 색상 제어 함수 (전체 LED 적용으로 업그레이드)
+void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
+  for(int i = 0; i < NUM_LEDS; i++) {
+    strip.setPixelColor(i, strip.Color(r, g, b));
+  }
+  strip.show();
+}
+
 void forceAllOff() {
   digitalWrite(PIN_SUNNY, HIGH);
   digitalWrite(PIN_CLOUDY, HIGH);
@@ -94,27 +102,49 @@ void bootAnimation() {
 }
 
 void systemHeartbeat() {
-  unsigned long currentTime = millis();
+  static bool lastRunningState = false;
+  unsigned long currentTime = millis(); // 잃어버린 변수 선언 추가!
   static unsigned long lastBlinkTime = 0;
   static bool ledState = false;
 
-  if (isSpraying) {
-    analogWrite(PIN_LED, 255);
-    return;
-  }
-
+  // 1. Wi-Fi 끊김 경고 (최우선 실행: 노란색 깜빡임)
   if (WiFi.status() != WL_CONNECTED) {
     if (currentTime - lastBlinkTime >= 200) {
       lastBlinkTime = currentTime;
       ledState = !ledState;
-      analogWrite(PIN_LED, ledState ? 200 : 0);
+      if (ledState) setLedColor(255, 150, 0); // 노란색
+      else setLedColor(0, 0, 0); // 끄기
     }
-    return;
+    return; // Wi-Fi 끊겼을 때는 아래 코드는 무시
   }
 
-  float val = (exp(sin(currentTime / 1500.0 * PI)) - 0.36787944) * 108.0;
-  int brightness = constrain((int)val, 0, 255);
-  analogWrite(PIN_LED, brightness);
+  bool shouldBeOn = isRunning || (currentMode == MODE_DEMO);
+
+  if(shouldBeOn) {
+    if (!lastRunningState) {
+      setLedColor(ledR, ledG, ledB);
+      lastRunningState = true;
+    }
+  } else {
+    if (lastRunningState) {
+      setLedColor(0,0,0);
+      lastRunningState = false;
+    }
+  }
+
+  // 2. 분사 모드 가동 중일 때 (Wi-Fi 정상일 때만 작동)
+  if (isRunning) {
+    if (!lastRunningState) { 
+      setLedColor(ledR, ledG, ledB); // 설정한 색상으로 켜기!
+      lastRunningState = true;
+    }
+  } else {
+    // 분사 모드가 완전히 끝나면 끄기
+    if (lastRunningState) {
+      setLedColor(0, 0, 0); // 끄기
+      lastRunningState = false;
+    }
+  }
 }
 
 // --- 센서 데이터 처리 ---
@@ -353,3 +383,4 @@ void runAmbientMode() {
     lastAmbientTime = millis(); // ★ 노래 시작 시간 기록 (이후 5초간 수음 절대 금지)
   }
 }
+
