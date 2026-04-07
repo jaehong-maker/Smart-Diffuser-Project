@@ -1,8 +1,6 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
-#define NUM_LEDS 12
-
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -38,6 +36,7 @@
 #define C_CYAN    "\033[36m"
 #define C_BOLD    "\033[1m"
 #define WDT_TIMEOUT 60
+#define NUM_LEDS 12
 
 const int PIN_SUNNY  = 4;
 const int PIN_CLOUDY = 13;
