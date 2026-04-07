@@ -13,16 +13,19 @@
 * [cite_start]`SystemLogic.cpp` : 사용자 입력 처리, 상태 머신(State Machine), 시스템 구동 로직 [cite: 1]
 * [cite_start]`NetworkUI.cpp` : Wi-Fi 관리, AWS 웹훅 통신, 앱 제어용 웹 서버 로직 [cite: 1]
 
-## 하드웨어 핀 맵 (Pin Mapping)
+## 하드웨어 핀 맵 (Hardware Pin Mapping)
 
-모듈명,기능 및 역할,ESP32 할당 핀
-Relay / Motor,4채널 독립 유로 제어 (맑음/흐림/비/눈),"GPIO 4, 13, 14, 27"
-HX711 (1~4),4채널 로드셀 데이터 수집 및 클럭 동기화,"DT: GPIO 34, 36, 39, 32SCK: GPIO 33 (공통 결선)"
-I2S Microphone,I2S 인터페이스 기반 오디오 샘플링,WS: GPIO 19SD: GPIO 35SCK: GPIO 22
-DFPlayer Mini,SoftwareSerial 기반 오디오 재생 제어,RX: GPIO 25TX: GPIO 26
-Nextion Display,HardwareSerial 기반 터치 디스플레이 통신,TX: GPIO 17RX: GPIO 16
-MFRC522 RFID,커스텀 SPI 통신 기반 사용자 및 카트리지 인증,SCK: GPIO 18MISO: GPIO 12MOSI: GPIO 23CS: GPIO 15RST: GPIO 5
-Status LED,시스템 상태 표시 및 동작 시각화,Main LED: GPIO 2Extra LED: GPIO 21
+AromaSync 프로젝트의 ESP32 기반 주요 하드웨어 모듈 및 GPIO 핀 할당 명세입니다. 해당 핀 맵은 로드셀 클럭(SCK) 핀 통합을 통해 가용 GPIO를 최적화한 최종 설계 기준입니다.
+
+| 모듈명 (Module) | 기능 및 역할 (Description) | ESP32 할당 핀 (Pin Assignment) |
+| :--- | :--- | :--- |
+| **Relay / Motor** | 4채널 독립 유로 제어 (맑음/흐림/비/눈) | GPIO 4, 13, 14, 27 |
+| **HX711 (1~4)** | 4채널 로드셀 데이터 수집 및 클럭 동기화 | DT: GPIO 34, 36, 39, 32<br>SCK: GPIO 33 (공통 결선) |
+| **I2S Microphone** | I2S 인터페이스 기반 오디오 샘플링 | WS: GPIO 19<br>SD: GPIO 35<br>SCK: GPIO 22 |
+| **DFPlayer Mini** | SoftwareSerial 기반 오디오 재생 제어 | RX: GPIO 25<br>TX: GPIO 26 |
+| **Nextion Display** | HardwareSerial 기반 터치 디스플레이 통신 | TX: GPIO 17<br>RX: GPIO 16 |
+| **MFRC522 RFID** | 커스텀 SPI 통신 기반 사용자 및 카트리지 인증 | SCK: GPIO 18<br>MISO: GPIO 12<br>MOSI: GPIO 23<br>CS: GPIO 15<br>RST: GPIO 5 |
+| **Status LED** | 시스템 상태 표시 및 동작 시각화 | Main LED: GPIO 2<br>Extra LED: GPIO 21 |
 
 ## 주요 작동 모드 (Operation Modes)
 
