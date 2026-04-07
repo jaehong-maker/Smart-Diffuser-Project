@@ -41,7 +41,7 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   }
   
   // 삼항 연산자를 활용한 재생 트랙 선택 로직 간소화
-  if (music !=0) {
+  if (music != 0 && currentMode != MODE_AMBIENT) { 
     int targetMusic = (music > 0 && music <= 20) ? music : ((cmd >= 10) ? 1 : cmd);
     playSound(targetMusic);
   }
@@ -234,16 +234,14 @@ void pollServer() {
 
 // 네트워크 전용 태스크가 큐를 감시함
 void networkTaskLoop(void *pvParameters) {
-  NetworkMessage_t currentMsg;
   for (;;) {
-    if (xQueueReceive(networkQueue, &currentMsg, portMAX_DELAY) == pdTRUE) {
-      String payload = String(currentMsg.payload);
-      
+    String* currentMsgPtr;
+    if (xQueueReceive(networkQueue, &currentMsgPtr, portMAX_DELAY) == pdTRUE) {
+      String payload = *currentMsgPtr;
+      delete currentMsgPtr; 
+
       isCommunicate = true; 
-      initNetworkSession(); 
-      HTTPClient http; 
-      http.setTimeout(10000); 
-      
+      initNetworkSession(); HTTPClient http; http.setTimeout(10000); 
       if (http.begin(sharedClient, serverName)) {
         http.addHeader("Content-Type", "application/json");
         int httpCode = http.POST(payload);
@@ -253,8 +251,7 @@ void networkTaskLoop(void *pvParameters) {
           if (!deserializeJson(doc, response)) {
             int cmd = doc["spray"] | 0;
             if (cmd > 0) {
-              int dur = doc["duration"] | 3; 
-              int music = doc["music"] | 0; 
+              int dur = doc["duration"] | 3; int music = doc["music"] | 0; 
               String txt = doc["result_text"] | "명령 수신";
               triggerSpray(cmd, dur, music, txt, (currentMode == MODE_WEATHER));
             }
@@ -268,15 +265,14 @@ void networkTaskLoop(void *pvParameters) {
   }
 }
 
+// 입구컷 안 당하게 큐에 넣는 방식으로 변경
 void sendServerRequest(String payload) {
   if (WiFi.status() != WL_CONNECTED) return;
   
-  NetworkMessage_t msg;
-  strncpy(msg.payload, payload.c_str(), sizeof(msg.payload) - 1);
-  msg.payload[sizeof(msg.payload) - 1] = '\0';
-  
+  String* msg = new String(payload);
   if (xQueueSend(networkQueue, &msg, 0) != pdTRUE) {
-    Serial.println("\033[31m[오류] 통신 대기열이 가득 찼습니다.\033[0m");
+    delete msg; // 큐가 꽉 찼으면 메모리 해제
+    Serial.println(C_RED "⚠️ 통신 대기열이 꽉 찼습니다!" C_RESET);
   }
 }
 
