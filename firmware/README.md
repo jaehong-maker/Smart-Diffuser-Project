@@ -15,16 +15,14 @@
 
 ## 하드웨어 핀 맵 (Pin Mapping)
 
-[cite_start]ESP32 보드를 기준으로 다음과 같이 핀이 배선되어 있습니다. [cite: 1]
-
-| 부품명 | 역할 | 연결 핀 (ESP32) |
-| :--- | :--- | :--- |
-| **Relay / Motor** | 맑음(1) / 흐림(2) / 비(3) / 눈(4) | [cite_start]GPIO 4, 13, 14, 27 [cite: 1] |
-| **HX711 (1~4)** | 무게(잔량) 측정용 로드셀 4개 | [cite_start]DT: 34/36/39/32, SCK: 33/18/21/23 [cite: 1] |
-| **I2S Microphone** | 소리 반응 및 음성 녹음 | [cite_start]WS: 19, SD: 35, SCK: 22 [cite: 1] |
-| **DFPlayer Mini** | MP3 음악 및 안내 음성 재생 | [cite_start]RX: 25, TX: 26 (SoftwareSerial) [cite: 1] |
-| **Nextion Display** | 터치 UI 화면 제어 | [cite_start]TX: 17, RX: 16 (HardwareSerial 1) [cite: 1] |
-| **Status LED** | 시스템 상태 표시용 | [cite_start]GPIO 2 [cite: 1] |
+모듈명,기능 및 역할,ESP32 할당 핀
+Relay / Motor,4채널 독립 유로 제어 (맑음/흐림/비/눈),"GPIO 4, 13, 14, 27"
+HX711 (1~4),4채널 로드셀 데이터 수집 및 클럭 동기화,"DT: GPIO 34, 36, 39, 32SCK: GPIO 33 (공통 결선)"
+I2S Microphone,I2S 인터페이스 기반 오디오 샘플링,WS: GPIO 19SD: GPIO 35SCK: GPIO 22
+DFPlayer Mini,SoftwareSerial 기반 오디오 재생 제어,RX: GPIO 25TX: GPIO 26
+Nextion Display,HardwareSerial 기반 터치 디스플레이 통신,TX: GPIO 17RX: GPIO 16
+MFRC522 RFID,커스텀 SPI 통신 기반 사용자 및 카트리지 인증,SCK: GPIO 18MISO: GPIO 12MOSI: GPIO 23CS: GPIO 15RST: GPIO 5
+Status LED,시스템 상태 표시 및 동작 시각화,Main LED: GPIO 2Extra LED: GPIO 21
 
 ## 주요 작동 모드 (Operation Modes)
 
