@@ -118,32 +118,28 @@ void systemHeartbeat() {
 }
 
 // --- 센서 데이터 처리 ---
-
 void monitorWeight() {
   unsigned long currentTime = millis();
-  if (currentTime - lastWeightCheckTime <= 200) return;
-  lastWeightCheckTime = currentTime;
   
-  const float alpha = 0.15;
-  const int sampleCount = 3;
+  // 측정 간격을 200ms -> 20ms로 대폭 단축 (초당 50번 확인)
+  if (currentTime - lastWeightCheckTime <= 20) return;
+  lastWeightCheckTime = currentTime;
 
   for (int i = 0; i < 4; i++) {
     if (scales[i].is_ready()) {
-      float samples[sampleCount];
-      for (int s = 0; s < sampleCount; s++) {
-        samples[s] = scales[i].get_units(1);
-        delay(2);
-      }
-      sortArray(samples, sampleCount);
-      float medianVal = samples[sampleCount / 2];
+      // 샘플링 횟수를 1회로 줄여 딜레이를 완전히 제거
+      float currentRawWeight = scales[i].get_units(1);
 
-      if (medianVal > 1000.0 || medianVal < -50.0) continue;
+      // 하드웨어 오류로 인한 튀는 값(Spike)만 걸러냄
+      if (currentRawWeight > 5000.0 || currentRawWeight < -500.0) continue;
 
-      if (weights[i] == 0.0) weights[i] = medianVal;
-      else weights[i] = (alpha * medianVal) + ((1.0 - alpha) * weights[i]);
+      // [핵심] 필터링 없이 센서 값을 weights 배열에 즉시 박아넣음
+      weights[i] = currentRawWeight; 
     }
   }
 
+  // Nextion 디스플레이 바 업데이트 (현재 1번 로드셀 기준)
+  // 만약 4번 로드셀(GPIO 32)을 메인으로 보려면 weights[3]으로 바꾸세요.
   int remainPercent = (int)((weights[0] / 150.0f) * 100.0f);
   updateProgressBar(constrain(remainPercent, 0, 100));
 }
