@@ -135,10 +135,27 @@ void initSystem() {
   calibration_factor = prefs.getFloat("cal_factor", 430.0);
   currentVolume = prefs.getInt("volume", 20); myDFPlayer.volume(currentVolume);
 
+  // initSystem() 함수 내부 로드셀 초기화 부분 수정
   for (int i = 0; i < 4; i++) {
     scales[i].begin(LOADCELL_DT[i], LOADCELL_SCK[i]);
-    scales[i].set_scale(calibration_factor); scales[i].tare();
-    lastNozzleSprayTime[i] = millis(); 
+    scales[i].set_scale(calibration_factor);
+  
+    // 1. 저장된 오프셋 키 생성 (예: "off_0", "off_1" 등)
+    String key = "off_" + String(i);
+  
+    // 2. Preferences에서 저장된 오프셋 값 읽기 (기본값 0)
+    long savedOffset = prefs.getLong(key.c_str(), 0);
+  
+    // 3. 읽어온 값이 있다면 적용 (부팅 시 자동 tare 방지)
+    if (savedOffset != 0) {
+      scales[i].set_offset(savedOffset);
+      Serial.printf("[LoadCell %d] 오프셋 복구 완료: %ld\r\n", i + 1, savedOffset);
+    } else {
+      // 저장된 값이 없는 최초 실행 시에만 영점 잡기
+      scales[i].tare();
+    }
+  
+    lastNozzleSprayTime[i] = millis();
   }
 
   connectWiFi();
@@ -198,6 +215,9 @@ void runSystem() {
   else if (isRunning) { runSprayLogic(); checkSafety(); } 
 
   checkSerialInput();
+
+  // [추가] CPU 제어권을 시스템(IDLE Task)에 잠시 양보하여 워치독 트리거 방지
+  vTaskDelay(1 / portTICK_PERIOD_MS);
 }
 
 // --- 시리얼 입력 감시 (모듈화 적용) ---
@@ -225,8 +245,15 @@ void checkSerialInput() {
 
 // --- 서브 루틴: 설정 모드 입력 처리 ---
 void processSettingModeInput() {
+  if (Serial.available() <= 0) return;
   char c = Serial.read(); 
   if (c == '\n' || c == '\r') return;
+
+  // [추가] 1번 로드셀 RAW 데이터 확인용 디버깅 코드
+  if (c == 'r') {
+    Serial.printf("\r\n[DEBUG] Scale 1 Raw: %ld\r\n", scales[0].read());
+    return;
+  }
 
   if (c == '+') { 
     calibration_factor += 10; 
@@ -240,11 +267,30 @@ void processSettingModeInput() {
   }
   else if (c == 't') { 
     for(int i=0; i<4; i++) scales[i].tare(); 
-    Serial.println("\r\n✅ [영점 완료]"); showPrompt(); 
+    Serial.println("\r\n✅ [영점 완료]"); 
+    // 영점 조절 후 각 로드셀의 무게(g)를 출력 (5번 평균 내서 정확도 향상)
+    Serial.printf("📊 현재 잔량: W1:%.1fg | W2:%.1fg | W3:%.1fg | W4:%.1fg\r\n", 
+                  scales[0].get_units(5), 
+                  scales[1].get_units(5), 
+                  scales[2].get_units(5), 
+                  scales[3].get_units(5));
+    showPrompt(); 
+
   }
+  // processSettingModeInput() 함수 내 's' 케이스 수정
   else if (c == 's') { 
-    prefs.putFloat("cal_factor", calibration_factor); 
-    Serial.println("\r\n💾 [저장 완료]"); showPrompt(); 
+    // 기존 보정값 저장 로직 유지
+    prefs.putFloat("cal_factor", calibration_factor);
+    
+    // 추가: 4채널 로드셀의 현재 오프셋 값을 각각 저장
+    for (int i = 0; i < 4; i++) {
+      String key = "off_" + String(i);
+      long currentOffset = scales[i].get_offset();
+      prefs.putLong(key.c_str(), currentOffset);
+    }
+    
+    Serial.println("\r\n💾 [저장 완료] 보정값 및 영점 오프셋이 기록되었습니다.");
+    showPrompt();
   }
   else if (c == 'p') {
     String payload = "{\"action\": \"POLL\", \"weights\": [";
