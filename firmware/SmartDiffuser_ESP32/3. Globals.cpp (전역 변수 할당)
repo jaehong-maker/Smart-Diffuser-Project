@@ -74,7 +74,7 @@ unsigned long lastActivityTime = 0;
 unsigned long lastAmbientTime = 0;    // 추가: 앰비언트 모드 타이머 초기화
 const unsigned long SLEEP_TIMEOUT = 300000; // 5분 절전 시간
 
-void setSprayIntensity(int intensityVal) {
+void SprayIntensity(int intensityVal) {
     currentIntensity = intensityVal;
     if (currentIntensity == 1) REST_TIME = 9000;      
     else if (currentIntensity == 2) REST_TIME = 6000; 
@@ -98,3 +98,11 @@ int lastAmbientScent = 0;
 bool isWaitingForTestDb = false;
 int currentAmbientTrack = 0;
 bool forceAmbientSkip = false;
+
+// 변수 초기화 구역에 추가
+uint8_t ledR = 255; 
+uint8_t ledG = 255; 
+uint8_t ledB = 255; // 초기값은 흰색으로 셋팅
+
+// 객체 생성 구역(맨 위쪽)에 추가
+Adafruit_NeoPixel strip(NUM_LEDS, PIN_LED, NEO_GRB + NEO_KHZ800);
