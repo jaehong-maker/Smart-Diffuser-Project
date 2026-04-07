@@ -122,6 +122,7 @@ void initSystem() {
 
   pinMode(PIN_SUNNY, OUTPUT); pinMode(PIN_CLOUDY, OUTPUT);
   pinMode(PIN_RAIN, OUTPUT); pinMode(PIN_SNOW, OUTPUT); pinMode(PIN_LED, OUTPUT);
+  pinMode(PIN_BUSY, INPUT);
   forceAllOff();
 
   Serial.printf(C_BOLD "\r\n 🚀 SMART DIFFUSER V12.7.0 (REFACTORED ARCHITECTURE) \r\n" C_RESET);
@@ -169,9 +170,11 @@ void runSystem() {
   // 매 사이클마다 RFID 태그 접촉 여부 비동기 검사
   checkRFIDTag();
 
-  if (currentMode == MODE_VISUAL) { runSoundVisualizer(); checkSerialInput(); return; }
-  if (currentMode == MODE_REACTIVE) { runSoundReaction(); checkSerialInput(); return; }
-  if (currentMode == MODE_AMBIENT) { runSoundReaction(); checkSerialInput(); return; }
+  if (currentMode == MODE_AMBIENT) { 
+    runAmbientMode(); 
+    checkSerialInput(); 
+    return; 
+  }
   
   processAudioEvents();
   manageSleepState();
@@ -257,21 +260,53 @@ void processStandardInput() {
     char c = Serial.read();
     if (c == '\n' || c == '\r') {
       if (inputBuffer.length() > 0) {
-        if (inputBuffer == "0") setSystemMode(MODE_READY, "Stopped");
-        else handleInput(inputBuffer);
-        inputBuffer = "";
         
-        if (currentMode != MODE_SLEEP && currentMode != MODE_VOICE) {
+        // --- 테스트 모드(t) 데시벨 값 입력 처리 ---
+        if (currentMode == MODE_AMBIENT && isWaitingForTestDb) {
+          int testDb = inputBuffer.toInt();
+          Serial.printf("\r\n[Test] 강제 데시벨 %d dB 서버로 즉시 전송!\r\n", testDb);
+          sendServerRequest("{\"mode\": \"ambient\", \"db_level\": " + String(testDb) + "}");
+          
+          isWaitingForTestDb = false;
+          ambientCycleCount = 0; // 전송했으니 5주기 카운터 리셋
+          isFirstAmbientRun = false; 
+          
+          currentAmbientTrack++;
+          if (currentAmbientTrack > 20) currentAmbientTrack = 1;
+          playSound(currentAmbientTrack);
+          Serial.printf(C_BLUE "🎵 노래 시작: %d번 트랙\r\n" C_RESET, currentAmbientTrack);
+          lastAmbientTime = millis(); // 쿨타임 시작
+        
+        // --- 일반 명령어 처리 ---
+        } else if (inputBuffer == "0") {
+          setSystemMode(MODE_READY, "Stopped");
+        } else {
+          handleInput(inputBuffer);
+        }
+        
+        inputBuffer = "";
+        if (currentMode != MODE_SLEEP && currentMode != MODE_VOICE && !isWaitingForTestDb) {
             showPrompt(); 
         }
       }
     } else if (c == '\b' || c == 0x7F) {
       if (inputBuffer.length() > 0) { inputBuffer.remove(inputBuffer.length() - 1); redrawInputLine(inputBuffer); }
-    } else {
+    } else { 
+      // --- 'n' 과 't' 단축키 처리 ---
       if (currentMode == MODE_AMBIENT && c == 'n') {
-          runAmbientMode(); // 수음 함수 호출
-      } else { inputBuffer += c; redrawInputLine(inputBuffer); }
-  }
+          Serial.println("\r\n[Skip] n키 감지: 현재 노래를 중단하고 수음을 시작합니다.");
+          myDFPlayer.stop();
+          forceAmbientSkip = true; // 안전하게 다음 루프에서 수음 발동
+      } else if (currentMode == MODE_AMBIENT && c == 't') {
+          Serial.println("\r\n[Test Mode] 수음을 건너뛰고 데시벨을 수동으로 입력합니다.");
+          Serial.print("전송할 데시벨 값을 입력하고 엔터를 치세요 (예: 65) >> ");
+          myDFPlayer.stop();
+          isWaitingForTestDb = true; 
+      } else {
+          inputBuffer += c; 
+          redrawInputLine(inputBuffer); 
+      }
+    }
   }
 }
 
@@ -290,9 +325,14 @@ void handleInput(String input) {
       case 8: printDashboard(); break;
       case 10: 
         stopSystem();
-        lastAmbientTime = 0;
-        setSystemMode(MODE_AMBIENT, "Ambient Mode"); break;
-      default: Serial.println(C_RED "Unknown Command" C_RESET); printMainMenu(); break;
+        ambientCycleCount = 0;
+        isFirstAmbientRun = true; 
+        lastAmbientScent = 0;
+        isWaitingForTestDb = false;
+        forceAmbientSkip = false;
+        lastAmbientTime = 0; 
+        setSystemMode(MODE_AMBIENT, "Ambient Mode"); 
+        break;
     }
   } 
   else if (currentMode == MODE_MANUAL) {
