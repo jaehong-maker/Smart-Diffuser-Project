@@ -96,54 +96,48 @@ void playSound(int trackNum) {
 
 void bootAnimation() {
   for (int i = 0; i < 3; i++) {
-    setLedColor(255, 255, 255); delay(100); // 전체 흰색 점등으로 변경
-    setLedColor(0, 0, 0);       delay(100); // 전체 소등으로 변경
+    digitalWrite(PIN_LED, HIGH); delay(100);
+    digitalWrite(PIN_LED, LOW);  delay(100);
   }
 }
 
 void systemHeartbeat() {
-  static bool lastRunningState = false;
-  unsigned long currentTime = millis(); // 잃어버린 변수 선언 추가!
+  static bool lastStateOn = false;
+  unsigned long currentTime = millis();
   static unsigned long lastBlinkTime = 0;
   static bool ledState = false;
 
-  // 1. Wi-Fi 끊김 경고 (최우선 실행: 노란색 깜빡임)
+  // 1. 네트워크 단절 시 예외 처리 (황색 점멸)
   if (WiFi.status() != WL_CONNECTED) {
     if (currentTime - lastBlinkTime >= 200) {
       lastBlinkTime = currentTime;
       ledState = !ledState;
-      if (ledState) setLedColor(255, 150, 0); // 노란색
-      else setLedColor(0, 0, 0); // 끄기
+      if (ledState) {
+        setLedColor(255, 150, 0); // 황색 경고
+      } else {
+        setLedColor(0, 0, 0);     // 소등
+      }
     }
-    return; // Wi-Fi 끊겼을 때는 아래 코드는 무시
+    lastStateOn = false; 
+    return; 
   }
 
-  bool shouldBeOn = isRunning || (currentMode == MODE_DEMO);
+  // 2. 시스템 가동 상태에 따른 LED 상태 제어
+  bool isSystemActive = isRunning || (currentMode == MODE_DEMO);
 
-  if(shouldBeOn) {
-    if (!lastRunningState) {
+  if (isSystemActive) {
+    if (!lastStateOn) {
       setLedColor(ledR, ledG, ledB);
-      lastRunningState = true;
+      lastStateOn = true;
     }
   } else {
-    if (lastRunningState) {
-      setLedColor(0,0,0);
-      lastRunningState = false;
-    }
-  }
-
-  // 2. 분사 모드 가동 중일 때 (Wi-Fi 정상일 때만 작동)
-  if (isRunning) {
-    if (!lastRunningState) { 
-      setLedColor(ledR, ledG, ledB); // 설정한 색상으로 켜기!
-      lastRunningState = true;
-    }
-  } else {
-    // 분사 모드가 완전히 끝나면 끄기
-    if (lastRunningState) {
-      setLedColor(0, 0, 0); // 끄기
-      lastRunningState = false;
-    }
+    // 시스템 대기 상태 (Breathing 효과): NeoPixel 색상 연산을 통한 부드러운 밝기 제어
+    float val = (exp(sin(currentTime / 1500.0 * PI)) - 0.36787944) * 108.0;
+    int brightness = constrain((int)val, 0, 255);
+    
+    // 저장된 색상 값에 밝기 비율을 적용하여 제어
+    setLedColor((ledR * brightness) / 255, (ledG * brightness) / 255, (ledB * brightness) / 255);
+    lastStateOn = false;
   }
 }
 
