@@ -1,0 +1,765 @@
+#메인
+import os
+import json
+import base64
+import uuid
+import logging
+import random
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+
+# 분리한 커스텀 모듈 가져오기
+import config
+import db_utils
+import api_utils
+
+# 로깅 설정
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+def logic_weather_mode(weather, humidity):
+    spray_code = 1
+    try:
+        if float(humidity) >= 50.0:
+            weather = "흐림(고습도)"
+    except: pass
+    
+    if any(x in weather for x in ["비", "강수"]): spray_code = 3
+    elif "눈" in weather: spray_code = 4
+    elif "흐림" in weather or "구름" in weather: spray_code = 2
+    else: spray_code = 1
+    return spray_code, weather, "Weather_Mode", 3
+
+def logic_emotion_mode(user_emotion_input):
+    now = datetime.now(timezone(timedelta(hours=9)))
+    is_daytime = (9 <= now.hour < 18)
+    time_label = "Day" if is_daytime else "Night"
+    spray_code = 1
+    emotion_name = "Unknown"
+    if user_emotion_input in ["1", "신남"]:
+        emotion_name = "Happy"
+        spray_code = 1 if is_daytime else 2
+    elif user_emotion_input in ["2", "편안함"]:
+        emotion_name = "Relaxed"
+        spray_code = 4
+    elif user_emotion_input in ["3", "화남"]:
+        emotion_name = "Angry"
+        spray_code = 2 if is_daytime else 3
+    elif user_emotion_input in ["4", "슬픔"]:
+        emotion_name = "Sad"
+        spray_code = 3 if is_daytime else 4
+    return spray_code, f"{emotion_name}/{time_label}", "Emotion_Mode", (3 if is_daytime else 2)
+
+# ========================================================
+# ★ 메인 핸들러
+# ========================================================
+def lambda_handler(event, context):
+    logger.info("============== [REQUEST START] ==============")
+
+    # 0. 원본 요청 로그
+    try:
+        logger.info(f"[EVENT] {json.dumps(event, ensure_ascii=False)}")
+    except Exception as e:
+        logger.warning(f"[EVENT_LOG_FAIL] {e}")
+
+    raw_body = event.get("body", "")
+    logger.info(f"[RAW_BODY] {raw_body}")
+    parsed_preview = {}
+
+    try:
+        parsed_preview = json.loads(raw_body) if raw_body else {}
+        logger.info(f"[PARSED_BODY] {json.dumps(parsed_preview, ensure_ascii=False)}")
+        logger.info(f"[BODY_KEYS] {list(parsed_preview.keys())}")
+        logger.info(
+            f"[BODY_VALUES] action={parsed_preview.get('action')}, "
+            f"mode={parsed_preview.get('mode')}, "
+            f"region={parsed_preview.get('region')}, "
+            f"w1={parsed_preview.get('w1')}, "
+            f"w2={parsed_preview.get('w2')}, "
+            f"w3={parsed_preview.get('w3')}, "
+            f"w4={parsed_preview.get('w4')}, "
+            f"weights={parsed_preview.get('weights')}"
+        )
+    except Exception as e:
+        logger.warning(f"[BODY_PARSE_FAIL] {e}")
+
+    # ★ [핵심] 무조건 이 ID 하나만 사용 (연결 문제 해결용)
+    device_id = "ESP32_Test"
+    # 1. 헤더 분석
+    headers = event.get("headers") or {}
+    content_type = api_utils._get_header(headers, "content-type")
+    
+    # ------------------------------------------------------
+    # [A] 음성 모드 처리
+    # ------------------------------------------------------
+    if "audio/wav" in str(content_type).lower():
+        try:
+            bucket = os.environ.get("AUDIO_BUCKET", "")
+            if not bucket: return {"statusCode": 500, "body": json.dumps({"message": "Server Error: AUDIO_BUCKET not set"})}
+
+            raw_body = event.get("body", "") or ""
+            is_b64 = bool(event.get("isBase64Encoded", False))
+            wav_bytes = base64.b64decode(raw_body) if is_b64 else raw_body.encode("latin1")
+            
+            # S3 업로드
+            key = f"voice/{device_id}/{datetime.now(timezone(timedelta(hours=9))).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.wav"
+            api_utils.s3.put_object(Bucket=bucket, Key=key, Body=wav_bytes, ContentType="audio/wav")
+            
+            # STT 실행
+            transcript = api_utils._transcribe_wav_from_s3(bucket, key, language_code=os.environ.get("VOICE_LANG", "ko-KR"))
+
+            raw_transcript = transcript
+            normalized_transcript = (transcript or "").strip()
+
+            logger.info(f"[TRANSCRIPT_RAW] value={repr(raw_transcript)} type={type(raw_transcript)}")
+            logger.info(f"[TRANSCRIPT_NORMALIZED] value={repr(normalized_transcript)}")
+
+            if normalized_transcript in ["SILENCE", "FAIL", "ERROR", "TIMEOUT", ""]:
+                msg_map = {
+                    "SILENCE": "묵음.",
+                    "FAIL": "STT 변환 실패(AWS 오류).",
+                    "ERROR": "STT 시스템 에러.",
+                    "TIMEOUT": "STT 시간 초과(너무 오래 걸림).",
+                    "": "알 수 없는 오류."
+                }
+                msg = msg_map.get(normalized_transcript, "인식 실패")
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps({
+                        "spray": 0,
+                        "message": msg,
+                        "transcript": normalized_transcript
+                    }, ensure_ascii=False)
+                }
+            spray_code, duration, result_text = api_utils._voice_to_spray(normalized_transcript)
+
+            # 쿨타임 체크
+            state = db_utils.get_device_state(device_id) or {}
+            last_time_str = state.get('last_spray_time', "2000-01-01T00:00:00")
+            now = datetime.now(timezone(timedelta(hours=9)))
+            try:
+                last_time = datetime.fromisoformat(last_time_str)
+                if (now - last_time).total_seconds() < (config.COOLDOWN_MINUTES * 60):
+                    return {
+                        "statusCode": 200,
+                        "body": json.dumps({"spray": 0, "message": "쿨타임 중이라 분사할 수 없습니다.", "mode": "CoolDown"}, ensure_ascii=False)
+                    }
+            except: pass
+
+            # 명령 저장 & 기기 상태 업데이트
+            if spray_code > 0:
+                db_utils.manage_mailbox(device_id, spray_code)
+                current_cap = float(state.get('current_capacity', config.MAX_CAPACITY))
+                new_cap = round(max(0.0, current_cap - (duration * config.CONSUMPTION_PER_SEC)), 2)
+                db_utils.update_device_state(device_id, now.isoformat(), new_cap, spray_code, 0)
+
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({
+                    "spray": int(spray_code),
+                    "message": f"음성 인식 성공: {result_text}",
+                    "transcript": normalized_transcript,
+                    "duration": duration
+                }, ensure_ascii=False)
+            }
+
+        except Exception as e:
+            logger.error(f"[VOICE_FATAL] {e}")
+            return {"statusCode": 200, "body": json.dumps({"spray": 0, "message": f"음성 처리 에러: {str(e)}"}, ensure_ascii=False)}
+    # ------------------------------------------------------
+    # [B] 일반 JSON 모드 처리
+    # ------------------------------------------------------    
+    raw_body = event.get("body", {})
+    try:
+        if isinstance(raw_body, str):
+            body = json.loads(raw_body) if raw_body else {}
+        elif isinstance(raw_body, dict):
+            body = raw_body
+        else:
+            body = {}
+    except Exception as e:
+        logger.warning(f"[JSON_PARSE_ERROR] {e}")
+        body = {}
+
+    mode = body.get("mode", "weather")
+    region = body.get("region") or body.get("data", "서울")
+    action = body.get("action", "")
+
+   # [ACTION] SEND_AUTH: 인증번호 이메일 발송
+    if action == "SEND_AUTH":
+        try:
+            u_email = body.get("email")
+            if not u_email:
+                return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "이메일을 입력해주세요.", "result": "FAIL"}, ensure_ascii=False)}
+
+            if 'Item' in db_utils.user_table.get_item(Key={'email': u_email}):
+                return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "이미 가입된 이메일입니다.", "result": "FAIL"}, ensure_ascii=False)}
+
+            auth_code = str(random.randint(100000, 999999))
+            
+            if api_utils.send_verification_email(u_email, auth_code):
+                db_utils.auth_table.put_item(Item={
+                    'email': u_email,
+                    'code': auth_code,
+                    'createdAt': datetime.now(timezone(timedelta(hours=9))).isoformat()
+                })
+                return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "인증번호가 발송되었습니다. 이메일을 확인해주세요.", "result": "SUCCESS"}, ensure_ascii=False)}
+            else:
+                return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "이메일 발송에 실패했습니다.", "result": "FAIL"}, ensure_ascii=False)}
+        except Exception as e:
+            return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": f"진짜 에러 원인: {str(e)}", "result": "FAIL"}, ensure_ascii=False)} 
+        # [ACTION] SIGNUP: 인증번호 확인 후 최종 가입
+    elif action == "SIGNUP":
+        try:
+            u_email = body.get("email")
+            u_password = body.get("password")
+            u_region = body.get("region", "서울") 
+            u_auth_code = body.get("auth_code")
+            
+            # ★ [추가] 앱에서 회원가입 시 기기 번호(디퓨저 시리얼)를 같이 보내주면 받기
+            # 만약 안 보내주면 일단 우리가 테스트하던 "ESP32_Test"를 기본값으로 넣음
+            u_device_id = body.get("deviceId", "ESP32_Test")
+
+            if not u_email or not u_password or not u_auth_code:
+                return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "입력 정보가 부족합니다.", "result": "FAIL"}, ensure_ascii=False)}
+
+            auth_res = db_utils.auth_table.get_item(Key={'email': u_email})
+            if 'Item' not in auth_res:
+                return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "인증번호 내역이 없습니다. 먼저 인증을 요청하세요.", "result": "FAIL"}, ensure_ascii=False)}
+            
+            if auth_res['Item']['code'] != u_auth_code:
+                return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "인증번호가 일치하지 않습니다.", "result": "FAIL"}, ensure_ascii=False)}
+
+            # DB에 유저 정보 저장할 때 기기 번호도 같이 쏙!
+            db_utils.user_table.put_item(Item={
+                'email': u_email,
+                'password': u_password,
+                'region': u_region,
+                'music_tracks': '1_6_11_16', 
+                'deviceId': u_device_id,  # ★ [추가] 유저와 디퓨저 완벽 매칭!
+                'createdAt': datetime.now(timezone(timedelta(hours=9))).isoformat()
+            })
+            
+            db_utils.auth_table.delete_item(Key={'email': u_email})
+            return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "회원가입이 완료되었습니다!", "result": "SUCCESS"}, ensure_ascii=False)}
+        except Exception as e:
+           return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": f"진짜 에러 원인: {str(e)}", "result": "FAIL"}, ensure_ascii=False)}
+
+    # [ACTION] LOGIN
+    elif action == "LOGIN":
+        try:
+            u_email = body.get("email")
+            u_password = body.get("password")
+            res = db_utils.user_table.get_item(Key={'email': u_email})
+            
+            if 'Item' in res:
+                user_info = res['Item']
+                if user_info.get('password') != u_password:
+                    return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "비밀번호가 틀렸습니다.", "result": "FAIL"}, ensure_ascii=False)}
+
+                my_music = user_info.get('music_tracks', '1_6_11_16')
+                
+                # ★ [추가] DB에 저장된 이 유저의 기기 번호 가져오기
+                my_device = user_info.get('deviceId', 'ESP32_Test') 
+
+                try:
+                    db_utils.state_table.update_item(Key={'deviceId': my_device}, UpdateExpression="set music_tracks = :m", ExpressionAttributeValues={':m': str(my_music)})
+                except: pass
+
+                # ★ [추가] 로그인 성공 시 앱으로 deviceId를 던져줌
+                return {
+                    "statusCode": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps({
+                        "message": "로그인 성공!",
+                        "result": "SUCCESS",
+                        "region": user_info.get('region', '서울'),
+                        "music_tracks": my_music,
+                        "deviceId": my_device  # 앱한테 "이 기기를 제어해!" 라고 알려줌
+                    }, ensure_ascii=False)
+                }
+            else:
+                return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "존재하지 않는 계정입니다.", "result": "FAIL"}, ensure_ascii=False)}
+        except Exception as e:
+            return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": f"DB 에러: {str(e)}", "result": "FAIL"}, ensure_ascii=False)}
+
+    # [ACTION] LOGIN
+    elif action == "LOGIN":
+        try:
+            u_email = body.get("email")
+            u_password = body.get("password")
+            res = db_utils.user_table.get_item(Key={'email': u_email})
+            
+            if 'Item' in res:
+                user_info = res['Item']
+                if user_info.get('password') != u_password:
+                    return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "비밀번호가 틀렸습니다.", "result": "FAIL"}, ensure_ascii=False)}
+
+                my_music = user_info.get('music_tracks', '1_6_11_16')
+                try:
+                    db_utils.state_table.update_item(Key={'deviceId': device_id}, UpdateExpression="set music_tracks = :m", ExpressionAttributeValues={':m': str(my_music)})
+                except: pass
+
+                return {
+                    "statusCode": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps({
+                        "message": "로그인 성공!",
+                        "result": "SUCCESS",
+                        "region": user_info.get('region', '서울'),
+                        "music_tracks": my_music
+                    }, ensure_ascii=False)
+                }
+            else:
+                return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "존재하지 않는 계정입니다.", "result": "FAIL"}, ensure_ascii=False)}
+        except Exception as e:
+            return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": f"DB 에러: {str(e)}", "result": "FAIL"}, ensure_ascii=False)}
+            
+    # [ACTION] SAVE_MUSIC
+    elif action == "SAVE_MUSIC":
+        try:
+            u_email = body.get("email") 
+            music_data = body.get("music")
+            
+            if music_data and "_" in str(music_data):
+                db_utils.state_table.update_item(
+                    Key={'deviceId': device_id},
+                    UpdateExpression="set music_tracks = :m",
+                    ExpressionAttributeValues={':m': str(music_data)}
+                )
+                if u_email:
+                    db_utils.user_table.update_item(
+                        Key={'email': u_email},
+                        UpdateExpression="set music_tracks = :m",
+                        ExpressionAttributeValues={':m': str(music_data)}
+                    )
+                return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"spray": 0, "message": "개인 음악 설정 완료", "result_text": "OK"}, ensure_ascii=False)}
+            else:
+                return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"spray": 0, "message": "포맷 오류", "result_text": "FAIL"}, ensure_ascii=False)}
+        except Exception as e:
+            return {"statusCode": 500, "body": str(e)}
+
+    # [ACTION] SET_INTENSITY
+    elif action == "SET_INTENSITY":
+        try:
+            intensity_val = int(body.get("intensity", 2))
+            db_utils.state_table.update_item(
+                Key={'deviceId': device_id},
+                UpdateExpression="set intensity = :i",
+                ExpressionAttributeValues={':i': intensity_val}
+            )
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"spray": 0, "message": f"강도 {intensity_val}단계 설정 완료", "result_text": "OK"}, ensure_ascii=False)
+            }
+        except Exception as e:
+            return {"statusCode": 500, "body": str(e)}
+
+    # [ACTION] FEEDBACK
+    elif action == "FEEDBACK":
+        try:
+            val = body.get("value", 1) 
+            is_like = (val == 1)
+
+            # 앱은 "향기번호_상황" 문자열을 'data' 키로 보냄
+            data_str = body.get("data", "1_Unknown")
+            parts = data_str.split("_", 1)
+
+            scent = int(parts[0]) if parts[0].isdigit() else 1
+            ctx = parts[1] if len(parts) > 1 else "Unknown"
+            
+            # ★ [수정] 한국어 4등분 시간대로 검사 및 강제 생성
+            if "새벽" not in ctx and "오전" not in ctx and "오후" not in ctx and "밤" not in ctx:
+                now_kst = datetime.now(timezone(timedelta(hours=9)))
+                h = now_kst.hour
+                
+                if 0 <= h < 6:
+                    t_zone = "새벽"
+                elif 6 <= h < 12:
+                    t_zone = "오전"
+                elif 12 <= h < 18:
+                    t_zone = "오후"
+                else:
+                    t_zone = "밤"
+                
+                # 날씨 정보만 있는 경우 시간대 결합 (예: Weather_Sunny -> Weather_Sunny_오후)
+                if ctx.startswith("Weather_"):
+                    ctx = f"{ctx}_{t_zone}"
+
+            # ★ [2] 가중치 업데이트: 좋아요면 +1, 싫어요면 -1
+            weight_val = 1 if is_like else -1
+            db_utils.save_feedback(device_id, ctx, scent, weight_val)
+
+            # (이하 기존 싫어요/좋아요 처리 로직 동일...)
+
+            # [3] 싫어요(False)일 때 로직
+            if not is_like:
+                # 쿨타임 강제 초기화 (즉시 다른 향 분사 가능하게)
+                db_utils.state_table.update_item(
+                    Key={'deviceId': device_id},
+                    UpdateExpression="set last_spray_time = :t",
+                    ExpressionAttributeValues={':t': "2000-01-01T00:00:00"}
+                )
+                
+                # 현재 싫은 향 제외하고 랜덤 선택
+                candidates = [s for s in [1, 2, 3, 4] if s != scent]
+                new_scent = random.choice(candidates)
+                
+                # ★ [4] 새로 추천된 향기에도 가중치 +1 부여 (사용자 유도)
+                db_utils.save_feedback(device_id, ctx, new_scent, 1)
+                db_utils.manage_mailbox(device_id, new_scent)
+                
+                return {
+                    "statusCode": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps({
+                        "message": f"싫어요 반영! {new_scent}번 향으로 우회 학습",
+                        "spray": new_scent,
+                        "context": ctx # 어떤 상황에서 저장됐는지 앱에 피드백
+                    }, ensure_ascii=False)
+                }
+
+            # 좋아요인 경우
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({
+                    "message": "좋아요! 사용자 선호도 학습 완료", 
+                    "spray": scent,
+                    "context": ctx
+                }, ensure_ascii=False)
+            }
+
+        except Exception as e:
+             return {"statusCode": 500, "body": str(e)}
+             
+    elif action == "TIMER_START":
+        try:
+            spray_code = int(body.get("spray", 1))
+            run_minutes = int(body.get("run_minutes", 1))
+            
+            # 기기에 시작 명령 전달
+            db_utils.manage_mailbox(device_id, spray_code)
+            
+            # 서버 DB에 '몇 분 뒤에 꺼야 하는지' 기록
+            now_kst = datetime.now(timezone(timedelta(hours=9)))
+            stop_time = now_kst + timedelta(minutes=run_minutes)
+            db_utils.state_table.update_item(
+                Key={'deviceId': device_id},
+                UpdateExpression="set auto_stop_time = :t",
+                ExpressionAttributeValues={':t': stop_time.isoformat()}
+            )
+            return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"spray": spray_code, "message": f"{run_minutes}분 작동 후 서버가 정지합니다.", "result_text": "OK"}, ensure_ascii=False)}
+        except Exception as e: 
+            return {"statusCode": 500, "body": str(e)}
+
+    if action == "POLL":
+        weights_data = body.get("weights", 0.0)
+        if isinstance(weights_data, list) and len(weights_data) > 0:
+            current_w = float(weights_data[0])
+        else:
+            current_w = float(weights_data)
+        logger.info(f"[POLL_DATA] 수신된 전체 무게 배열: {body.get('weights')} | 저장할 무게: {current_w}g")
+
+        try:
+            db_utils.state_table.update_item(
+                Key={'deviceId': device_id},
+                UpdateExpression="set weights = :w",
+                ExpressionAttributeValues={':w': Decimal(str(current_w))}
+            )
+        except Exception as e:
+            logger.error(f"무게 DB 업데이트 실패: {e}")
+
+        state = db_utils.get_device_state(device_id) or {}
+        auto_stop_str = state.get('auto_stop_time', "")
+        if auto_stop_str:
+            try:
+                auto_stop_time = datetime.fromisoformat(auto_stop_str)
+                now_kst = datetime.now(timezone(timedelta(hours=9)))
+                if now_kst >= auto_stop_time:
+                    # 약속된 시간이 지났으면 우체통에 정지명령(0)을 넣고 타이머 삭제
+                    db_utils.manage_mailbox(device_id, 90)
+                    db_utils.state_table.update_item(Key={'deviceId': device_id}, UpdateExpression="remove auto_stop_time")
+            except: pass
+
+        spray_code, target_region, duration = db_utils.manage_mailbox(device_id)
+        music_code = db_utils.get_music_track(device_id, spray_code) if spray_code > 0 else 0
+        
+        state = db_utils.get_device_state(device_id) or {}
+        intensity = int(state.get('intensity', 2)) 
+
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({
+                "spray": int(spray_code),
+                "music": int(music_code),
+                "duration": int(duration),
+                "target_region": target_region,
+                "intensity": intensity,  
+                "result_text": "명령없음" if spray_code in [0, -1] else f"명령:{spray_code}"
+            }, ensure_ascii=False)
+        }
+        
+    # [ACTION] MENU_STOP
+    elif action in ["MENU_STOP", "STOP_ALL"] or mode == "menu":
+        db_utils.manage_mailbox(device_id, 90)
+        try: db_utils.state_table.update_item(Key={'deviceId': device_id}, UpdateExpression="remove auto_stop_time")
+        except: pass
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"spray": 90, "message": "정지 명령", "result_text": "정지"}, ensure_ascii=False)
+        }
+
+    # [ACTION] MANUAL
+    elif action == "MANUAL":
+        try:
+            spray_code = int(body.get("spray", 1))
+            region_req = body.get("region", "")
+            duration = int(body.get("duration", 3)) 
+
+            db_utils.manage_mailbox(device_id, spray_code, region_req, duration)
+
+            try: db_utils.state_table.update_item(Key={'deviceId': device_id}, UpdateExpression="remove auto_stop_time")
+            except: pass
+            
+            music_code = spray_code
+            if spray_code in [1, 2, 3, 4]:
+                music_code = db_utils.get_music_track(device_id, spray_code)
+                
+            result_text = f"명령: {spray_code}번 / 서버음악: {music_code}번 / 분사시간: {duration}초"
+            
+            state = db_utils.get_device_state(device_id) or {}
+            intensity = int(state.get('intensity', 2))
+            
+        except Exception as e:
+            spray_code = 0
+            duration = 3
+            result_text = f"명령 오류: {str(e)}"
+            intensity = 2 
+
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({
+                "spray": spray_code,
+                "duration": duration, 
+                "intensity": intensity,  
+                "result_text": result_text,
+                "message": result_text
+            }, ensure_ascii=False)
+        }
+
+    # ======================================================================
+    # [기존 로직] 날씨 모드, 감성 모드
+    # ======================================================================
+    received_weights = body.get("weights")
+    received_w4 = body.get("w4", 0)
+
+    if isinstance(received_weights, list) and len(received_weights) > 0:
+        weight_g = received_weights[0]
+    else:
+        weight_g = received_w4
+
+    if weight_g is None: weight_g = 0
+    
+    logger.info(f"[WEIGHT_SYNC] 최종 결정된 무게 값: {weight_g}g")
+
+    spray_code = 0
+    result_text = ""
+    logic_name = ""
+    temp = "0"
+    humidity = "0"
+    duration = 3
+    context_key = "Unknown"
+    weather_text = ""
+
+    # [A] 감성 모드
+    if mode == "emotion":
+        user_emo = body.get("user_emotion", "평범")
+        context_key = f"Emotion_{user_emo}"
+        gpt_spray, gpt_reason = api_utils.ask_gpt_recommendation(weather="실내", emotion=user_emo)
+        if gpt_spray > 0:
+            spray_code, result_text, logic_name = gpt_spray, gpt_reason, "AI_GPT_Emotion"
+        else:
+            spray_code, result_text, logic_name, duration = logic_emotion_mode(user_emo)
+            
+
+    # [B] 날씨 모드
+    else:
+        try: # ★ 날씨 로직 전체를 try로 감싸기 시작
+            if region == "테스트맑음":
+                spray_code, result_text, logic_name, duration = 1, "테스트 맑음 실행", "Test_Weather", 3
+                context_key = "Weather_Sunny"
+            elif region == "테스트흐림":
+                spray_code, result_text, logic_name, duration = 2, "테스트 흐림 실행", "Test_Weather", 3
+                context_key = "Weather_Cloudy"
+            elif region == "테스트비":
+                spray_code, result_text, logic_name, duration = 3, "테스트 비 실행", "Test_Weather", 3
+                context_key = "Weather_Rain"
+            elif region == "테스트눈":
+                spray_code, result_text, logic_name, duration = 4, "테스트 눈 실행", "Test_Weather", 3
+                context_key = "Weather_Snow"
+            else:
+                if not region: region = "서울"
+                if region not in config.REGION_COORDS: region = "서울"
+                nx, ny = config.REGION_COORDS[region]["nx"], config.REGION_COORDS[region]["ny"]
+                
+                if "SERVICE_KEY" in os.environ:
+                    bd, bt = api_utils.get_kma_time()
+                    params = {
+                        "serviceKey": os.environ["SERVICE_KEY"],
+                        "pageNo": "1", "numOfRows": "10", "dataType": "XML",
+                        "base_date": bd, "base_time": bt, "nx": nx, "ny": ny
+                    }
+                    temp, w_res, humidity = api_utils.forecast(params)
+                    
+                    # ★ 방어 코드: 기상청 API가 죽었거나 날씨 값이 비어있을 때
+                    if not w_res:
+                        w_res = "날씨 알 수 없음(API 지연)"
+                        temp, humidity = "20", "50"
+                        
+                    weather_text = w_res
+
+                    now_kst = datetime.now(timezone(timedelta(hours=9)))
+                    current_hour = now_kst.hour
+
+                    if 6 <= current_hour < 12:
+                        time_zone = "Morning"
+                    elif 12 <= current_hour < 18:
+                        time_zone = "Afternoon"
+                    else:
+                        time_zone = "Night"
+                    
+                    w_key = "Sunny"
+                    if w_res and any(x in w_res for x in ["비", "강수"]): w_key = "Rain"
+                    elif w_res and "눈" in w_res: w_key = "Snow"
+                    elif w_res and any(x in w_res for x in ["흐림", "구름"]): w_key = "Cloudy"
+
+                    context_key = f"Weather_{w_key}_{time_zone}"
+
+                    ai_recommendation = api_utils.get_ai_recommendation(w_res, humidity)
+                    
+                    if ai_recommendation is not None:
+                        spray_code = ai_recommendation
+                        result_text = f"Docker AI 모델 추천: {w_res}"
+                        logic_name = "Jihoon_Docker_AI"
+                        duration = 3
+                    else:
+                        spray_code, result_text, logic_name, duration = logic_weather_mode(w_res, humidity)
+                else:
+                    spray_code, result_text, logic_name, duration = 1, "API키없음", "Error", 3
+                    weather_text = "환경 변수 오류"
+                    
+        # ★ 예기치 못한 에러 발생 시 502 서버 뻗음을 방지하고 200 OK로 에러 메시지 반환
+        except Exception as e:
+            logger.error(f"[WEATHER_MODE_CRASH] {e}")
+            spray_code, result_text, logic_name, duration = 1, f"날씨 처리 에러: {str(e)}", "Error_Mode", 3
+            weather_text = "날씨 통신 실패"
+            temp, humidity = "0", "0"
+            context_key = "Weather_Unknown"   
+    # [싫어요 목록 확인 및 교체]
+    # ★ [초개인화 AI 가중치 반영] 
+    # 기본 뇌(Docker/날씨)가 고른 spray_code를, 사용자의 개인 DB 기억으로 덮어씌우는 핵심 로직!
+    if spray_code > 0:
+        final_scent, ai_msg = db_utils.get_personalized_scent(device_id, context_key, spray_code)
+        
+        # 만약 개인 DB 점수 때문에 향기가 바뀌었다면?
+        if final_scent != spray_code:
+            logger.info(f"[AI Change] {spray_code} -> {final_scent} ({ai_msg})")
+            # 앱 화면에도 "취향에 맞춰 바꿨다"고 티를 내주자!
+            result_text += f" -> [취향 맞춤: {final_scent}번]" 
+            spray_code = final_scent
+
+    state = db_utils.get_device_state(device_id) or {}
+    last_time_str = state.get('last_spray_time', "2000-01-01T00:00:00")
+    current_capacity = float(state.get('current_capacity', config.MAX_CAPACITY))
+
+    now = datetime.now(timezone(timedelta(hours=9)))
+    is_blocked = False
+    log_msg = ""
+
+    if spray_code > 0 and action != "START":
+        try:
+            last_time = datetime.fromisoformat(last_time_str)
+            if (now - last_time).total_seconds() < (config.COOLDOWN_MINUTES * 60):
+                is_blocked = True
+                remaining_sec = int((config.COOLDOWN_MINUTES * 60) - (now - last_time).total_seconds())
+                log_msg = f"쿨타임 중: {remaining_sec}초 남음"
+        except: pass
+
+    if is_blocked:
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({
+                "spray": 0,
+                "result_text": result_text, 
+                "message": log_msg,
+                "mode": "CoolDown"
+            }, ensure_ascii=False)
+        }
+
+    # 최종 실행 및 로그 저장
+
+    new_capacity = current_capacity
+    if spray_code > 0:
+        if action == "START":
+            start_code = int(body.get("spray", 30))
+            db_utils.manage_mailbox(device_id, start_code)
+        else:
+            # 예전 정답 코드 복구: ESP32가 다이렉트로 응답받을 때는 우체통에 넣지 않음!
+            usage = duration * config.CONSUMPTION_PER_SEC
+            new_capacity = round(max(0.0, current_capacity - usage), 2)
+            db_utils.update_device_state(device_id, now.isoformat(), new_capacity, spray_code, weight_g)
+
+    try:
+        def safe_int(v): return int(float(v)) if v else 0
+        def safe_dec(v): return Decimal(str(v)) if v else Decimal("0")
+
+        db_utils.log_table.put_item(Item={
+            "deviceId": device_id,
+            "timestamp": now.isoformat(),
+            "mode": logic_name,
+            "result_text": result_text,
+            "spray_code": int(spray_code),
+            "duration": int(duration),
+            "region": region if mode == "weather" else "Emotion",
+            "weight_g": safe_dec(weight_g),
+            "temp": safe_dec(temp),
+            "humid": safe_int(humidity),
+            "feedback": 1
+        })
+    except Exception as e:
+        logger.warning(f"Log save failed: {e}")
+
+    music_code = spray_code
+    if spray_code in [1, 2, 3, 4]:
+        music_code = db_utils.get_music_track(device_id, spray_code)
+
+    state = db_utils.get_device_state(device_id) or {}
+    intensity = int(state.get('intensity', 2))
+    
+    # 최종 응답
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({
+            "weather": weather_text,
+            "spray": spray_code,
+            "music": music_code,
+            "intensity": intensity,
+            "result_text": result_text,
+            "duration": duration,
+            "temp": temp,
+            "humidity": humidity,
+            "remaining_capacity": new_capacity,
+            "message": f"분석 성공! ({result_text})",
+            "mode": logic_name,
+            # ★ [매우 중요] 앱에서 피드백 쏠 때 쓰라고 '상황(예: Weather_Sunny_Morning)'을 같이 보내줌!
+            "context": context_key  
+        }, ensure_ascii=False)
+    }
