@@ -96,8 +96,8 @@ void playSound(int trackNum) {
 
 void bootAnimation() {
   for (int i = 0; i < 3; i++) {
-    digitalWrite(PIN_LED, HIGH); delay(100);
-    digitalWrite(PIN_LED, LOW);  delay(100);
+    setLedColor(255, 255, 255); delay(100); // 전체 흰색 점등으로 변경
+    setLedColor(0, 0, 0);       delay(100); // 전체 소등으로 변경
   }
 }
 
