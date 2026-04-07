@@ -50,6 +50,34 @@ def logic_emotion_mode(user_emotion_input):
         spray_code = 3 if is_daytime else 4
     return spray_code, f"{emotion_name}/{time_label}", "Emotion_Mode", (3 if is_daytime else 2)
 
+def _normalize_weights(body_dict):
+    normalized = []
+    weights_data = body_dict.get("weights")
+
+    if isinstance(weights_data, list):
+        source_values = weights_data[:4]
+    elif weights_data not in (None, ""):
+        source_values = [weights_data]
+    else:
+        source_values = []
+
+    if not source_values:
+        source_values = [body_dict.get(f"w{i}") for i in range(1, 5)]
+
+    for value in source_values:
+        try:
+            normalized.append(round(float(value), 1))
+        except Exception:
+            normalized.append(0.0)
+
+    while len(normalized) < 4:
+        normalized.append(0.0)
+
+    return normalized[:4]
+
+def _to_decimal_list(values):
+    return [Decimal(str(value)) for value in values]
+
 # ========================================================
 # ★ 메인 핸들러
 # ========================================================
@@ -151,7 +179,7 @@ def lambda_handler(event, context):
                 db_utils.manage_mailbox(device_id, spray_code)
                 current_cap = float(state.get('current_capacity', config.MAX_CAPACITY))
                 new_cap = round(max(0.0, current_cap - (duration * config.CONSUMPTION_PER_SEC)), 2)
-                db_utils.update_device_state(device_id, now.isoformat(), new_cap, spray_code, 0)
+                db_utils.update_device_state(device_id, now.isoformat(), new_cap, spray_code, [0.0, 0.0, 0.0, 0.0])
 
             return {
                 "statusCode": 200,
@@ -181,6 +209,8 @@ def lambda_handler(event, context):
     except Exception as e:
         logger.warning(f"[JSON_PARSE_ERROR] {e}")
         body = {}
+
+    normalized_weights = _normalize_weights(body)
 
     mode = body.get("mode", "weather")
     region = body.get("region") or body.get("data", "서울")
@@ -456,18 +486,17 @@ def lambda_handler(event, context):
             return {"statusCode": 500, "body": str(e)}
 
     if action == "POLL":
-        weights_data = body.get("weights", 0.0)
-        if isinstance(weights_data, list) and len(weights_data) > 0:
-            current_w = float(weights_data[0])
-        else:
-            current_w = float(weights_data)
-        logger.info(f"[POLL_DATA] 수신된 전체 무게 배열: {body.get('weights')} | 저장할 무게: {current_w}g")
+        current_w = normalized_weights[0]
+        logger.info(f"[POLL_DATA] 수신된 전체 무게 배열: {body.get('weights')} | 정규화 배열: {normalized_weights}")
 
         try:
             db_utils.state_table.update_item(
                 Key={'deviceId': device_id},
-                UpdateExpression="set weights = :w",
-                ExpressionAttributeValues={':w': Decimal(str(current_w))}
+                UpdateExpression="set weight_g = :wg, weights = :w",
+                ExpressionAttributeValues={
+                    ':wg': Decimal(str(current_w)),
+                    ':w': _to_decimal_list(normalized_weights)
+                }
             )
         except Exception as e:
             logger.error(f"무게 DB 업데이트 실패: {e}")
@@ -498,7 +527,8 @@ def lambda_handler(event, context):
                 "music": int(music_code),
                 "duration": int(duration),
                 "target_region": target_region,
-                "intensity": intensity,  
+                "intensity": intensity,
+                "weights": normalized_weights,
                 "result_text": "명령없음" if spray_code in [0, -1] else f"명령:{spray_code}"
             }, ensure_ascii=False)
         }
@@ -556,17 +586,9 @@ def lambda_handler(event, context):
     # ======================================================================
     # [기존 로직] 날씨 모드, 감성 모드
     # ======================================================================
-    received_weights = body.get("weights")
-    received_w4 = body.get("w4", 0)
-
-    if isinstance(received_weights, list) and len(received_weights) > 0:
-        weight_g = received_weights[0]
-    else:
-        weight_g = received_w4
-
-    if weight_g is None: weight_g = 0
+    weight_g = normalized_weights[0]
     
-    logger.info(f"[WEIGHT_SYNC] 최종 결정된 무게 값: {weight_g}g")
+    logger.info(f"[WEIGHT_SYNC] 정규화된 무게 배열: {normalized_weights} | 대표 무게: {weight_g}g")
 
     spray_code = 0
     result_text = ""
@@ -714,7 +736,7 @@ def lambda_handler(event, context):
             # 예전 정답 코드 복구: ESP32가 다이렉트로 응답받을 때는 우체통에 넣지 않음!
             usage = duration * config.CONSUMPTION_PER_SEC
             new_capacity = round(max(0.0, current_capacity - usage), 2)
-            db_utils.update_device_state(device_id, now.isoformat(), new_capacity, spray_code, weight_g)
+            db_utils.update_device_state(device_id, now.isoformat(), new_capacity, spray_code, normalized_weights)
 
     try:
         def safe_int(v): return int(float(v)) if v else 0
@@ -729,6 +751,7 @@ def lambda_handler(event, context):
             "duration": int(duration),
             "region": region if mode == "weather" else "Emotion",
             "weight_g": safe_dec(weight_g),
+            "weights": [safe_dec(weight) for weight in normalized_weights],
             "temp": safe_dec(temp),
             "humid": safe_int(humidity),
             "feedback": 1
@@ -756,6 +779,8 @@ def lambda_handler(event, context):
             "duration": duration,
             "temp": temp,
             "humidity": humidity,
+            "weight_g": weight_g,
+            "weights": normalized_weights,
             "remaining_capacity": new_capacity,
             "message": f"분석 성공! ({result_text})",
             "mode": logic_name,
