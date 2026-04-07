@@ -274,52 +274,86 @@ void checkRFIDTag() {
   mfrc522.PCD_StopCrypto1();
 }
 
-// --- 앰비언트 모드 (환경 분석) ---
-
 void runAmbientMode() {
-  myDFPlayer.stop();
-  delay(500); 
-  
-  Serial.printf(C_CYAN "\r\n[Ambient Scan %d/3] 수음 시작...\r\n" C_RESET, ambientSampleCount + 1);
-  updateDisplay(0, "Listening (" + String(ambientSampleCount + 1) + "/3)");
+  // ★ 수정 1: isSpraying 제한 해제! 이제 향을 뿌리는 중에도 n키나 수음 로직이 정상 작동합니다.
+  if (isWaitingForTestDb) return; 
 
-  const int sampleCount = 30;
-  int dbSamples[sampleCount];
+  unsigned long currentTime = millis();
 
-  for (int i = 0; i < sampleCount; i++) {
-    int32_t samples[64];
-    size_t bytes_read = 0;
-    i2s_read(I2S_PORT, &samples, sizeof(samples), &bytes_read, portMAX_DELAY);
-    dbSamples[i] = (bytes_read > 0) ? calculateDecibels(samples, bytes_read / sizeof(int32_t)) : 0;
-    delay(100);
-  }
+  // 1. 트리거 조건: 노래 시작 후 5초가 지났고 BUSY가 HIGH(노래 끝남)일 때 
+  bool isSongFinished = (digitalRead(PIN_BUSY) == HIGH && (currentTime - lastAmbientTime > 5000));
 
-  // 버블 정렬 알고리즘 수행
-  for (int i = 0; i < sampleCount - 1; i++) {
-    for (int j = 0; j < sampleCount - i - 1; j++) {
-      if (dbSamples[j] > dbSamples[j + 1]) {
-        int temp = dbSamples[j];
-        dbSamples[j] = dbSamples[j + 1];
-        dbSamples[j + 1] = temp;
+  // 2. 실행 조건: 최초 실행 OR 노래 끝남 OR n키 눌림
+  if (isFirstAmbientRun || isSongFinished || forceAmbientSkip) {
+    
+    forceAmbientSkip = false; // 플래그 해제
+    lastAmbientTime = currentTime; // 중복 진입 방지 쿨타임 시작
+
+    myDFPlayer.stop();
+    delay(100); // 잔향 대기
+
+    Serial.printf(C_CYAN "\r\n[Ambient Scan %d/%s] 주변 소음 측정 중...\r\n" C_RESET, 
+                  ambientCycleCount + 1, isFirstAmbientRun ? "1(최초)" : "5");
+
+    // 3초간 30회 수음
+    const int sampleCount = 30;
+    int dbSamples[sampleCount];
+    
+    for (int i = 0; i < sampleCount; i++) {
+      int32_t samples[64];
+      size_t bytes_read = 0;
+      
+      // 0.1초 타임아웃 적용하여 뻗음 방지
+      i2s_read(I2S_PORT, &samples, sizeof(samples), &bytes_read, 100 / portTICK_PERIOD_MS);
+      dbSamples[i] = (bytes_read > 0) ? calculateDecibels(samples, bytes_read / sizeof(int32_t)) : 0;
+      
+      // ★★★ 수정 2: 수음(3초) 대기 중에도 모터 타이머가 멈추지 않게 분사 로직을 강제 호출! ★★★
+      if (isRunning) {
+        runSprayLogic(); 
+      }
+
+      delay(100);
+    }
+
+    // 튀는 값 버블 정렬 필터링
+    for (int i = 0; i < sampleCount - 1; i++) {
+      for (int j = 0; j < sampleCount - i - 1; j++) {
+        if (dbSamples[j] > dbSamples[j + 1]) {
+          int temp = dbSamples[j];
+          dbSamples[j] = dbSamples[j + 1];
+          dbSamples[j + 1] = temp;
+        }
       }
     }
+
+    int stableDB = dbSamples[sampleCount / 2];
+    ambientCycleStorage[ambientCycleCount] = stableDB;
+    ambientCycleCount++;
+
+    Serial.printf(C_GREEN "✅ 측정 완료: %d dB\r\n" C_RESET, stableDB);
+
+    // 5주기 누적 및 서버 전송
+    if (isFirstAmbientRun || ambientCycleCount >= 5) {
+      int sumDB = 0;
+      int count = isFirstAmbientRun ? 1 : 5;
+      for (int i = 0; i < count; i++) sumDB += ambientCycleStorage[i];
+      int avgDB = sumDB / count;
+      
+      Serial.printf(C_YELLOW "🌐 서버 전송: 누적 평균 %d dB\r\n" C_RESET, avgDB);
+      sendServerRequest("{\"mode\": \"ambient\", \"db_level\": " + String(avgDB) + "}");
+      
+      ambientCycleCount = 0;
+      isFirstAmbientRun = false; 
+    } else {
+      Serial.println("데이터 누적 중... (서버 전송 생략)");
+    }
+
+    // 다음 곡 재생
+    currentAmbientTrack++;
+    if (currentAmbientTrack > 20) currentAmbientTrack = 1;
+    playSound(currentAmbientTrack);
+    Serial.printf(C_BLUE "🎵 노래 시작: %d번 트랙\r\n" C_RESET, currentAmbientTrack);
+    
+    lastAmbientTime = millis(); // ★ 노래 시작 시간 기록 (이후 5초간 수음 절대 금지)
   }
-
-  int stableDB = dbSamples[sampleCount / 2];
-  ambientDbStorage[ambientSampleCount] = stableDB;
-  ambientSampleCount++;
-
-  Serial.printf(C_GREEN "✅ %d회차 완료: %d dB\r\n" C_RESET, ambientSampleCount, stableDB);
-
-  if (ambientSampleCount >= 3) {
-    int avgDB = (ambientDbStorage[0] + ambientDbStorage[1] + ambientDbStorage[2]) / 3;
-    String payload = "{\"mode\": \"ambient\", \"db_level\": " + String(avgDB) + "}";
-    sendServerRequest(payload);
-    ambientSampleCount = 0;
-  }
-
-  currentAmbientTrack++;
-  if (currentAmbientTrack > 20) currentAmbientTrack = 1;
-  playSound(currentAmbientTrack);
-  updateDisplay(0, "Track: " + String(currentAmbientTrack));
 }
