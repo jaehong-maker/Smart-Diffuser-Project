@@ -132,6 +132,13 @@ void initSystem() {
 
   initMicrophone();
   prefs.begin("diffuser", false);
+  ledR = prefs.getUChar("ledR", 255);
+  ledG = prefs.getUChar("ledG", 255);
+  ledB = prefs.getUChar("ledB", 255);
+
+  strip.begin();
+  strip.setBrightness(150); // 너무 눈부시지 않게 150으로 제한 (0~255)
+  strip.show(); // 일단 꺼진 상태로 대기
   calibration_factor = prefs.getFloat("cal_factor", 430.0);
   currentVolume = prefs.getInt("volume", 20); myDFPlayer.volume(currentVolume);
 
@@ -188,6 +195,7 @@ void runSystem() {
   checkRFIDTag();
 
   if (currentMode == MODE_AMBIENT) { 
+    systemHeartbeat();
     runAmbientMode(); 
     checkSerialInput(); 
     return; 
@@ -240,6 +248,43 @@ void checkSerialInput() {
     return;
   }
 
+  if (currentMode == MODE_LED) {
+    String colorInput = Serial.readStringUntil('\n');
+    colorInput.trim();
+    if (colorInput.length() == 0) return;
+
+    // 0을 누르면 취소하고 메인 메뉴로
+    if (colorInput == "0") {
+      setSystemMode(MODE_READY, "Main Menu");
+      return;
+    }
+
+    int firstComma = colorInput.indexOf(',');
+    int secondComma = colorInput.indexOf(',', firstComma + 1);
+    
+    if (firstComma != -1 && secondComma != -1) {
+      ledR = colorInput.substring(0, firstComma).toInt();
+      ledG = colorInput.substring(firstComma + 1, secondComma).toInt();
+      ledB = colorInput.substring(secondComma + 1).toInt();
+      
+      prefs.putUChar("ledR", ledR);
+      prefs.putUChar("ledG", ledG);
+      prefs.putUChar("ledB", ledB);
+      
+      Serial.printf("\r\n✅ 색상 저장 완료: R:%d, G:%d, B:%d\r\n", ledR, ledG, ledB);
+      
+      // 설정한 색상을 1초간 보여주고 끈 뒤 메인 메뉴로 복귀
+      setLedColor(ledR, ledG, ledB); 
+      delay(1000);
+      setLedColor(0, 0, 0); 
+      
+      setSystemMode(MODE_READY, "Main Menu");
+    } else {
+      Serial.println("\r\n❌ 잘못된 형식입니다. (예: 255,0,0)");
+      showPrompt();
+    }
+    return; // LED 모드 처리 완료 후 종료
+  }
   processStandardInput();
 }
 
@@ -369,6 +414,12 @@ void handleInput(String input) {
       case 6: setSystemMode(MODE_VISUAL, "Visualizer"); break;
       case 7: setSystemMode(MODE_REACTIVE, "Sound Reaction"); break;
       case 8: printDashboard(); break;
+      case 9: 
+        setSystemMode(MODE_LED, "LED Setting");
+        Serial.println("\r\n🎨 [LED 설정] R, G, B 값을 입력하세요 (예: 255,0,0)");
+        Serial.println("  (취소하고 돌아가려면 0을 입력하세요)");
+        showPrompt();
+        break;
       case 10: 
         stopSystem();
         ambientCycleCount = 0;
