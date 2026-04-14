@@ -138,14 +138,8 @@ extern bool blendModeEnabled;
 extern String blendSelection;
 extern bool blendSprayActive;
 extern unsigned long lastNozzleSprayTime[4]; // 각 노즐별 마지막 분사 시간
-
-
-// --- [기존 커스텀 SPI 핀 정의 확인] ---
-extern const int RFID_SCK;
-extern const int RFID_MISO;
-extern const int RFID_MOSI;
-extern const int RFID_CS;
-extern const int RFID_RST;
+extern TaskHandle_t AudioTaskHandle; // ★ 추가
+void audioTaskLoop(void *parameter); // ★ 추가
 
 const unsigned long CLEANING_INTERVAL = 86400000; // 24시간 (밀리초 단위)
 void runAutoCleaning(); // 청소 로직 함수
