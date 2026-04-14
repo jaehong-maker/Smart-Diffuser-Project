@@ -135,6 +135,7 @@ void initSystem() {
   ledR = prefs.getUChar("ledR", 255);
   ledG = prefs.getUChar("ledG", 255);
   ledB = prefs.getUChar("ledB", 255);
+  ledBrightness = prefs.getInt("ledBright", 150);
 
   strip.begin();
   strip.setBrightness(150); // 너무 눈부시지 않게 150으로 제한 (0~255)
@@ -245,44 +246,6 @@ void checkSerialInput() {
   if (currentMode == MODE_SETTING) {
     processSettingModeInput();
     return;
-  }
-
-  if (currentMode == MODE_LED) {
-    String colorInput = Serial.readStringUntil('\n');
-    colorInput.trim();
-    if (colorInput.length() == 0) return;
-
-    // 0을 누르면 취소하고 메인 메뉴로
-    if (colorInput == "0") {
-      setSystemMode(MODE_READY, "Main Menu");
-      return;
-    }
-
-    int firstComma = colorInput.indexOf(',');
-    int secondComma = colorInput.indexOf(',', firstComma + 1);
-    
-    if (firstComma != -1 && secondComma != -1) {
-      ledR = colorInput.substring(0, firstComma).toInt();
-      ledG = colorInput.substring(firstComma + 1, secondComma).toInt();
-      ledB = colorInput.substring(secondComma + 1).toInt();
-      
-      prefs.putUChar("ledR", ledR);
-      prefs.putUChar("ledG", ledG);
-      prefs.putUChar("ledB", ledB);
-      
-      Serial.printf("\r\n✅ 색상 저장 완료: R:%d, G:%d, B:%d\r\n", ledR, ledG, ledB);
-      
-      // 설정한 색상을 1초간 보여주고 끈 뒤 메인 메뉴로 복귀
-      setLedColor(ledR, ledG, ledB); 
-      delay(1000);
-      setLedColor(0, 0, 0); 
-      
-      setSystemMode(MODE_READY, "Main Menu");
-    } else {
-      Serial.println("\r\n❌ 잘못된 형식입니다. (예: 255,0,0)");
-      showPrompt();
-    }
-    return; // LED 모드 처리 완료 후 종료
   }
   processStandardInput();
 
@@ -403,6 +366,40 @@ void processStandardInput() {
 
 // --- 통합 입력 처리 (Switch-Case 최적화) ---
 void handleInput(String input) {
+    if (currentMode == MODE_LED) {
+    int values[4];
+    int count = 0, lastIdx = 0;
+    
+    // 쉼표를 기준으로 4개의 값(R, G, B, 밝기) 파싱
+    for (int i = 0; i < input.length() && count < 4; i++) {
+      if (input.charAt(i) == ',') {
+        values[count++] = input.substring(lastIdx, i).toInt();
+        lastIdx = i + 1;
+      }
+    }
+    if (count < 4) values[count++] = input.substring(lastIdx).toInt();
+
+    if (count == 4) { // 4개가 모두 정상 입력되었을 때
+      ledR = constrain(values[0], 0, 255);
+      ledG = constrain(values[1], 0, 255);
+      ledB = constrain(values[2], 0, 255);
+      ledBrightness = constrain(values[3], 0, 255);
+
+      prefs.putUChar("ledR", ledR);
+      prefs.putUChar("ledG", ledG);
+      prefs.putUChar("ledB", ledB);
+      prefs.putInt("ledBright", ledBrightness);
+
+      Serial.printf("\r\n✅ LED 설정 완료: R:%d G:%d B:%d 밝기:%d\r\n", ledR, ledG, ledB, ledBrightness);
+      setLedColor(ledR, ledG, ledB); // 즉시 적용 테스트
+      delay(1000);
+      setSystemMode(MODE_READY, "Main Menu");
+    } else {
+      Serial.println("\r\n❌ 형식이 잘못되었습니다. 다시 입력해주세요.");
+      showPrompt();
+    }
+    return; // 일반 모드로 넘어가지 않게 종료
+  }
   if (currentMode == MODE_READY) {
     int cmdInt = input.toInt();
     switch (cmdInt) {
@@ -416,8 +413,9 @@ void handleInput(String input) {
       case 8: printDashboard(); break;
       case 9: 
         setSystemMode(MODE_LED, "LED Setting");
-        Serial.println("\r\n🎨 [LED 설정] R, G, B 값을 입력하세요 (예: 255,0,0)");
-        Serial.println("  (취소하고 돌아가려면 0을 입력하세요)");
+        Serial.println("\r\n🎨 [LED 설정] R, G, B, 밝기 값을 쉼표로 구분하여 입력하세요.");
+        Serial.println("  (예: 255,255,255,150) ※ 밝기 범위: 0(꺼짐) ~ 255(최대)");
+        Serial.println("  (취소하고 돌아가려면 0 입력)");
         showPrompt();
         break;
       case 10: 
