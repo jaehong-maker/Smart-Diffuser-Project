@@ -33,12 +33,14 @@ void sortArray(float* arr, int size) {
 
 // ★ 만능 LED 색상 제어 함수 (전체 LED 적용으로 업그레이드)
 void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
+  // 전체 밝기 제한 적용 (0~255)
+  strip.setBrightness(ledBrightness); 
+  
   for(int i = 0; i < NUM_LEDS; i++) {
     strip.setPixelColor(i, strip.Color(r, g, b));
   }
   strip.show();
 }
-
 void forceAllOff() {
   digitalWrite(PIN_SUNNY, HIGH);
   digitalWrite(PIN_CLOUDY, HIGH);
@@ -96,8 +98,10 @@ void playSound(int trackNum) {
 
 void bootAnimation() {
   for (int i = 0; i < 3; i++) {
-    digitalWrite(PIN_LED, HIGH); delay(100);
-    digitalWrite(PIN_LED, LOW);  delay(100);
+    setLedColor(ledR, ledG, ledB); 
+    delay(100);
+    setLedColor(0, 0, 0); 
+    delay(100);
   }
 }
 
@@ -377,4 +381,3 @@ void runAmbientMode() {
     lastAmbientTime = millis(); // ★ 노래 시작 시간 기록 (이후 5초간 수음 절대 금지)
   }
 }
-
