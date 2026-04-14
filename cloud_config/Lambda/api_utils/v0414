@@ -1,0 +1,270 @@
+#기상청 API, S3, Transcribe(음성), 이메일 전송, 외부 AI 람다 연동 파일
+
+import os
+import json
+import time
+import uuid
+import logging
+import urllib.request
+import urllib.parse
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta, timezone
+import smtplib
+from email.mime.text import MIMEText
+import boto3
+import config
+
+logger = logging.getLogger()
+
+# AWS 클라이언트
+s3 = boto3.client("s3")
+transcribe = boto3.client("transcribe")
+
+#hoon#
+def get_ai_recommendation(weather_text, humidity_val):
+    try:
+        # 지훈이의 AI 람다 API 엔드포인트 주소
+        ai_url = "https://vmqkp1y6f4.execute-api.ap-northeast-2.amazonaws.com/default/Diffuser-AI-Final"
+        
+        weather_map = {"맑음": 1, "흐림": 2, "비": 3, "눈": 4}
+        weather_code = 1
+        for key, value in weather_map.items():
+            if key in weather_text:
+                weather_code = value
+                break
+
+        payload = json.dumps({
+            "weather": weather_code, 
+            "humidity": float(humidity_val)
+        }).encode('utf-8')
+
+        req = urllib.request.Request(ai_url, data=payload, method='POST')
+        req.add_header('Content-Type', 'application/json')
+        
+        with urllib.request.urlopen(req, timeout=5) as res:
+            result = json.loads(res.read().decode('utf-8'))
+            return result.get("spray", 1) 
+    except Exception as e:
+        print(f"AI 서버 연동 실패: {e}")
+        return None
+#hoon#
+# api_utils.py
+
+def ask_gemini_recommendation(diary_text, user_history_text):
+    """
+    일기 내용과 사용자의 과거 취향을 함께 분석하여 향기를 추천합니다.
+    """
+    # API 키 앞뒤에 혹시 모를 공백(엔터 등)이 있으면 에러가 나므로 strip()으로 제거
+    api_key = getattr(config, "GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", "")).strip()
+    if not api_key:
+        logger.error("Gemini API 키가 없습니다.")
+        return "0", "AI 키 누락"
+
+    # ★ 가장 최신의 안정적인 모델 주소 적용 (오타 방지)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={api_key}"
+
+    prompt = f"""
+    사용자의 오늘 일기: "{diary_text}"
+    
+    [사용자의 과거 향기 취향 데이터]
+    {user_history_text}
+    
+    이 일기를 분석하여 6가지 향기 중 기분 전환에 가장 도움이 될 향기를 추천해줘.
+    ★중요 조건★: 
+    1. 사용자가 과거에 '비선호'로 평가한 향기는 일기 내용과 어울리더라도 가급적 피할 것.
+    2. 과거에 '선호'로 평가한 향기를 우선적으로 고려할 것.
+    3. 단일 향기가 어울리면 1개만 고르고, 시너지가 나면 2개를 블렌딩해 (예: "1_2").
+    
+    [향기 종류]
+    1: 시트러스 / 2: 라벤더 / 3: 우디 / 4: 쿨민트 / 5: 플로럴 / 6: 머스크
+    
+    반드시 아래와 같은 순수 JSON 형식으로만 답변하고 다른 설명글은 절대 쓰지 마:
+    {{"kind": "1_2", "reason": "사용자가 우디향을 싫어하여 제외하고, 평소 좋아하는 라벤더와 현재 피로를 풀어줄 시트러스를 블렌딩했습니다."}}
+    """
+
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}]
+    }).encode('utf-8')
+
+    req = urllib.request.Request(url, data=payload, method='POST')
+    req.add_header('Content-Type', 'application/json')
+
+    try:
+        with urllib.request.urlopen(req, timeout=25) as res:
+            response_data = json.loads(res.read().decode('utf-8'))
+            
+            text_result = response_data['candidates'][0]['content']['parts'][0]['text']
+            clean_text = text_result.replace("```json", "").replace("```", "").strip()
+            result_json = json.loads(clean_text)
+            
+            kind_str = str(result_json.get("kind", "1"))
+            reason = result_json.get("reason", "감정 분석 완료")
+            
+            logger.info(f"[Gemini API 성공] 추천 코드(kind): {kind_str}, 이유: {reason}")
+            return kind_str, reason
+
+    # ★ 404, 503 등 서버 에러가 났을 때 구글의 '진짜 에러 메시지'를 로그에 출력
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8')
+        logger.error(f"[Gemini API HTTP 에러] {e.code} {e.reason} - 상세내용: {error_body}")
+        return "0", f"AI 통신 에러: {e.code}"
+    except Exception as e:
+        logger.error(f"[Gemini API 일반 에러] {e}")
+        return "0", f"AI 분석 실패: {e}"
+
+def get_kma_time():
+    now = datetime.now(timezone(timedelta(hours=9)))
+    if now.minute < 40: now -= timedelta(hours=1)
+    return now.strftime("%Y%m%d"), now.strftime("%H00")
+
+def forecast(params):
+    # 통신 안정성을 위해 https 권장 (문제가 생기면 http로 유지하셔도 됩니다)
+    url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst"
+    try:
+        # 1. 서비스 키 분리 (이중 인코딩 방지 핵심 로직)
+        service_key = params.pop('serviceKey')
+        query_string = urllib.parse.urlencode(params)
+        full_url = f"{url}?serviceKey={service_key}&{query_string}"
+        
+        req = urllib.request.Request(full_url)
+        
+        # 2. 타임아웃을 5초 -> 10초로 증가
+        with urllib.request.urlopen(req, timeout=10) as response:
+            if response.getcode() == 200:
+                xml_str = response.read().decode('utf-8')
+                
+                # 3. 키 오류 등 기상청 API 자체 에러 메시지가 왔는지 확인
+                if "NORMAL_SERVICE" not in xml_str:
+                    logger.error(f"KMA API Error: {xml_str}")
+                    return "0", "API_키_오류", "0"
+
+                root = ET.fromstring(xml_str)
+                t, p, h = "0", "0", "0"
+                for item in root.findall(".//item"):
+                    cat = item.findtext("category")
+                    val = item.findtext("obsrValue")
+                    if cat == "T1H": t = val
+                    elif cat == "PTY": p = val
+                    elif cat == "REH": h = val
+                w = "강수" if p != "0" else "맑음"
+                return t, w, h
+    except Exception as e:
+        logger.error(f"Forecast Error: {e}")
+        return "0", "통신에러", "0"
+    return "0", "에러", "0"
+
+def _get_header(headers: dict, key: str) -> str:
+    if not headers or not isinstance(headers, dict):
+        return ""
+    for k, v in headers.items():
+        if str(k).lower() == key.lower():
+            return v
+    return ""
+
+def _guess_device_id(event, body_dict):
+    qs = event.get("queryStringParameters") or {}
+    headers = event.get("headers") or {}
+    device_id = ""
+
+    if isinstance(body_dict, dict):
+        device_id = body_dict.get("device", "") or body_dict.get("deviceId", "")
+
+    if not device_id:
+        device_id = qs.get("deviceId") or qs.get("device") or ""
+
+    if not device_id:
+        device_id = _get_header(headers, "x-device-id")
+
+    return device_id if device_id else "ESP32_VOICE"
+
+def _transcribe_wav_from_s3(bucket, key, language_code="ko-KR"):
+    job_name = f"diffuser-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    media_uri = f"s3://{bucket}/{key}"
+
+    try:
+        transcribe.start_transcription_job(
+            TranscriptionJobName=job_name,
+            Media={"MediaFileUri": media_uri},
+            MediaFormat="wav",
+            LanguageCode=language_code
+        )
+
+        # ★ 수정된 부분: 30번 -> 12번으로 변경 (API Gateway 29초 제한 회피용, 총 24초 대기)
+        for _ in range(12): 
+            job = transcribe.get_transcription_job(TranscriptionJobName=job_name)
+            status = job["TranscriptionJob"]["TranscriptionJobStatus"]
+            
+            if status == "COMPLETED":
+                uri = job["TranscriptionJob"]["Transcript"]["TranscriptFileUri"]
+                with urllib.request.urlopen(uri, timeout=10) as r:
+                    txt = json.loads(r.read().decode('utf-8'))
+                
+                transcripts = txt.get("results", {}).get("transcripts", [])
+                if transcripts:
+                    result_text = (transcripts[0].get("transcript", "") or "").strip()
+                    if result_text:
+                        logger.info(f"[STT 성공] {result_text}")
+                        return result_text
+                    return "SILENCE"
+                return "SILENCE"
+                
+            elif status == "FAILED":
+                logger.error(f"[STT 실패] {job['TranscriptionJob'].get('FailureReason')}")
+                return "FAIL"
+            
+            time.sleep(2) # 2초 대기
+            
+    except Exception as e:
+        logger.error(f"[Transcribe Error] {e}")
+        return "ERROR"
+    
+    # 24초 동안 기다려도 안 끝나면 강제 탈출하여 502 에러 방지
+    return "TIMEOUT"
+
+def _voice_to_spray(transcript: str):
+    t = (transcript or "").strip().lower()
+    spray_code = 0
+    duration = 3
+    result_text = f"VOICE: {transcript}"
+
+    if any(k in t for k in ["맑", "상쾌", "시트러스", "레몬", "오렌지","대금","하여금","말금","낡은","밝은"]):
+        spray_code = 1
+        result_text = f"맑음(키워드): {transcript}"
+    elif any(k in t for k in ["흐림", "구름", "차분", "라벤더", "릴렉스", "편안", "흐","그림", "짜증나", "기분좋아"]):
+        spray_code = 2
+        result_text = f"흐림(키워드): {transcript}"
+    elif any(k in t for k in ["비", "강수", "레인", "우울", "진정", "바다", "아쿠아","피","삐","b","기","지","디","d" , "우울해"]):
+        spray_code = 3
+        result_text = f"비(키워드): {transcript}"
+    elif any(k in t for k in ["눈", "스노우", "겨울", "민트", "쿨", "시원","누","문","론","돈", "슬프다"]):
+        spray_code = 4
+        result_text = f"눈(키워드): {transcript}"
+    elif any(k in t for k in ["정지", "스톱", "멈춰", "꺼", "중지","멈처","멍처","먼처","멍춰","먼춰"]):
+        spray_code = 0
+        duration = 0
+        result_text = f"정지(키워드): {transcript}"
+
+    for sec in [1, 2, 3, 5, 10, 15]:
+        if f"{sec}초" in t:
+            duration = sec
+            break
+
+    return spray_code, duration, result_text
+
+#이메일 전송 함수
+def send_verification_email(receiver_email, code):
+    try:
+        msg = MIMEText(f"스마트 디퓨저 회원가입 인증번호입니다.\n\n인증번호: [{code}]\n\n앱으로 돌아가 인증번호를 입력해주세요.")
+        msg['Subject'] = "[스마트 디퓨저] 회원가입 이메일 인증번호"
+        msg['From'] = config.SENDER_EMAIL
+        msg['To'] = receiver_email
+
+        server = smtplib.SMTP(config.SMTP_SERVER, config.SMTP_PORT)
+        server.starttls()
+        server.login(config.SENDER_EMAIL, config.SENDER_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        logger.error(f"이메일 발송 실패: {e}")
+        return False
