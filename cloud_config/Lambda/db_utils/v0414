@@ -49,7 +49,7 @@ def save_feedback(email, context, scent_code, weight_change): # 파라미터를 
         logger.error(f"Feedback Save Error: {e}")
         return False
 
-def get_personalized_scent(device_id, context, default_scent):
+def get_personalized_scent(email, context, default_scent):
     try:
         # 여기도 키 이름을 (String) 포함된 걸로 변경
         resp = pref_table.get_item(Key={
