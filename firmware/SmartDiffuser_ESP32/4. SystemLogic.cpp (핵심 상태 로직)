@@ -4,6 +4,13 @@
 void processSettingModeInput();
 void processStandardInput();
 
+// --- 로드셀 데이터 준비 완료 인터럽트 (ISR) ---
+// IRAM_ATTR을 붙여 인터럽트가 플래시 메모리가 아닌 RAM에서 최고 속도로 실행되게 합니다.
+void IRAM_ATTR isr_hx0() { hxReady[0] = true; }
+void IRAM_ATTR isr_hx1() { hxReady[1] = true; }
+void IRAM_ATTR isr_hx2() { hxReady[2] = true; }
+void IRAM_ATTR isr_hx3() { hxReady[3] = true; }
+
 // --- 유틸리티: 노즐 파싱 및 활성화 ---
 int parseAndSetNozzles(String cmdStr) {
   int activeCount = 0;
@@ -165,6 +172,13 @@ void initSystem() {
     }
   
     lastNozzleSprayTime[i] = millis();
+
+    // ★ [추가된 인터럽트 할당 로직] 
+    // DOUT 핀이 HIGH에서 LOW로 떨어질 때(FALLING) 해당 센서의 ISR 실행
+    if (i == 0) attachInterrupt(digitalPinToInterrupt(LOADCELL_DT[0]), isr_hx0, FALLING);
+    if (i == 1) attachInterrupt(digitalPinToInterrupt(LOADCELL_DT[1]), isr_hx1, FALLING);
+    if (i == 2) attachInterrupt(digitalPinToInterrupt(LOADCELL_DT[2]), isr_hx2, FALLING);
+    if (i == 3) attachInterrupt(digitalPinToInterrupt(LOADCELL_DT[3]), isr_hx3, FALLING);
   }
 
   connectWiFi();
@@ -192,6 +206,8 @@ void runSystem() {
 
   if (currentMode == MODE_AMBIENT) { 
     runAmbientMode(); 
+    monitorWeight(); // 로드셀 센서 실시간 읽기 동작 허용
+    pollServer();    // 1분 주기 서버 동기화 동작 허용
     checkSerialInput(); 
     return; 
   }
