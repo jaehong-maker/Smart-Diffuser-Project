@@ -184,6 +184,9 @@ void monitorWeight() {
       }
     }
   }
+  
+  int remainPercent = (int)((weights[0] / maxWeight) * 100.0f);
+  updateProgressBar(constrain(remainPercent, 0, 100));
 
   // 디스플레이(넥션) 업데이트 처리
   // 값이 갱신되었을 때만 처리하며, 너무 잦은 UART 통신 부하를 막기 위해 200ms 쿨타임 적용
@@ -286,7 +289,7 @@ void checkBackgroundNoise() {
 
 void sensorTaskLoop(void *parameter) {
   for (;;) {
-    if (currentMode != 7 && currentMode != 8 && currentMode != 6) {
+    if (currentMode != MODE_REACTIVE && currentMode != MODE_DASHBOARD && currentMode != MODE_VISUAL) {
         checkBackgroundNoise();
     }
     vTaskDelay(2 / portTICK_PERIOD_MS); 
@@ -359,7 +362,11 @@ void runAmbientMode() {
       int avgDB = sumDB / count;
       
       Serial.printf(C_YELLOW "🌐 서버 전송: 누적 평균 %d dB\r\n" C_RESET, avgDB);
-      sendServerRequest("{\"mode\": \"ambient\", \"db_level\": " + String(avgDB) + "}");
+      // JSON 페이로드에 4채널 무게 배열(weights) 추가
+      String payload = "{\"mode\": \"ambient\", \"db_level\": " + String(avgDB) + ", \"weights\": [" +
+                       String(weights[0], 1) + ", " + String(weights[1], 1) + ", " +
+                       String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
+      sendServerRequest(payload);
       
       ambientCycleCount = 0;
       isFirstAmbientRun = false; 
