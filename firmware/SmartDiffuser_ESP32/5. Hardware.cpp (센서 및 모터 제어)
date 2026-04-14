@@ -270,34 +270,6 @@ void sensorTaskLoop(void *parameter) {
   }
 }
 
-// --- RFID 기능 ---
-
-void initRFID() {
-  SPI.begin(RFID_SCK, RFID_MISO, RFID_MOSI, RFID_CS);
-  mfrc522.PCD_Init();
-  Serial.println("\r\n[System] RC522 RFID 모듈 초기화 완료.");
-}
-
-void checkRFIDTag() {
-  if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial()) return;
-
-  String uidString = "";
-  for (byte i = 0; i < mfrc522.uid.size; i++) {
-    uidString += String(mfrc522.uid.uidByte[i] < 0x10 ? "0" : "");
-    uidString += String(mfrc522.uid.uidByte[i], HEX);
-  }
-  uidString.toUpperCase();
-
-  Serial.printf("\r\n[RFID] UID 감지: %s\r\n", uidString.c_str());
-  updateDisplay(0, "RFID: " + uidString);
-
-  String payload = "{\"mode\": \"rfid_auth\", \"uid\": \"" + uidString + "\", \"deviceId\": \"SmartDiffuser_01\"}";
-  sendServerRequest(payload); 
-
-  mfrc522.PICC_HaltA();
-  mfrc522.PCD_StopCrypto1();
-}
-
 void runAmbientMode() {
   // ★ 수정 1: isSpraying 제한 해제! 이제 향을 뿌리는 중에도 n키나 수음 로직이 정상 작동합니다.
   if (isWaitingForTestDb) return; 
