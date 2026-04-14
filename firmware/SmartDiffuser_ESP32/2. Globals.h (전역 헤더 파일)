@@ -17,7 +17,6 @@
 #include <freertos/queue.h> // 큐 사용을 위한 헤더 추가
 #include <WiFiManager.h>
 #include <SPI.h>
-#include <MFRC522.h>
 #include <Adafruit_NeoPixel.h>
 
 
@@ -92,6 +91,7 @@ extern TaskHandle_t NetworkTaskHandle;
 extern QueueHandle_t audioEventQueue;
 extern TaskHandle_t SensorTaskHandle;
 extern QueueHandle_t networkQueue;
+extern const char* DEVICE_ID;
 extern const char* ssid;
 extern const char* password;
 extern String serverName;
@@ -147,9 +147,6 @@ extern const int RFID_MOSI;
 extern const int RFID_CS;
 extern const int RFID_RST;
 
-// --- [전역 변수 (extern) 영역에 추가] ---
-extern MFRC522 mfrc522;
-
 const unsigned long CLEANING_INTERVAL = 86400000; // 24시간 (밀리초 단위)
 void runAutoCleaning(); // 청소 로직 함수
 
@@ -202,6 +199,8 @@ void connectWiFi();
 void manageWiFi();
 void pollServer();
 void sendServerRequest(String payload);
+void rememberWeatherRegion(const String &region);
+String buildWeatherRequestPayload(const String &region);
 void handleWebClient();
 void autoWeatherScheduler();
 void recordAndSendVoice();
