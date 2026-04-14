@@ -801,7 +801,8 @@ def lambda_handler(event, context):
     # ★ [초개인화 AI 가중치 반영] 
     # 기본 뇌(Docker/날씨)가 고른 spray_code를, 사용자의 개인 DB 기억으로 덮어씌우는 핵심 로직!
     if spray_code > 0:
-        final_scent, ai_msg = db_utils.get_personalized_scent(device_id, context_key, spray_code)
+        user_email = body.get("email", "guest@test.com") # 이메일 추출
+        final_scent, ai_msg = db_utils.get_personalized_scent(user_email, context_key, spray_code) # device_id 대신 user_email 전달
         
         # 만약 개인 DB 점수 때문에 향기가 바뀌었다면?
         if final_scent != spray_code:
