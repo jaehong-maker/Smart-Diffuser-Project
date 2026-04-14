@@ -36,6 +36,7 @@
 #define C_BOLD    "\033[1m"
 #define WDT_TIMEOUT 60
 #define NUM_LEDS 12
+#define I2S_READ_TIMEOUT (100 / portTICK_PERIOD_MS)
 
 const int PIN_SUNNY  = 4;
 const int PIN_CLOUDY = 13;
@@ -138,8 +139,8 @@ extern bool blendModeEnabled;
 extern String blendSelection;
 extern bool blendSprayActive;
 extern unsigned long lastNozzleSprayTime[4]; // 각 노즐별 마지막 분사 시간
-extern TaskHandle_t AudioTaskHandle; // ★ 추가
-void audioTaskLoop(void *parameter); // ★ 추가
+extern volatile bool hxReady[4];
+extern float maxWeight;
 
 const unsigned long CLEANING_INTERVAL = 86400000; // 24시간 (밀리초 단위)
 void runAutoCleaning(); // 청소 로직 함수
