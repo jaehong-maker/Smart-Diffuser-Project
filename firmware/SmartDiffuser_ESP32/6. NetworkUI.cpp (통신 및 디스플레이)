@@ -7,6 +7,42 @@ void initNetworkSession() {
   if (!isSessionInit) { sharedClient.setInsecure(); isSessionInit = true; }
 }
 
+void rememberWeatherRegion(const String &region) {
+  if (region.length() == 0 || region == lastWeatherRegion) return;
+
+  lastWeatherRegion = region;
+  prefs.putString("last_region", lastWeatherRegion);
+  Serial.printf(C_CYAN "\r\n[Weather] Saved region updated: %s\r\n" C_RESET, lastWeatherRegion.c_str());
+}
+
+String buildWeatherRequestPayload(const String &region) {
+  JsonDocument reqDoc;
+  reqDoc["mode"] = "weather";
+  if (region.length() > 0) {
+    reqDoc["region"] = region;
+  }
+
+  String payload;
+  payload.reserve(96);
+  serializeJson(reqDoc, payload);
+  return payload;
+}
+
+static String attachDeviceIdIfMissing(const String &payload) {
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, payload);
+  if (err || !doc.is<JsonObject>()) return payload;
+
+  if (doc["deviceId"].isNull()) {
+    doc["deviceId"] = DEVICE_ID;
+  }
+
+  String normalized;
+  normalized.reserve(payload.length() + 32);
+  serializeJson(doc, normalized);
+  return normalized;
+}
+
 // --- NetworkUI.cpp 파일의 triggerSpray 함수 수정 ---
 void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   forceAllOff();
@@ -79,8 +115,7 @@ void handleNextionCmd(const String &cmd) {
   if (cmd.startsWith("p0") || cmd.startsWith("t_weather") || cmd.startsWith("j0")) return;
 
   if (cmd == "M2" || cmd == "Y3") {
-    setSystemMode(MODE_WEATHER, "Weather Mode");
-    enterWeatherMode(false);
+    enterWeatherMode(true);
   }
   else if (cmd == "M1" || cmd == "Y1") {
     setSystemMode(MODE_MANUAL, "Manual Mode");
@@ -220,7 +255,7 @@ void pollServer() {
   if (now - lastPollTime >= POLL_INTERVAL) {
     lastPollTime = now;
     if (WiFi.status() == WL_CONNECTED) {
-      JsonDocument reqDoc; reqDoc["action"] = "POLL"; reqDoc["deviceId"] = "App_User";
+      JsonDocument reqDoc; reqDoc["action"] = "POLL"; reqDoc["deviceId"] = DEVICE_ID;
       JsonArray wArray = reqDoc["weights"].to<JsonArray>();
       for (int i = 0; i < 4; i++) wArray.add((float)((int)(weights[i] * 10)) / 10.0);
       
@@ -249,6 +284,16 @@ void networkTaskLoop(void *pvParameters) {
           String response = http.getString();
           JsonDocument doc;
           if (!deserializeJson(doc, response)) {
+            String targetRegion = doc["target_region"] | "";
+            bool hadSavedRegion = lastWeatherRegion.length() > 0;
+            if (targetRegion.length() > 0) {
+              rememberWeatherRegion(targetRegion);
+              if (currentMode == MODE_WEATHER && !hadSavedRegion) {
+                lastWeatherCallMillis = millis();
+                sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
+              }
+            }
+
             int cmd = doc["spray"] | 0;
             if (cmd > 0) {
               int dur = doc["duration"] | 3; int music = doc["music"] | 0; 
@@ -268,8 +313,9 @@ void networkTaskLoop(void *pvParameters) {
 // 입구컷 안 당하게 큐에 넣는 방식으로 변경
 void sendServerRequest(String payload) {
   if (WiFi.status() != WL_CONNECTED) return;
-  
-  String* msg = new String(payload);
+
+  String normalizedPayload = attachDeviceIdIfMissing(payload);
+  String* msg = new String(normalizedPayload);
   if (xQueueSend(networkQueue, &msg, 0) != pdTRUE) {
     delete msg; // 큐가 꽉 찼으면 메모리 해제
     Serial.println(C_RED "⚠️ 통신 대기열이 꽉 찼습니다!" C_RESET);
@@ -351,7 +397,8 @@ void recordAndSendVoice() {
 void autoWeatherScheduler() {
   if (currentMode != MODE_WEATHER || isRunning) return; 
   if (millis() - lastWeatherCallMillis >= WEATHER_INTERVAL) {
-    lastWeatherCallMillis = millis(); sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\"}");
+    lastWeatherCallMillis = millis();
+    sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
   }
 }
 
