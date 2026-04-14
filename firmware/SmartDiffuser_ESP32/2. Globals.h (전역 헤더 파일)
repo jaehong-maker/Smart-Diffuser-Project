@@ -46,17 +46,7 @@ const int PIN_LED    = 2;
 
 const int LOADCELL_DT[4]  = {34, 36, 39, 32};
 // [수정 후: 솔루션 A 적용 - SCK 핀 공통 결선]
-const int LOADCELL_SCK[4] = {33, 18, 0, 23};
-
-// --- 추가 하드웨어 핀 할당 (RFID 및 추가 LED) ---
-const int PIN_EXTRA_LED = 21;
-
-// RC522 RFID 모듈을 위한 커스텀 SPI 통신 핀 정의
-const int RFID_SCK  = 18;
-const int RFID_MISO = 12;
-const int RFID_MOSI = 23;
-const int RFID_CS   = 15;
-const int RFID_RST  = 5;
+const int LOADCELL_SCK[4] = {33, 33, 33, 33};
 
 const int DFPLAYER_RX_PIN = 25; const int DFPLAYER_TX_PIN = 26;
 const int NEXTION_TX_PIN = 17;  const int NEXTION_RX_PIN = 16;
