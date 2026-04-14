@@ -124,29 +124,7 @@ void handleNextionCmd(const String &cmd) {
     setSystemMode(MODE_SETTING, "Setting Mode");
   }
   else if (cmd == "ST") {
-      forceAllOff();
-      myDFPlayer.stop();
-
-      isRunning = false;
-      isSpraying = false;
-      sprayDuration = 0;
-      prevMotorMillis = 0;
-      startTimeMillis = 0;
-
-      for (int i = 0; i < 4; i++) {
-        activeNozzles[i] = false;
-      }
-
-      blendModeEnabled = false;
-      blendSelection = "";
-      blendSprayActive = false;
-
-      nexSend("b_blend.txt=\"blendON\"");
-
-      currentMode = MODE_MANUAL;
-      updateDisplay(0, "Manual Mode");
-
-      Serial.println("\r\n[STOP] manual page reset only");
+    setSystemMode(MODE_READY, "Stopped");
     }
   else if (cmd == "BM") {
     blendModeEnabled = !blendModeEnabled;
