@@ -136,6 +136,7 @@ void initSystem() {
   ledG = prefs.getUChar("ledG", 255);
   ledB = prefs.getUChar("ledB", 255);
   ledBrightness = prefs.getInt("ledBright", 150);
+  lastWeatherRegion = prefs.getString("last_region", lastWeatherRegion);
 
   strip.begin();
   strip.setBrightness(150); // 너무 눈부시지 않게 150으로 제한 (0~255)
@@ -176,9 +177,6 @@ void initSystem() {
   
   bootAnimation();
   
-  // 메인 시스템 초기화 완료 직후 RFID 모듈 활성화
-  initRFID();
-  
   lastActivityTime = millis(); 
   setSystemMode(MODE_READY, "System Ready");
 
@@ -191,9 +189,6 @@ void runSystem() {
   esp_task_wdt_reset(); 
   handleOTA();
   checkNextionInput();
-
-  // 매 사이클마다 RFID 태그 접촉 여부 비동기 검사
-  checkRFIDTag();
 
   if (currentMode == MODE_AMBIENT) { 
     runAmbientMode(); 
@@ -436,10 +431,11 @@ void handleInput(String input) {
     else runManualMode(input); 
   }
   else if (currentMode == MODE_WEATHER) {
-    lastWeatherRegion = input;
+    rememberWeatherRegion(input);
     Serial.printf("\r\n🔍 [%s] 지역 날씨 조회 요청 중...\r\n", input.c_str());
-    updateDisplay(0, "Checking " + input); 
-    sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + input + "\"}");
+    updateDisplay(0, "Checking " + lastWeatherRegion); 
+    lastWeatherCallMillis = millis();
+    sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
   }
 }
 
@@ -484,7 +480,17 @@ void runManualMode(String input) {
 void enterWeatherMode(bool runNow) {
   setSystemMode(MODE_WEATHER, "Weather Mode");
   Serial.println(C_YELLOW "👉 지역명을 입력하세요" C_RESET);
-  if (runNow) sendServerRequest("{\"mode\": \"weather\", \"region\": \"" + lastWeatherRegion + "\"}");
+  if (lastWeatherRegion.length() > 0) {
+    Serial.printf(C_YELLOW "\r\n[Weather] Saved region: %s\r\n" C_RESET, lastWeatherRegion.c_str());
+    updateDisplay(0, "Weather " + lastWeatherRegion);
+  } else {
+    updateDisplay(0, "Weather Sync...");
+  }
+
+  if (runNow) {
+    lastWeatherCallMillis = millis();
+    sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
+  }
 }
 
 void runSprayLogic() { 
