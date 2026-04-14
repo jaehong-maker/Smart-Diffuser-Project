@@ -105,43 +105,61 @@ void bootAnimation() {
   }
 }
 
+enum LedState { LED_WIFI_ERR, LED_IDLE, LED_SPRAY, LED_AMBIENT };
+LedState currentLedState = LED_IDLE;
+
 void systemHeartbeat() {
-  static bool lastStateOn = false;
   unsigned long currentTime = millis();
-  static unsigned long lastBlinkTime = 0;
-  static bool ledState = false;
+  static unsigned long lastUpdate = 0;
+  static int effectStep = 0;
 
-  // 1. 네트워크 단절 시 예외 처리 (황색 점멸)
-  if (WiFi.status() != WL_CONNECTED) {
-    if (currentTime - lastBlinkTime >= 200) {
-      lastBlinkTime = currentTime;
-      ledState = !ledState;
-      if (ledState) {
-        setLedColor(255, 150, 0); // 황색 경고
-      } else {
-        setLedColor(0, 0, 0);     // 소등
+  // 1. 현재 시스템 상태에 따라 LED 상태 결정 (우선순위 순)
+  if (WiFi.status() != WL_CONNECTED) currentLedState = LED_WIFI_ERR;
+  else if (isSpraying || isRunning) currentLedState = LED_SPRAY;
+  else if (currentMode == MODE_AMBIENT) currentLedState = LED_AMBIENT;
+  else currentLedState = LED_IDLE;
+
+  // 2. 상태별 애니메이션 (Non-blocking)
+  switch (currentLedState) {
+    case LED_WIFI_ERR:
+      if (currentTime - lastUpdate >= 200) {
+        lastUpdate = currentTime;
+        effectStep = !effectStep;
+        if (effectStep) setLedColor(255, 150, 0); // 주황색 점멸 (경고)
+        else setLedColor(0, 0, 0);
       }
-    }
-    lastStateOn = false; 
-    return; 
-  }
+      break;
 
-  // 2. 시스템 가동 상태에 따른 LED 상태 제어
-  bool isSystemActive = isRunning || (currentMode == MODE_DEMO);
+    case LED_SPRAY:
+      if (currentTime - lastUpdate >= 50) { // 빙글빙글 도는 속도
+        lastUpdate = currentTime;
+        strip.clear(); // 전체 소등 후
+        // 2칸짜리 빛이 뱅글뱅글 도는 스피너 효과
+        strip.setPixelColor(effectStep % NUM_LEDS, strip.Color(ledR, ledG, ledB));
+        strip.setPixelColor((effectStep + 1) % NUM_LEDS, strip.Color(ledR, ledG, ledB));
+        strip.setBrightness(ledBrightness);
+        strip.show();
+        effectStep++;
+      }
+      break;
 
-  if (isSystemActive) {
-    if (!lastStateOn) {
-      setLedColor(ledR, ledG, ledB);
-      lastStateOn = true;
-    }
-  } else {
-    // 시스템 대기 상태 (Breathing 효과): NeoPixel 색상 연산을 통한 부드러운 밝기 제어
-    float val = (exp(sin(currentTime / 1500.0 * PI)) - 0.36787944) * 108.0;
-    int brightness = constrain((int)val, 0, 255);
-    
-    // 저장된 색상 값에 밝기 비율을 적용하여 제어
-    setLedColor((ledR * brightness) / 255, (ledG * brightness) / 255, (ledB * brightness) / 255);
-    lastStateOn = false;
+    case LED_AMBIENT:
+      if (currentTime - lastUpdate >= 300) {
+        lastUpdate = currentTime;
+        effectStep = !effectStep;
+        // 수음 중일 때는 보라색 점멸
+        if (effectStep) setLedColor(128, 0, 255); 
+        else setLedColor(0, 0, 0);
+      }
+      break;
+
+    case LED_IDLE:
+    default:
+      // 기존 숨쉬기(Breathing) 효과 유지
+      float val = (exp(sin(currentTime / 1500.0 * PI)) - 0.36787944) * 108.0;
+      int bright = constrain((int)val, 0, 255);
+      setLedColor((ledR * bright) / 255, (ledG * bright) / 255, (ledB * bright) / 255);
+      break;
   }
 }
 
