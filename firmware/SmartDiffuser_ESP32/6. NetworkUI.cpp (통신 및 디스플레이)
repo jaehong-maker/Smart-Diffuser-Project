@@ -125,6 +125,7 @@ void handleNextionCmd(const String &cmd) {
   }
   else if (cmd == "ST") {
     setSystemMode(MODE_READY, "Stopped");
+
     }
   else if (cmd == "BM") {
     blendModeEnabled = !blendModeEnabled;
