@@ -209,6 +209,8 @@ void runSystem() {
     monitorWeight(); // 로드셀 센서 실시간 읽기 동작 허용
     pollServer();    // 1분 주기 서버 동기화 동작 허용
     checkSerialInput(); 
+    // ★ 추가된 부분: 시스템(IDLE Task)에 CPU 제어권을 잠시 양보하여 워치독 에러 방지
+    vTaskDelay(1 / portTICK_PERIOD_MS);
     return; 
   }
   
@@ -330,7 +332,12 @@ void processStandardInput() {
         if (currentMode == MODE_AMBIENT && isWaitingForTestDb) {
           int testDb = inputBuffer.toInt();
           Serial.printf("\r\n[Test] 강제 데시벨 %d dB 서버로 즉시 전송!\r\n", testDb);
-          sendServerRequest("{\"mode\": \"ambient\", \"db_level\": " + String(testDb) + "}");
+          
+          // JSON 페이로드에 4채널 무게 배열(weights) 추가
+          String payload = "{\"mode\": \"ambient\", \"db_level\": " + String(testDb) + ", \"weights\": [" +
+                           String(weights[0], 1) + ", " + String(weights[1], 1) + ", " +
+                           String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
+          sendServerRequest(payload);
           
           isWaitingForTestDb = false;
           ambientCycleCount = 0; // 전송했으니 5주기 카운터 리셋
