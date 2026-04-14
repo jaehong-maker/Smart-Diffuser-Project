@@ -20,6 +20,7 @@ const char* DEVICE_ID = "SmartDiffuser_01";
 const char* ssid      = "Jaehong_WiFi";
 const char* password  = "12345678";
 String serverName     = "https://tgrwszo3iwurntqeq76s5rro640asnwq.lambda-url.ap-northeast-2.on.aws/";
+volatile bool hxReady[4] = {false, false, false, false};
 
 // 노즐별 마지막 분사 시간 (초기값은 부팅 시점)
 unsigned long lastNozzleSprayTime[4] = {0, 0, 0, 0};
@@ -48,7 +49,7 @@ String globalPayload = "";
 unsigned long lastPollTime = 0;
 unsigned long wifiRetryInterval = 5000;
 unsigned long lastWifiRetryMillis = 0;
-const unsigned long POLL_INTERVAL = 2000;
+const unsigned long POLL_INTERVAL = 60000;
 float weights[4] = {0.0, 0.0, 0.0, 0.0};
 unsigned long lastWeightCheckTime = 0;
 const float WEIGHT_THRESHOLD = 5.0;
@@ -103,6 +104,7 @@ bool forceAmbientSkip = false;
 uint8_t ledR = 255; 
 uint8_t ledG = 255; 
 uint8_t ledB = 255; // 초기값은 흰색으로 셋팅
+float maxWeight = 97.0; // 꽉 찬 병 무게 기준 (나중에 95.0 등으로 세밀하게 조정 가능)
 
 // 객체 생성 구역(맨 위쪽)에 추가
 Adafruit_NeoPixel strip(NUM_LEDS, PIN_LED, NEO_GRB + NEO_KHZ800);
