@@ -22,8 +22,14 @@ String buildWeatherRequestPayload(const String &region) {
     reqDoc["region"] = region;
   }
 
+  // 🔥 날씨 모드에서도 현재 무게 배열을 추가해서 서버로 같이 보냄!
+  JsonArray wArray = reqDoc["weights"].to<JsonArray>();
+  for (int i = 0; i < 4; i++) {
+    wArray.add((float)((int)(weights[i] * 10)) / 10.0);
+  }
+
   String payload;
-  payload.reserve(96);
+  payload.reserve(128); // JSON 크기가 늘어났으니 메모리 블록 128로 세팅
   serializeJson(reqDoc, payload);
   return payload;
 }
@@ -297,7 +303,11 @@ void pollServer() {
     if (WiFi.status() == WL_CONNECTED) {
       JsonDocument reqDoc; reqDoc["action"] = "POLL"; reqDoc["deviceId"] = DEVICE_ID;
       JsonArray wArray = reqDoc["weights"].to<JsonArray>();
-      for (int i = 0; i < 4; i++) wArray.add((float)((int)(weights[i] * 10)) / 10.0);
+      for (int i = 0; i < 4; i++) {
+        // g 단위를 %로 변환하여 소수점 첫째 자리까지 전송
+        float percent = (weights[i] / maxWeight) * 100.0;
+        wArray.add((float)((int)(constrain(percent, 0, 100) * 10)) / 10.0);
+      }
       
       String payload; 
       payload.reserve(128); // 메모리 재할당 방지를 위한 블록 고정
