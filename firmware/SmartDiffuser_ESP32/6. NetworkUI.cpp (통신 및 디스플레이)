@@ -326,26 +326,27 @@ void manageWiFi() {
   } else { if (!wasConnected) { wasConnected = true; wifiRetryInterval = 5000; } }
 }
 
-// --- 최적화 1: 서버 폴링 문자열 사전 할당 ---
+// [NetworkUI.cpp] 기존 pollServer 함수를 이 코드로 교체하세요.
 void pollServer() {
   if (currentMode == MODE_DEMO || isCommunicate) return; 
   unsigned long now = millis();
   if (now - lastPollTime >= POLL_INTERVAL) {
     lastPollTime = now;
     if (WiFi.status() == WL_CONNECTED) {
-      JsonDocument reqDoc; 
+      // 💡 업그레이드: 정적 할당(Stack)을 사용하여 힙 메모리 단편화 방지
+      StaticJsonDocument<256> reqDoc; 
       reqDoc["action"] = "POLL"; 
-      reqDoc["deviceId"] = deviceId; // ★ 수정: 사용자가 설정한 기기 ID 변수를 전송
-      reqDoc["db_level"] = currentDbLevel;      // ★ 추가: 현재 측정된 소음 추가
-      JsonArray wArray = reqDoc["weights"].to<JsonArray>();
+      reqDoc["deviceId"] = deviceId; 
+      reqDoc["db_level"] = currentDbLevel;      
+      
+      JsonArray wArray = reqDoc.createNestedArray("weights");
       for (int i = 0; i < 4; i++) {
-        // g 단위를 %로 변환하여 소수점 첫째 자리까지 전송
         float percent = (weights[i] / maxWeight) * 100.0;
         wArray.add((float)((int)(constrain(percent, 0, 100) * 10)) / 10.0);
       }
       
       String payload; 
-      payload.reserve(128); // 메모리 재할당 방지를 위한 블록 고정
+      payload.reserve(128); 
       serializeJson(reqDoc, payload);
       sendServerRequest(payload); 
     }
