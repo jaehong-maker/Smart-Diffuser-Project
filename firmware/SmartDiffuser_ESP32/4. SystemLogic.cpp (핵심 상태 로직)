@@ -1,8 +1,10 @@
 #include "Globals.h"
+#include <time.h>
 
 // --- 컴파일 에러 해결을 위한 함수 사전 선언 (Forward Declarations) ---
 void processSettingModeInput();
 void processStandardInput();
+
 
 // --- 로드셀 데이터 준비 완료 인터럽트 (ISR) ---
 // IRAM_ATTR을 붙여 인터럽트가 플래시 메모리가 아닌 RAM에서 최고 속도로 실행되게 합니다.
@@ -215,8 +217,11 @@ void initSystem() {
 // --- 메인 루프 ---
 void runSystem() {
   esp_task_wdt_reset(); 
-  handleOTA();
-  checkNextionInput();
+  handleOTA(); 
+  checkNextionInput(); 
+
+  // --- 스케줄러 추가 ---
+  runScheduler();
 
   if (currentMode == MODE_AMBIENT) { 
     runAmbientMode(); 
@@ -322,14 +327,21 @@ void processSettingModeInput() {
       showPrompt();
       break;
 
+    // SystemLogic.cpp 의 processSettingModeInput() 내 case 'p' 수정
     case 'p':
-      {
+    {
         String payload = "{\"action\": \"POLL\", \"weights\": [";
-        payload += String(weights[0], 1) + ", " + String(weights[1], 1) + ", " + 
-                   String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
-        Serial.println("\r\n🚀 [JSON 미리보기]:\r\n" + payload); showPrompt();
-      }
-      break;
+        for(int i = 0; i < 4; i++) {
+            float emptyWeight = 15.5;
+            float percent = constrain(((weights[i] - emptyWeight) / (maxWeight - emptyWeight)) * 100.0, 0.0, 100.0);
+            payload += String(percent, 1);
+            if(i < 3) payload += ", ";
+        }
+        payload += "]}";
+        Serial.println("\r\n🚀 [JSON 미리보기(%)]:\r\n" + payload); 
+        showPrompt();
+    }
+    break;
 
     case 'i':
       {
@@ -639,4 +651,57 @@ void printManualMenu() {
   Serial.println(" [-] 스피커 볼륨 2 감소");
   Serial.println(" [0] 메인 메뉴로 돌아가기");
   Serial.println(C_YELLOW "--------------------------------" C_RESET);
+}
+
+// 현재 시간을 가져오는 유틸리티 함수
+void getCurrentTime(int &hour, int &minute) {
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) {
+        hour = -1; minute = -1;
+        return;
+    }
+    hour = timeinfo.tm_hour;
+    minute = timeinfo.tm_min;
+}
+
+void runScheduler() {
+    if (!schedulerEnabled || WiFi.status() != WL_CONNECTED) return;
+
+    static unsigned long lastTimeCheck = 0;
+    if (millis() - lastTimeCheck < 60000) return; // 1분마다 체크
+    lastTimeCheck = millis();
+
+    int h, m;
+    getCurrentTime(h, m);
+    if (h == -1) return; // 시간 획득 실패 시 종료
+
+    // 1. 운영 시간 외 자동 절전 로직
+    if (h < activeStartHour || h >= activeEndHour) {
+        if (currentMode != MODE_SLEEP) {
+            Serial.printf(C_YELLOW "\r\n[Scheduler] 운영 시간 종료 (%02d:%02d). 절전 모드로 진입합니다.\r\n" C_RESET, h, m);
+            setSystemMode(MODE_SLEEP, "Night Sleep");
+            WiFi.disconnect(true);
+            WiFi.mode(WIFI_OFF);
+            nexSend("sleep=1");
+        }
+    } 
+    // 2. 운영 시간 시작 시 자동 기상 로직
+    else if (h == activeStartHour && m == 0 && currentMode == MODE_SLEEP) {
+        Serial.printf(C_GREEN "\r\n[Scheduler] 운영 시간 시작 (%02d:%02d). 시스템을 깨웁니다.\r\n" C_RESET, h, m);
+        wakeUpSystem();
+    }
+
+    // 3. 특정 시간 '모닝 향기' 이벤트 (예: 아침 8시 5분)
+    if (h == 8 && m == 5) {
+        static int lastEventDay = -1; // 실행된 날짜를 기억 (함수 밖으로 나가도 유지됨)
+        struct tm timeinfo;           // 시간 정보를 담을 구조체 선언
+        
+        if (getLocalTime(&timeinfo)) { // 현재 날짜 정보를 가져옴
+            if (lastEventDay != timeinfo.tm_mday) {
+                lastEventDay = timeinfo.tm_mday;
+                Serial.println(C_MAGENTA "\r\n[Scheduler] Good Morning! 아침 향기를 분사합니다.\r\n" C_RESET);
+                triggerSpray(1, 5, 1, "Morning Scent", false);
+            }
+        }
+    }
 }
