@@ -905,13 +905,25 @@ def lambda_handler(event, context):
     if mode == "emotion":
         user_emo = body.get("user_emotion", "평범")
         context_key = f"Emotion_{user_emo}"
-        gpt_spray, gpt_reason = api_utils.ask_gpt_recommendation(weather="실내", emotion=user_emo)
-        if gpt_spray > 0:
-            spray_code, result_text, logic_name = gpt_spray, gpt_reason, "AI_GPT_Emotion"
+        
+        # (기존 코드 삭제) gpt_spray, gpt_reason = api_utils.ask_gpt_recommendation(...)
+        
+        # 1. 변경된 Gemini 함수 호출 (일기 내용과 과거 기록 전달)
+        # 당장 과거 기록 변수가 없다면 빈 문자열("")을 넘겨줍니다.
+        gemini_spray_str, ai_reason = api_utils.ask_gemini_recommendation(diary_text=user_emo, user_history_text="")
+        
+        # 2. Gemini는 블렌딩(예: "12")을 반환할 수도 있으므로, 제일 앞자리 숫자만 정수로 가져오도록 안전장치 추가
+        try:
+            gemini_spray = int(str(gemini_spray_str)[0]) if gemini_spray_str != "0" else 0
+        except Exception:
+            gemini_spray = 0
+
+        if gemini_spray > 0:
+            # 3. GPT 변수명들을 Gemini에 맞게 수정
+            spray_code, result_text, logic_name = gemini_spray, ai_reason, "AI_Gemini_Emotion"
+            duration = 3
         else:
             spray_code, result_text, logic_name, duration = logic_emotion_mode(user_emo)
-            
-
     # [B] 날씨 모드
     else:
         try: # ★ 날씨 로직 전체를 try로 감싸기 시작
