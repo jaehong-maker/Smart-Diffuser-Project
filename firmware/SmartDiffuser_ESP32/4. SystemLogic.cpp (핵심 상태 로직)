@@ -139,6 +139,9 @@ void initSystem() {
 
   initMicrophone();
   prefs.begin("diffuser", false);
+  String defaultMac = "ESP_" + WiFi.macAddress();
+  defaultMac.replace(":", "");
+  deviceId = prefs.getString("deviceId", defaultMac); // 저장된 이름이 없으면 MAC 주소가 기본값
   ledR = prefs.getUChar("ledR", 255);
   ledG = prefs.getUChar("ledG", 255);
   ledB = prefs.getUChar("ledB", 255);
@@ -319,6 +322,21 @@ void processSettingModeInput() {
     Serial.println("\r\n🚀 [JSON 미리보기]:\r\n" + payload); showPrompt();
   }
   else if (c == '0') setSystemMode(MODE_READY, "Main Menu");
+
+  else if (c == 'i') {
+    String newId = Serial.readStringUntil('\n'); // 'i' 뒤에 입력된 문자열 전체 읽기
+    newId.trim();
+    if (newId.length() > 0) {
+      deviceId = newId;
+      prefs.putString("deviceId", deviceId);
+      Serial.printf("\r\n💾 [저장 완료] 기기 ID가 '%s'(으)로 변경되었습니다.\r\n", deviceId.c_str());
+    } else {
+      Serial.printf("\r\nℹ️ 현재 기기 ID: %s\r\n", deviceId.c_str());
+      Serial.println("변경하려면 'i' 뒤에 새 ID를 붙여서 입력하세요. (예: iSmartDiffuser_02)");
+    }
+    showPrompt();
+  }
+
 }
 
 // --- 서브 루틴: 일반 모드 입력 처리 ---
@@ -589,6 +607,7 @@ void printSettingMenu() {
   Serial.println(" [t] 저울 영점 조절 (Tare)");
   Serial.println(" [s] 현재 보정값 저장 (Save to Flash)");
   Serial.println(" [p] 서버 전송용 JSON 데이터 미리보기");
+  Serial.println(" [i] 기기 ID 확인 및 변경 (예: iMyDevice_01)"); // ★ 추가
   Serial.println(" [0] 메인 메뉴로 돌아가기");
   Serial.println(C_YELLOW "--------------------------------" C_RESET);
 }
