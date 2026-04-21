@@ -210,7 +210,7 @@ void runSystem() {
     pollServer();    // 1분 주기 서버 동기화 동작 허용
     checkSerialInput(); 
     // ★ 추가된 부분: 시스템(IDLE Task)에 CPU 제어권을 잠시 양보하여 워치독 에러 방지
-    vTaskDelay(1 / portTICK_PERIOD_MS);
+    vTaskDelay(WDT_YIELD_TIME_MS);
     return; 
   }
   
@@ -238,7 +238,7 @@ void runSystem() {
   checkSerialInput();
 
   // [추가] CPU 제어권을 시스템(IDLE Task)에 잠시 양보하여 워치독 트리거 방지
-  vTaskDelay(1 / portTICK_PERIOD_MS);
+  vTaskDelay(WDT_YIELD_TIME_MS);
 }
 
 // --- 시리얼 입력 감시 (모듈화 적용) ---
