@@ -231,8 +231,9 @@ void updateScentProgressBars() {
   float fullWeight = maxWeight > 0.0f ? maxWeight : 150.0f;
   for (int i = 0; i < 4; i++) {
     float safeWeight = weights[i] < 0.0f ? 0.0f : weights[i];
-    int percent = (int)round((safeWeight / fullWeight) * 100.0f);
-    updateProgressBar(i + 1, constrain(percent, 0, 100));
+    int percent = constrain((int)round((safeWeight / fullWeight) * 100.0f), 0, 100);
+    updateProgressBar(i + 1, percent);
+    nexSend("t_percent" + String(i + 1) + ".txt=\"" + String(percent) + "%\"");
   }
 }
 
