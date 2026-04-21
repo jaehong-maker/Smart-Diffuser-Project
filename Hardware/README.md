@@ -12,6 +12,16 @@
 - **Key Modules**: 
   - HX711 (로드셀 무게 센서)
   - INMP441 (I2S 기반 소음 인식 마이크)
+ 
+## 주요 모듈 규격 (Module Dimensions)
+회로 설계 및 PCB 배치 시 참고할 주요 부품의 크기 데이터입니다. (핀 사이 간격은 2.54mm Pitch 기준)
+
+| 모듈 명칭 | 가로 x 세로 (Size) | 핀 사이 간격 (Pin Pitch) | 비고 |
+| :--- | :--- | :--- | :--- |
+| **ESP32 DevKit** | 28mm x 54mm | 11칸 (25.4mm) | 메인 MCU |
+| **DFPlayer Mini** | 21mm x 22mm | 8칸 (17.78mm) | MP3 모듈 |
+| **INMP441 마이크** | 지름 약 15mm | 4칸 (7.62mm) | I2S 인터페이스 |
+| **HX711** | 25mm x 16.5mm | 9칸 (20.32mm) | 로드셀 앰프 |
 
 ## 다운로드 및 사용 방법
 - 해당 파일은 **EasyEDA (Standard 또는 Pro)** 에서 편집 가능합니다.
