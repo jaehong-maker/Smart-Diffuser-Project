@@ -308,11 +308,4 @@ def update_device_state(device_id, last_time, new_capacity, spray_code, weights_
             UpdateExpression="set last_spray_time = :t, current_capacity = :c, last_spray_code = :s, weight_g = :wg, weights = :w",
             ExpressionAttributeValues={
                 ':t': last_time,
-                ':c': Decimal(str(new_capacity)),
-                ':s': int(spray_code),
-                ':wg': Decimal(str(normalized_weights[0])),
-                ':w': [Decimal(str(weight)) for weight in normalized_weights]
-            }
-        )
-    except Exception as e:
-        logger.error(f"DBdb Write Error: {e}")
+               
