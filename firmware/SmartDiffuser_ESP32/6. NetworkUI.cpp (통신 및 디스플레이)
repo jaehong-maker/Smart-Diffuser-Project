@@ -354,17 +354,27 @@ void pollServer() {
     if (WiFi.status() == WL_CONNECTED) {
       JsonDocument reqDoc; 
       reqDoc["action"] = "POLL"; 
-      reqDoc["deviceId"] = deviceId; // ★ 수정: 사용자가 설정한 기기 ID 변수를 전송
-      reqDoc["db_level"] = currentDbLevel;      // ★ 추가: 현재 측정된 소음 추가
+      reqDoc["deviceId"] = deviceId; 
+      reqDoc["db_level"] = currentDbLevel;      
+      
+      // ★ 중요: 아래 줄이 wArray를 선언하는 핵심 코드입니다.
       JsonArray wArray = reqDoc["weights"].to<JsonArray>();
+      
       for (int i = 0; i < 4; i++) {
-        // g 단위를 %로 변환하여 소수점 첫째 자리까지 전송
-        float percent = (weights[i] / maxWeight) * 100.0;
-        wArray.add((float)((int)(constrain(percent, 0, 100) * 10)) / 10.0);
+        // 실제 무게(weights[i])에서 빈 병 무게(15.5g)를 뺍니다.
+        float emptyWeight = 15.5; 
+        // (가용 무게 / 전체 가용 범위) * 100으로 퍼센트를 계산합니다.
+        float percent = ((weights[i] - emptyWeight) / (maxWeight - emptyWeight)) * 100.0;
+
+        // 0% 미만이나 100% 초과가 되지 않도록 잡아줍니다.
+        percent = constrain(percent, 0.0, 100.0);
+
+        // 소수점 첫째 자리까지 전송하기 위한 처리입니다.
+        wArray.add((float)((int)(percent * 10)) / 10.0);
       }
       
       String payload; 
-      payload.reserve(128); // 메모리 재할당 방지를 위한 블록 고정
+      payload.reserve(128); 
       serializeJson(reqDoc, payload);
       sendServerRequest(payload); 
     }
