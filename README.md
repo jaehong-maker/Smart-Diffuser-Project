@@ -29,66 +29,6 @@
 * **Libraries:** `ArduinoJson`, `WiFiManager`, `HX711`, `DFRobotDFPlayerMini`, `Adafruit_NeoPixel`
 * **Network & Backend:** Wi-Fi, HTTP/HTTPS POST, AWS Lambda
 
-### 📊 System Architecture & Flow
-
-```mermaid
-graph TD
-    %% Styling
-    classDef esp fill:#2c3e50,stroke:#ecf0f1,stroke-width:2px,color:#fff;
-    classDef task fill:#34495e,stroke:#3498db,stroke-width:2px,color:#fff;
-    classDef input fill:#27ae60,stroke:#2ecc71,stroke-width:2px,color:#fff;
-    classDef output fill:#8e44ad,stroke:#9b59b6,stroke-width:2px,color:#fff;
-    classDef cloud fill:#f39c12,stroke:#f1c40f,stroke-width:2px,color:#fff;
-
-    subgraph Hardware Inputs
-        direction TB
-        Mic[I2S Microphone<br/>Voice & Ambient dB]:::input
-        LoadCell[4x HX711 Load Cells<br/>Weight & Progress]:::input
-        Touch[Nextion Touch UI]:::input
-    end
-
-    subgraph ESP32 Core [ESP32 FreeRTOS System]
-        direction TB
-        ESP(ESP32 Main Control):::esp
-        
-        MainTask[Main Task<br/>Logic & Spray Control]:::task
-        NetTask[Network Task<br/>HTTP POST & Queue]:::task
-        SensTask[Sensor Task<br/>Background Noise]:::task
-
-        MainTask <--> |Queue / Event| NetTask
-        SensTask --> |Audio Event Queue| MainTask
-    end
-
-    subgraph Hardware Outputs
-        direction TB
-        Motor[4x Spray Motors]:::output
-        Audio[DFPlayer Mini]:::output
-        LED[NeoPixel LEDs]:::output
-        Screen[Nextion HMI Display]:::output
-    end
-
-    subgraph Cloud Backend
-        direction TB
-        AWS[AWS Lambda<br/>Logic & AI Analysis]:::cloud
-        Weather[Weather API]:::cloud
-    end
-
-    %% Input Connections
-    Mic -.->|I2S Read| SensTask
-    Mic -.->|WAV Record| MainTask
-    LoadCell -.->|Hardware ISR| MainTask
-    Touch -.->|UART| MainTask
-
-    %% Output Connections
-    MainTask -->|GPIO| Motor
-    MainTask -->|UART| Audio
-    MainTask -->|GPIO| LED
-    MainTask -->|UART| Screen
-
-    %% Cloud Connections
-    NetTask <==>|Wi-Fi / JSON payload| AWS
-    AWS <--> Weather
-
 ## ⚙️ 핵심 펌웨어 최적화 (Firmware Architecture)
 
 본 프로젝트는 시스템의 안정성과 응답 속도를 극대화하기 위해 다음과 같은 펌웨어 최적화를 거쳤습니다.
