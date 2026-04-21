@@ -29,6 +29,19 @@ void sortArray(float* arr, int size) {
   }
 }
 
+// 💡 새롭게 추가할 정수형 정렬 함수 (오버로딩)
+void sortArray(int* arr, int size) {
+  for (int i = 0; i < size - 1; i++) {
+    for (int j = 0; j < size - i - 1; j++) {
+      if (arr[j] > arr[j + 1]) {
+        int temp = arr[j];
+        arr[j] = arr[j + 1];
+        arr[j + 1] = temp;
+      }
+    }
+  }
+}
+
 // --- 하드웨어 출력 제어 ---
 
 // ★ 만능 LED 색상 제어 함수 (전체 LED 적용으로 업그레이드)
@@ -271,6 +284,7 @@ void checkBackgroundNoise() {
   if (bytes_read == 0) return;
   
   int current_db = calculateDecibels(samples, bytes_read / sizeof(int32_t));
+  currentDbLevel = current_db; // ★ 추가: 측정된 데시벨을 전역 변수에 갱신
   static float smoothed_db = 0;
   smoothed_db = (0.3 * current_db) + (0.7 * smoothed_db);
   
@@ -302,8 +316,8 @@ void runAmbientMode() {
 
   unsigned long currentTime = millis();
 
-  // 1. 트리거 조건: 노래 시작 후 5초가 지났고 BUSY가 HIGH(노래 끝남)일 때 
-  bool isSongFinished = (digitalRead(PIN_BUSY) == HIGH && (currentTime - lastAmbientTime > 5000));
+  // 💡 [수정] 하드코딩된 5000 대신 매크로 사용
+  bool isSongFinished = (digitalRead(PIN_BUSY) == HIGH && (currentTime - lastAmbientTime > AMBIENT_COOL_DOWN));
 
   // 2. 실행 조건: 최초 실행 OR 노래 끝남 OR n키 눌림
   if (isFirstAmbientRun || isSongFinished || forceAmbientSkip) {
@@ -337,16 +351,8 @@ void runAmbientMode() {
       delay(100);
     }
 
-    // 튀는 값 버블 정렬 필터링
-    for (int i = 0; i < sampleCount - 1; i++) {
-      for (int j = 0; j < sampleCount - i - 1; j++) {
-        if (dbSamples[j] > dbSamples[j + 1]) {
-          int temp = dbSamples[j];
-          dbSamples[j] = dbSamples[j + 1];
-          dbSamples[j + 1] = temp;
-        }
-      }
-    }
+    // 💡 튀는 값 버블 정렬 필터링
+    sortArray(dbSamples, sampleCount);
 
     int stableDB = dbSamples[sampleCount / 2];
     ambientCycleStorage[ambientCycleCount] = stableDB;
