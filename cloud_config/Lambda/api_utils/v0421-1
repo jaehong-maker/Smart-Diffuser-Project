@@ -238,4 +238,32 @@ def _voice_to_spray(transcript: str):
     elif any(k in t for k in ["눈", "스노우", "겨울", "민트", "쿨", "시원","누","문","론","돈", "슬프다"]):
         spray_code = 4
         result_text = f"눈(키워드): {transcript}"
-    elif any(k in t for k
+    elif any(k in t for k in ["정지", "스톱", "멈춰", "꺼", "중지","멈처","멍처","먼처","멍춰","먼춰"]):
+        spray_code = 0
+        duration = 0
+        result_text = f"정지(키워드): {transcript}"
+
+    for sec in [1, 2, 3, 5, 10, 15]:
+        if f"{sec}초" in t:
+            duration = sec
+            break
+
+    return spray_code, duration, result_text
+
+#이메일 전송 함수
+def send_verification_email(receiver_email, code):
+    try:
+        msg = MIMEText(f"스마트 디퓨저 회원가입 인증번호입니다.\n\n인증번호: [{code}]\n\n앱으로 돌아가 인증번호를 입력해주세요.")
+        msg['Subject'] = "[스마트 디퓨저] 회원가입 이메일 인증번호"
+        msg['From'] = config.SENDER_EMAIL
+        msg['To'] = receiver_email
+
+        server = smtplib.SMTP(config.SMTP_SERVER, config.SMTP_PORT)
+        server.starttls()
+        server.login(config.SENDER_EMAIL, config.SENDER_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        logger.error(f"이메일 발송 실패: {e}")
+        return False
