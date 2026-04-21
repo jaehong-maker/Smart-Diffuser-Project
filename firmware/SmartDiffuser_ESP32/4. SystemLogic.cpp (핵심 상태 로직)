@@ -61,42 +61,11 @@ void processAudioEvents() {
 
 // --- 서브 루틴: 스마트 절전 관리 ---
 void manageSleepState() {
-  unsigned long idleTime = millis() - lastActivityTime;
-  static bool isDimmed = false;
-
-  // 💡 1분 이상 터치 없으면 화면 밝기 5%로 감소 (번인 방지)
-  if (!isDimmed && idleTime > 60000 && idleTime < SLEEP_TIMEOUT) {
-    Serial.println(C_CYAN "\r\n[System] 1분 대기: 화면 보호를 위해 디밍(5%) 실행" C_RESET);
-    showPrompt(); // 터미널 UI 줄바꿈 복구
-    
-    // 통신 겹침(충돌)을 피하기 위해 0.2초 대기 후 확실하게 2번 발송
-    delay(200); 
-    nexSend("dim=5");
-    delay(50);
-    nexSend("dim=5"); 
-    
-    isDimmed = true;
-  } else if (isDimmed && idleTime <= 60000) {
-    Serial.println(C_GREEN "\r\n[System] 터치 감지: 화면 밝기 100% 복구" C_RESET);
-    showPrompt();
-    
-    delay(50);
-    nexSend("dim=100");
-    delay(50);
-    nexSend("dim=100");
-    
-    isDimmed = false;
-  }
-
-  // 5분 후 완전 절전
-  if (currentMode != MODE_SLEEP && idleTime > SLEEP_TIMEOUT) {
+  if (currentMode != MODE_SLEEP && (millis() - lastActivityTime > SLEEP_TIMEOUT)) {
     setSystemMode(MODE_SLEEP, "");
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
-    
-    delay(100);
     nexSend("sleep=1"); 
-    
     Serial.println(C_YELLOW "\r\n🌙 스마트 절전 모드 진입 (Wi-Fi, 디스플레이 OFF)\r\n" C_RESET);
   }
 }
@@ -233,6 +202,12 @@ void initSystem() {
   setSystemMode(MODE_READY, "System Ready");
   updateScentProgressBars();
 
+  String pendingNextionCmd = prefs.getString("pending_nextion_cmd", "");
+  if (pendingNextionCmd.length() > 0) {
+    prefs.remove("pending_nextion_cmd");
+    handleNextionCmd(pendingNextionCmd);
+  }
+
   xTaskCreatePinnedToCore(networkTaskLoop, "NetworkTask", 8192, NULL, 1, &NetworkTaskHandle, 1);
   xTaskCreatePinnedToCore(sensorTaskLoop, "SensorTask", 8192, NULL, 1, &SensorTaskHandle, 0);
 }
@@ -349,12 +324,9 @@ void processSettingModeInput() {
 
     case 'p':
       {
-        JsonDocument doc;
-        doc["action"] = "POLL";
-        JsonArray wArray = doc["weights"].to<JsonArray>();
-        for (int i = 0; i < 4; i++) wArray.add((float)((int)(weights[i] * 10)) / 10.0);
-        String payload; 
-        serializeJson(doc, payload);
+        String payload = "{\"action\": \"POLL\", \"weights\": [";
+        payload += String(weights[0], 1) + ", " + String(weights[1], 1) + ", " + 
+                   String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
         Serial.println("\r\n🚀 [JSON 미리보기]:\r\n" + payload); showPrompt();
       }
       break;
@@ -394,15 +366,10 @@ void processStandardInput() {
           int testDb = inputBuffer.toInt();
           Serial.printf("\r\n[Test] 강제 데시벨 %d dB 서버로 즉시 전송!\r\n", testDb);
           
-          // 💡 [리팩토링] 수동 문자열 조합을 ArduinoJson으로 안전하게 변경
-          JsonDocument doc;
-          doc["mode"] = "ambient";
-          doc["db_level"] = testDb;
-          JsonArray wArray = doc["weights"].to<JsonArray>();
-          for (int i = 0; i < 4; i++) wArray.add((float)((int)(weights[i] * 10)) / 10.0);
-          
-          String payload;
-          serializeJson(doc, payload);
+          // JSON 페이로드에 4채널 무게 배열(weights) 추가
+          String payload = "{\"mode\": \"ambient\", \"db_level\": " + String(testDb) + ", \"weights\": [" +
+                           String(weights[0], 1) + ", " + String(weights[1], 1) + ", " +
+                           String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
           sendServerRequest(payload);
           
           isWaitingForTestDb = false;
@@ -534,6 +501,7 @@ void handleInput(String input) {
   }
 }
 
+// --- 동작 제어 헬퍼 함수들 ---
 void runManualMode(String input) { 
   Serial.printf("\r\n[runManualMode] input=%s\r\n", input.c_str());
   if (input == "0") { 
@@ -541,11 +509,31 @@ void runManualMode(String input) {
     return; 
   }
   
-  int cmdInt = input.toInt();
-  if (cmdInt > 0) {
-    // 💡 [리팩토링] NetworkUI.cpp의 통합 분사 함수를 재사용하여 30줄의 코드를 1줄로 단축
-    String modeStr = (input.length() > 1) ? "Blending Mode" : "Manual Mode";
-    triggerSpray(cmdInt, 3, 1, modeStr, false); 
+  forceAllOff();
+  int activeCount = parseAndSetNozzles(input);
+
+  if (activeCount > 0) {
+    isRunning = true; 
+    isSpraying = true;
+    sprayDuration = 3000; 
+    prevMotorMillis = millis(); 
+    startTimeMillis = millis();
+    
+    for (int i = 0; i < 4; i++) {
+      if (activeNozzles[i]) {
+        int targetPin = getPinFromCommand(i + 1);
+        if (targetPin != -1) digitalWrite(targetPin, LOW); 
+      }
+    }
+    playSound(1); 
+    
+    if (activeCount > 1) {
+      updateDisplay(0, "Blending Mode");
+      Serial.printf("\r\n✅ 시그니처 향(혼합) 분사 시작 (명령: %s)\r\n", input.c_str());
+    } else {
+      updateDisplay(0, "Manual Mode");
+      Serial.printf("\r\n✅ 단일 향 분사 시작 (명령: %s)\r\n", input.c_str());
+    }
   } else {
     Serial.println("\r\n❌ 잘못된 명령입니다.");
   }
@@ -568,34 +556,31 @@ void enterWeatherMode(bool runNow) {
 }
 
 void runSprayLogic() { 
+  // 💡 [업그레이드] 불필요한 for문 반복을 제거하는 Early Return(빠른 종료) 최적화
+  // 시스템이 분사 중이 아닐 때는 연산을 즉시 건너뛰어 CPU 리소스를 절약합니다.
   if (!isRunning) return;
 
-  unsigned long now = millis();
   if (isSpraying) {
-    if (now - prevMotorMillis >= sprayDuration) {
+    if (millis() - prevMotorMillis >= sprayDuration) {
       forceAllOff();
       isSpraying = false; 
-      prevMotorMillis = now;
+      prevMotorMillis = millis();
       
       if (currentMode != MODE_MANUAL) {
         updateDisplay((currentMode == MODE_WEATHER) ? lastWeatherIconId : 0, "Resting...");
       }
-    } else {
-      // 업그레이드: PWM 방식의 펄스 제어를 통해 모터 부하 감소 및 정밀 분사
-      // 100ms 주기로 currentIntensity(1~3)에 따라 듀티 사이클 조절
-      bool pulse = (now % 100 < (currentIntensity * 33)); 
+    }
+  } else {
+    if (millis() - prevMotorMillis >= REST_TIME) {
+      forceAllOff(); 
       for (int i = 0; i < 4; i++) {
         if (activeNozzles[i]) {
           int pin = getPinFromCommand(i + 1);
-          if (pin != -1) digitalWrite(pin, pulse ? LOW : HIGH); 
+          if (pin != -1) digitalWrite(pin, LOW);
         }
       }
-    }
-  } else {
-    if (now - prevMotorMillis >= REST_TIME) {
-      // 분사 시작 시점에만 노즐 활성화 (실제 제어는 위쪽 pulse 로직에서 수행)
       isSpraying = true; 
-      prevMotorMillis = now;
+      prevMotorMillis = millis();
       
       if (currentMode != MODE_MANUAL) {
         updateDisplay(0, "Spraying...");
@@ -654,32 +639,4 @@ void printManualMenu() {
   Serial.println(" [-] 스피커 볼륨 2 감소");
   Serial.println(" [0] 메인 메뉴로 돌아가기");
   Serial.println(C_YELLOW "--------------------------------" C_RESET);
-}
-
-// [SystemLogic.cpp] 파일 하단에 새롭게 추가하세요.
-void runSelfDiagnostic() {
-  Serial.println(C_MAGENTA "\r\n[Diagnostic] 시스템 자가 진단 시작..." C_RESET);
-  bool hasError = false;
-
-  // 1. 로드셀 연결 확인
-  for (int i = 0; i < 4; i++) {
-    if (scales[i].read() == 0) {
-      Serial.printf(C_RED "⚠️ [Error] 로드셀 %d번 응답 없음!\r\n" C_RESET, i + 1);
-      hasError = true;
-    }
-  }
-
-  // 2. 오디오 모듈 상태 확인 (Busy 핀 활용)
-  if (digitalRead(PIN_BUSY) == LOW) { // 재생 중이 아닌데 LOW라면 연결 이상 의심
-     Serial.println(C_YELLOW "ℹ️ [Warning] 오디오 모듈 상태 점검 권장" C_RESET);
-  }
-
-  if (hasError) {
-    setLedColor(255, 0, 0); // 에러 발생 시 빨간색 표시
-    delay(1000);
-  } else {
-    Serial.println(C_GREEN "✅ [Diagnostic] 모든 하드웨어 정상 작동 중" C_RESET);
-    setLedColor(0, 255, 0); // 정상일 때 초록색 표시
-    delay(500);
-  }
 }
