@@ -196,6 +196,9 @@ void initSystem() {
   
   lastActivityTime = millis(); 
   setSystemMode(MODE_READY, "System Ready");
+  // 첫 번째 로드셀(weights[0]) 기준으로 대표 잔량을 계산하여 전송
+  int remainPercent = (int)((weights[0] / maxWeight) * 100.0f);
+    updateProgressBar(constrain(remainPercent, 0, 100));
 
   xTaskCreatePinnedToCore(networkTaskLoop, "NetworkTask", 8192, NULL, 1, &NetworkTaskHandle, 1);
   xTaskCreatePinnedToCore(sensorTaskLoop, "SensorTask", 8192, NULL, 1, &SensorTaskHandle, 0);
@@ -273,70 +276,73 @@ void processSettingModeInput() {
   char c = Serial.read(); 
   if (c == '\n' || c == '\r') return;
 
-  // [추가] 1번 로드셀 RAW 데이터 확인용 디버깅 코드
-  if (c == 'r') {
-    Serial.printf("\r\n[DEBUG] Scale 1 Raw: %ld\r\n", scales[0].read());
-    return;
-  }
+  // 💡 [수정] if-else 체인을 switch-case로 변경하여 직관성 확보
+  switch (c) {
+    case 'r':
+      Serial.printf("\r\n[DEBUG] Scale 1 Raw: %ld\r\n", scales[0].read());
+      break;
 
-  if (c == '+') { 
-    calibration_factor += 10; 
-    for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); 
-    Serial.print("\r\n"); printCalibrationInfo(); showPrompt(); 
-  }
-  else if (c == '-') { 
-    calibration_factor -= 10; 
-    for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); 
-    Serial.print("\r\n"); printCalibrationInfo(); showPrompt(); 
-  }
-  else if (c == 't') { 
-    for(int i=0; i<4; i++) scales[i].tare(); 
-    Serial.println("\r\n✅ [영점 완료]"); 
-    // 영점 조절 후 각 로드셀의 무게(g)를 출력 (5번 평균 내서 정확도 향상)
-    Serial.printf("📊 현재 잔량: W1:%.1fg | W2:%.1fg | W3:%.1fg | W4:%.1fg\r\n", 
-                  scales[0].get_units(5), 
-                  scales[1].get_units(5), 
-                  scales[2].get_units(5), 
-                  scales[3].get_units(5));
-    showPrompt(); 
+    case '+':
+      calibration_factor += 10; 
+      for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); 
+      Serial.print("\r\n"); printCalibrationInfo(); showPrompt(); 
+      break;
 
-  }
-  // processSettingModeInput() 함수 내 's' 케이스 수정
-  else if (c == 's') { 
-    // 기존 보정값 저장 로직 유지
-    prefs.putFloat("cal_factor", calibration_factor);
-    
-    // 추가: 4채널 로드셀의 현재 오프셋 값을 각각 저장
-    for (int i = 0; i < 4; i++) {
-      String key = "off_" + String(i);
-      long currentOffset = scales[i].get_offset();
-      prefs.putLong(key.c_str(), currentOffset);
-    }
-    
-    Serial.println("\r\n💾 [저장 완료] 보정값 및 영점 오프셋이 기록되었습니다.");
-    showPrompt();
-  }
-  else if (c == 'p') {
-    String payload = "{\"action\": \"POLL\", \"weights\": [";
-    payload += String(weights[0], 1) + ", " + String(weights[1], 1) + ", " + String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
-    Serial.println("\r\n🚀 [JSON 미리보기]:\r\n" + payload); showPrompt();
-  }
-  else if (c == '0') setSystemMode(MODE_READY, "Main Menu");
+    case '-':
+      calibration_factor -= 10; 
+      for(int i=0; i<4; i++) scales[i].set_scale(calibration_factor); 
+      Serial.print("\r\n"); printCalibrationInfo(); showPrompt(); 
+      break;
 
-  else if (c == 'i') {
-    String newId = Serial.readStringUntil('\n'); // 'i' 뒤에 입력된 문자열 전체 읽기
-    newId.trim();
-    if (newId.length() > 0) {
-      deviceId = newId;
-      prefs.putString("deviceId", deviceId);
-      Serial.printf("\r\n💾 [저장 완료] 기기 ID가 '%s'(으)로 변경되었습니다.\r\n", deviceId.c_str());
-    } else {
-      Serial.printf("\r\nℹ️ 현재 기기 ID: %s\r\n", deviceId.c_str());
-      Serial.println("변경하려면 'i' 뒤에 새 ID를 붙여서 입력하세요. (예: iSmartDiffuser_02)");
-    }
-    showPrompt();
-  }
+    case 't':
+      for(int i=0; i<4; i++) scales[i].tare(); 
+      Serial.println("\r\n✅ [영점 완료]"); 
+      Serial.printf("📊 현재 잔량: W1:%.1fg | W2:%.1fg | W3:%.1fg | W4:%.1fg\r\n", 
+                    scales[0].get_units(5), scales[1].get_units(5), 
+                    scales[2].get_units(5), scales[3].get_units(5));
+      showPrompt(); 
+      break;
 
+    case 's':
+      prefs.putFloat("cal_factor", calibration_factor);
+      for (int i = 0; i < 4; i++) {
+        String key = "off_" + String(i);
+        long currentOffset = scales[i].get_offset();
+        prefs.putLong(key.c_str(), currentOffset);
+      }
+      Serial.println("\r\n💾 [저장 완료] 보정값 및 영점 오프셋이 기록되었습니다.");
+      showPrompt();
+      break;
+
+    case 'p':
+      {
+        String payload = "{\"action\": \"POLL\", \"weights\": [";
+        payload += String(weights[0], 1) + ", " + String(weights[1], 1) + ", " + 
+                   String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
+        Serial.println("\r\n🚀 [JSON 미리보기]:\r\n" + payload); showPrompt();
+      }
+      break;
+
+    case 'i':
+      {
+        String newId = Serial.readStringUntil('\n'); 
+        newId.trim();
+        if (newId.length() > 0) {
+          deviceId = newId;
+          prefs.putString("deviceId", deviceId);
+          Serial.printf("\r\n💾 [저장 완료] 기기 ID가 '%s'(으)로 변경되었습니다.\r\n", deviceId.c_str());
+        } else {
+          Serial.printf("\r\nℹ️ 현재 기기 ID: %s\r\n", deviceId.c_str());
+          Serial.println("변경하려면 'i' 뒤에 새 ID를 붙여서 입력하세요. (예: iSmartDiffuser_02)");
+        }
+        showPrompt();
+      }
+      break;
+
+    case '0':
+      setSystemMode(MODE_READY, "Main Menu");
+      break;
+  }
 }
 
 // --- 서브 루틴: 일반 모드 입력 처리 ---
@@ -400,41 +406,45 @@ void processStandardInput() {
   }
 }
 
+// 💡 [추가] 서브 루틴: LED 설정 모드 입력 처리
+void processLedSettingInput(String input) {
+  int values[4];
+  int count = 0, lastIdx = 0;
+  
+  for (int i = 0; i < input.length() && count < 4; i++) {
+    if (input.charAt(i) == ',') {
+      values[count++] = input.substring(lastIdx, i).toInt();
+      lastIdx = i + 1;
+    }
+  }
+  if (count < 4) values[count++] = input.substring(lastIdx).toInt();
+
+  if (count == 4) { 
+    ledR = constrain(values[0], 0, 255);
+    ledG = constrain(values[1], 0, 255);
+    ledB = constrain(values[2], 0, 255);
+    ledBrightness = constrain(values[3], 0, 255);
+
+    prefs.putUChar("ledR", ledR);
+    prefs.putUChar("ledG", ledG);
+    prefs.putUChar("ledB", ledB);
+    prefs.putInt("ledBright", ledBrightness);
+
+    Serial.printf("\r\n✅ LED 설정 완료: R:%d G:%d B:%d 밝기:%d\r\n", ledR, ledG, ledB, ledBrightness);
+    setLedColor(ledR, ledG, ledB); 
+    delay(1000);
+    setSystemMode(MODE_READY, "Main Menu");
+  } else {
+    Serial.println("\r\n❌ 형식이 잘못되었습니다. 다시 입력해주세요.");
+    showPrompt();
+  }
+}
+
 // --- 통합 입력 처리 (Switch-Case 최적화) ---
 void handleInput(String input) {
     if (currentMode == MODE_LED) {
-    int values[4];
-    int count = 0, lastIdx = 0;
-    
-    // 쉼표를 기준으로 4개의 값(R, G, B, 밝기) 파싱
-    for (int i = 0; i < input.length() && count < 4; i++) {
-      if (input.charAt(i) == ',') {
-        values[count++] = input.substring(lastIdx, i).toInt();
-        lastIdx = i + 1;
-      }
-    }
-    if (count < 4) values[count++] = input.substring(lastIdx).toInt();
-
-    if (count == 4) { // 4개가 모두 정상 입력되었을 때
-      ledR = constrain(values[0], 0, 255);
-      ledG = constrain(values[1], 0, 255);
-      ledB = constrain(values[2], 0, 255);
-      ledBrightness = constrain(values[3], 0, 255);
-
-      prefs.putUChar("ledR", ledR);
-      prefs.putUChar("ledG", ledG);
-      prefs.putUChar("ledB", ledB);
-      prefs.putInt("ledBright", ledBrightness);
-
-      Serial.printf("\r\n✅ LED 설정 완료: R:%d G:%d B:%d 밝기:%d\r\n", ledR, ledG, ledB, ledBrightness);
-      setLedColor(ledR, ledG, ledB); // 즉시 적용 테스트
-      delay(1000);
-      setSystemMode(MODE_READY, "Main Menu");
-    } else {
-      Serial.println("\r\n❌ 형식이 잘못되었습니다. 다시 입력해주세요.");
-      showPrompt();
-    }
-    return; // 일반 모드로 넘어가지 않게 종료
+    processLedSettingInput(input);
+    return; 
   }
   if (currentMode == MODE_READY) {
     int cmdInt = input.toInt();
