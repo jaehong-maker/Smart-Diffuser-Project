@@ -308,82 +308,73 @@ void sensorTaskLoop(void *parameter) {
   }
 }
 
+// 소음 데이터의 표준편차 계산 함수
+float calculateStdDev(int* samples, int count, float average) {
+    float sumVariance = 0;
+    for (int i = 0; i < count; i++) {
+        sumVariance += pow(samples[i] - average, 2);
+    }
+    return sqrt(sumVariance / count);
+}
+
 void runAmbientMode() {
-  // ★ 수정 1: isSpraying 제한 해제! 이제 향을 뿌리는 중에도 n키나 수음 로직이 정상 작동합니다.
   if (isWaitingForTestDb) return; 
 
   unsigned long currentTime = millis();
-
-  // 💡 [수정] 하드코딩된 5000 대신 매크로 사용
   bool isSongFinished = (digitalRead(PIN_BUSY) == HIGH && (currentTime - lastAmbientTime > AMBIENT_COOL_DOWN));
 
-  // 2. 실행 조건: 최초 실행 OR 노래 끝남 OR n키 눌림
   if (isFirstAmbientRun || isSongFinished || forceAmbientSkip) {
-    
-    forceAmbientSkip = false; // 플래그 해제
-    lastAmbientTime = currentTime; // 중복 진입 방지 쿨타임 시작
+    forceAmbientSkip = false;
+    lastAmbientTime = currentTime;
 
     myDFPlayer.stop();
-    delay(100); // 잔향 대기
+    delay(100);
 
-    Serial.printf(C_CYAN "\r\n[Ambient Scan %d/%s] 주변 소음 측정 중...\r\n" C_RESET, 
-                  ambientCycleCount + 1, isFirstAmbientRun ? "1(최초)" : "5");
+    Serial.printf(C_CYAN "\r\n[Ambient Analysis] 주변 소음 패턴 분석 중...\r\n" C_RESET);
 
-    // 3초간 30회 수음
     const int sampleCount = 30;
     int dbSamples[sampleCount];
+    long sumDB = 0;
     
+    // 1. 데이터 수집 및 실시간 처리
     for (int i = 0; i < sampleCount; i++) {
       int32_t samples[64];
       size_t bytes_read = 0;
       
-      // 0.1초 타임아웃 적용하여 뻗음 방지
-      i2s_read(I2S_PORT, &samples, sizeof(samples), &bytes_read, 100 / portTICK_PERIOD_MS);
-      dbSamples[i] = (bytes_read > 0) ? calculateDecibels(samples, bytes_read / sizeof(int32_t)) : 0;
+      i2s_read(I2S_PORT, &samples, sizeof(samples), &bytes_read, I2S_READ_TIMEOUT);
+      int current_db = (bytes_read > 0) ? calculateDecibels(samples, bytes_read / sizeof(int32_t)) : 0;
       
-      // ★★★ 수정 2: 수음(3초) 대기 중에도 모터 타이머가 멈추지 않게 분사 로직을 강제 호출! ★★★
-      if (isRunning) {
-        runSprayLogic(); 
-      }
+      dbSamples[i] = current_db;
+      sumDB += current_db;
 
+      // 수음 중에도 모터 타이머가 멈추지 않게 함 
+      if (isRunning) { runSprayLogic(); }
       delay(100);
     }
 
-    // 💡 튀는 값 버블 정렬 필터링
-    sortArray(dbSamples, sampleCount);
+    // 2. 통계 데이터 계산
+    float avgDB = (float)sumDB / sampleCount;
+    float stdDev = calculateStdDev(dbSamples, sampleCount, avgDB);
 
-    int stableDB = dbSamples[sampleCount / 2];
-    ambientCycleStorage[ambientCycleCount] = stableDB;
-    ambientCycleCount++;
+    // 3. 소음 성격 분류 (로그 출력)
+    String noiseType = (stdDev > 8.0) ? "불규칙적(대화/활동)" : "안정적(음악/정적)";
+    Serial.printf(C_GREEN "✅ 분석 완료: 평균 %.1f dB, 편차 %.1f (%s)\r\n" C_RESET, avgDB, stdDev, noiseType.c_str());
 
-    Serial.printf(C_GREEN "✅ 측정 완료: %d dB\r\n" C_RESET, stableDB);
+    // 4. 서버로 상세 데이터 전송 (서버에서 더 정밀한 향기 추천 가능)
+    // weights 배열을 포함하여 전송 
+    String payload = "{\"mode\": \"ambient\", \"db_avg\": " + String(avgDB, 1) + 
+                     ", \"db_stddev\": " + String(stdDev, 1) + 
+                     ", \"weights\": [" + String(weights[0], 1) + ", " + String(weights[1], 1) + 
+                     ", " + String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
+    sendServerRequest(payload);
+    
+    isFirstAmbientRun = false;
 
-    // 5주기 누적 및 서버 전송
-    if (isFirstAmbientRun || ambientCycleCount >= 5) {
-      int sumDB = 0;
-      int count = isFirstAmbientRun ? 1 : 5;
-      for (int i = 0; i < count; i++) sumDB += ambientCycleStorage[i];
-      int avgDB = sumDB / count;
-      
-      Serial.printf(C_YELLOW "🌐 서버 전송: 누적 평균 %d dB\r\n" C_RESET, avgDB);
-      // JSON 페이로드에 4채널 무게 배열(weights) 추가
-      String payload = "{\"mode\": \"ambient\", \"db_level\": " + String(avgDB) + ", \"weights\": [" +
-                       String(weights[0], 1) + ", " + String(weights[1], 1) + ", " +
-                       String(weights[2], 1) + ", " + String(weights[3], 1) + "]}";
-      sendServerRequest(payload);
-      
-      ambientCycleCount = 0;
-      isFirstAmbientRun = false; 
-    } else {
-      Serial.println("데이터 누적 중... (서버 전송 생략)");
-    }
-
-    // 다음 곡 재생
+    // 5. 다음 곡 재생 로직 
     currentAmbientTrack++;
     if (currentAmbientTrack > 20) currentAmbientTrack = 1;
     playSound(currentAmbientTrack);
-    Serial.printf(C_BLUE "🎵 노래 시작: %d번 트랙\r\n" C_RESET, currentAmbientTrack);
     
-    lastAmbientTime = millis(); // ★ 노래 시작 시간 기록 (이후 5초간 수음 절대 금지)
+    lastAmbientTime = millis();
   }
 }
