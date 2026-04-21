@@ -5,13 +5,21 @@ import base64
 import uuid
 import logging
 import random
+import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+
 
 # 분리한 커스텀 모듈 가져오기
 import config
 import db_utils
 import api_utils
+
+def _parse_spray_code(raw_spray):
+    if isinstance(raw_spray, int): return raw_spray
+    val = str(raw_spray)
+    numbers = re.sub(r'[^0-9]', '', val) # 숫자가 아닌 모든 문자 제거
+    return int(numbers) if numbers else 0
 
 # 로깅 설정
 logger = logging.getLogger()
@@ -733,25 +741,61 @@ def lambda_handler(event, context):
     # [ACTION] MANUAL
     elif action == "MANUAL":
         try:
-            spray_code = int(body.get("spray", 1))
+            # "spray12"와 같은 문자가 와도 12로 추출 (혼합 향기 에러 방지)
+            raw_spray = body.get("spray", 1)
+            spray_code = _parse_spray_code(raw_spray)
+            
             region_req = body.get("region", "")
             duration = int(body.get("duration", 3)) 
 
+            # 1. 우체통에 명령 넣기
             db_utils.manage_mailbox(device_id, spray_code, region_req, duration)
 
             try: db_utils.state_table.update_item(Key={'deviceId': device_id}, UpdateExpression="remove auto_stop_time")
             except: pass
             
-            music_code = spray_code
-            if spray_code in [1, 2, 3, 4]:
-                music_code = db_utils.get_music_track(device_id, spray_code)
+            # ★ 혼합 향기 시 랜덤 음악 선택 로직 ★
+            music_code = 0
+            if spray_code > 0:
+                # 예: 12가 들어오면 [1, 2] 리스트로 분리 (1~4번 모터만 유효)
+                valid_digits = [int(d) for d in str(spray_code) if d in '1234']
+                if valid_digits:
+                    # 혼합된 향기 중 하나를 랜덤으로 뽑아 그 음악을 가져옴 (단일 향기면 100% 그것만 뽑힘)
+                    chosen_music_scent = random.choice(valid_digits)
+                    music_code = db_utils.get_music_track(device_id, chosen_music_scent)
                 
-            result_text = f"명령: {spray_code}번 / 서버음악: {music_code}번 / 분사시간: {duration}초"
+            result_text = f"수동 명령: {spray_code}번 / 서버음악: {music_code}번 / 분사시간: {duration}초"
             
+            # ★ 2. 용량 차감 및 로그 저장 로직 추가 ★
             state = db_utils.get_device_state(device_id) or {}
             intensity = int(state.get('intensity', 2))
+            current_capacity = float(state.get('current_capacity', config.MAX_CAPACITY))
+            now_kst = _get_kst_now()
+            
+            # [중요] 용량 차감 계산 및 상태 업데이트
+            usage = duration * config.CONSUMPTION_PER_SEC
+            new_capacity = round(max(0.0, current_capacity - usage), 2)
+            db_utils.update_device_state(device_id, now_kst.isoformat(), new_capacity, spray_code, normalized_weights)
+            
+            # DB 로그 기록
+            def safe_dec(v): return Decimal(str(v)) if v else Decimal("0")
+            db_utils.log_table.put_item(Item={
+                "deviceId": device_id,
+                "timestamp": now_kst.isoformat(),
+                "mode": "Manual_Mode",
+                "result_text": result_text,
+                "spray_code": int(spray_code),
+                "duration": int(duration),
+                "region": region_req or "Manual",
+                "weight_g": safe_dec(normalized_weights[0] if normalized_weights else 0),
+                "weights": [safe_dec(weight) for weight in normalized_weights] if normalized_weights else [safe_dec(0)]*4,
+                "temp": safe_dec(0),
+                "humid": 0,
+                "feedback": 1
+            })
             
         except Exception as e:
+            logger.error(f"[MANUAL_ERROR] {e}")
             spray_code = 0
             duration = 3
             result_text = f"명령 오류: {str(e)}"
@@ -901,16 +945,19 @@ def lambda_handler(event, context):
     context_key = "Unknown"
     weather_text = ""
 
-    # [A] 감성 모드
+# [A] 감성 모드
     if mode == "emotion":
         user_emo = body.get("user_emotion", "평범")
         context_key = f"Emotion_{user_emo}"
-        gpt_spray, gpt_reason = api_utils.ask_gpt_recommendation(weather="실내", emotion=user_emo)
+        
+        # 에러 나던 gpt_recommendation 대신 gemini로 교체
+        gpt_spray_str, gpt_reason = api_utils.ask_gemini_recommendation(f"현재 내 기분은 {user_emo} 상태야.", "취향 데이터 없음")
+        gpt_spray = _parse_spray_code(gpt_spray_str) # 숫자만 안전하게 추출
+        
         if gpt_spray > 0:
-            spray_code, result_text, logic_name = gpt_spray, gpt_reason, "AI_GPT_Emotion"
+            spray_code, result_text, logic_name = gpt_spray, gpt_reason, "AI_Gemini_Emotion"
         else:
             spray_code, result_text, logic_name, duration = logic_emotion_mode(user_emo)
-            
 
     # [B] 날씨 모드
     else:
@@ -1066,9 +1113,12 @@ def lambda_handler(event, context):
     except Exception as e:
         logger.warning(f"Log save failed: {e}")
 
-    music_code = spray_code
-    if spray_code in [1, 2, 3, 4]:
-        music_code = db_utils.get_music_track(device_id, spray_code)
+    music_code = 0
+    if spray_code > 0:
+        valid_digits = [int(d) for d in str(spray_code) if d in '1234']
+        if valid_digits:
+            chosen_music_scent = random.choice(valid_digits)
+            music_code = db_utils.get_music_track(device_id, chosen_music_scent)
 
     state = db_utils.get_device_state(device_id) or {}
     intensity = int(state.get('intensity', 2))
@@ -1084,14 +1134,3 @@ def lambda_handler(event, context):
             "intensity": intensity,
             "result_text": result_text,
             "duration": duration,
-            "temp": temp,
-            "humidity": humidity,
-            "weight_g": weight_g,
-            "weights": normalized_weights,
-            "remaining_capacity": new_capacity,
-            "message": f"분석 성공! ({result_text})",
-            "mode": logic_name,
-            # ★ [매우 중요] 앱에서 피드백 쏠 때 쓰라고 '상황(예: Weather_Sunny_Morning)'을 같이 보내줌!
-            "context": context_key  
-        }, ensure_ascii=False)
-    }
