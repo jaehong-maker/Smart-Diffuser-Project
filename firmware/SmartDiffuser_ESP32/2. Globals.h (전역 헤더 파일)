@@ -24,8 +24,6 @@
 #define BIT_SEND_POLL    (1 << 0)
 #define BIT_SEND_VOICE   (1 << 1)
 #define BIT_SEND_REQUEST (1 << 2)
-
-// --- 색상 및 상수 ---
 #define C_RESET   "\033[0m"
 #define C_RED     "\033[31m"
 #define C_GREEN   "\033[32m"
@@ -37,6 +35,9 @@
 #define WDT_TIMEOUT 60
 #define NUM_LEDS 12
 #define I2S_READ_TIMEOUT (100 / portTICK_PERIOD_MS)
+// 💡 [추가] 가독성과 유지보수를 위한 상수 정의
+#define WDT_YIELD_TIME_MS   (1 / portTICK_PERIOD_MS) // 워치독 에러 방지용 CPU 양보 시간
+#define AMBIENT_COOL_DOWN   5000                     // 앰비언트 모드 쿨타임 (5초)
 
 const int PIN_SUNNY  = 4;
 const int PIN_CLOUDY = 13;
@@ -92,7 +93,7 @@ extern TaskHandle_t NetworkTaskHandle;
 extern QueueHandle_t audioEventQueue;
 extern TaskHandle_t SensorTaskHandle;
 extern QueueHandle_t networkQueue;
-extern const char* DEVICE_ID;
+extern String deviceId;
 extern const char* ssid;
 extern const char* password;
 extern String serverName;
@@ -141,6 +142,7 @@ extern bool blendSprayActive;
 extern unsigned long lastNozzleSprayTime[4]; // 각 노즐별 마지막 분사 시간
 extern volatile bool hxReady[4];
 extern float maxWeight;
+extern int currentDbLevel; // ★ 추가: 현재 소음 데이터 공유용
 
 const unsigned long CLEANING_INTERVAL = 86400000; // 24시간 (밀리초 단위)
 void runAutoCleaning(); // 청소 로직 함수
