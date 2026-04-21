@@ -28,8 +28,7 @@
 * **Hardware Interface:** I2S (Microphone), UART (Nextion, DFPlayer), GPIO (Motor, LED), 인터럽트 (ISR)
 * **Libraries:** `ArduinoJson`, `WiFiManager`, `HX711`, `DFRobotDFPlayerMini`, `Adafruit_NeoPixel`
 * **Network & Backend:** Wi-Fi, HTTP/HTTPS POST, AWS Lambda
-
-* ### 📊 System Architecture & Flow
+### 📊 System Architecture & Flow
 
 ```mermaid
 graph TD
