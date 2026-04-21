@@ -40,6 +40,9 @@ bool isSpraying   = false;
 bool blendModeEnabled = false;
 String blendSelection = "";
 bool blendSprayActive = false;
+bool schedulerEnabled = true;
+int activeStartHour   = 8; 
+int activeEndHour     = 23;
 
 String lastWebMessage = "Ready";
 String inputBuffer    = "";
@@ -104,7 +107,7 @@ bool forceAmbientSkip = false;
 uint8_t ledR = 255; 
 uint8_t ledG = 255; 
 uint8_t ledB = 255; // 초기값은 흰색으로 셋팅
-float maxWeight = 97.0; // 꽉 찬 병 무게 기준 (나중에 95.0 등으로 세밀하게 조정 가능)
+float maxWeight = 95.4; // 꽉 찬 병 무게 기준 (나중에 95.0 등으로 세밀하게 조정 가능)
 int currentDbLevel = 0; // ★ 추가
 
 // 객체 생성 구역(맨 위쪽)에 추가
