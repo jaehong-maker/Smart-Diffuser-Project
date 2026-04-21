@@ -135,7 +135,11 @@ void initSystem() {
   Serial.printf(C_BOLD "\r\n 🚀 SMART DIFFUSER V12.7.0 (REFACTORED ARCHITECTURE) \r\n" C_RESET);
 
   mySoftwareSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
-  if (!myDFPlayer.begin(mySoftwareSerial)) Serial.println("Audio Fail");
+  
+  // 💡 [업그레이드] DFPlayer 하드웨어 리셋 대기(3초) 생략으로 초고속 부팅 구현 & 고장 바이패스
+  if (!myDFPlayer.begin(mySoftwareSerial, true, false)) { 
+    Serial.println(C_RED "⚠️ [Audio] 스피커 연결 불량! 무음 모드로 바이패스합니다." C_RESET);
+  }
 
   initMicrophone();
   prefs.begin("diffuser", false);
@@ -196,9 +200,7 @@ void initSystem() {
   
   lastActivityTime = millis(); 
   setSystemMode(MODE_READY, "System Ready");
-  // 첫 번째 로드셀(weights[0]) 기준으로 대표 잔량을 계산하여 전송
-  int remainPercent = (int)((weights[0] / maxWeight) * 100.0f);
-    updateProgressBar(constrain(remainPercent, 0, 100));
+  updateScentProgressBars();
 
   xTaskCreatePinnedToCore(networkTaskLoop, "NetworkTask", 8192, NULL, 1, &NetworkTaskHandle, 1);
   xTaskCreatePinnedToCore(sensorTaskLoop, "SensorTask", 8192, NULL, 1, &SensorTaskHandle, 0);
@@ -325,7 +327,8 @@ void processSettingModeInput() {
 
     case 'i':
       {
-        String newId = Serial.readStringUntil('\n'); 
+        delay(50); // 버퍼 대기
+        String newId = Serial.readString(); 
         newId.trim();
         if (newId.length() > 0) {
           deviceId = newId;
@@ -406,7 +409,7 @@ void processStandardInput() {
   }
 }
 
-// 💡 [추가] 서브 루틴: LED 설정 모드 입력 처리
+// 💡 [추가] 서브 루틴: LED 설정 모드 입력 처리 (handleInput에서 분리)
 void processLedSettingInput(String input) {
   int values[4];
   int count = 0, lastIdx = 0;
@@ -440,12 +443,14 @@ void processLedSettingInput(String input) {
   }
 }
 
-// --- 통합 입력 처리 (Switch-Case 최적화) ---
+// --- 통합 입력 처리 (최적화 완료) ---
 void handleInput(String input) {
-    if (currentMode == MODE_LED) {
+  // 분리된 LED 로직 호출
+  if (currentMode == MODE_LED) {
     processLedSettingInput(input);
     return; 
   }
+  
   if (currentMode == MODE_READY) {
     int cmdInt = input.toInt();
     switch (cmdInt) {
@@ -545,11 +550,9 @@ void enterWeatherMode(bool runNow) {
 }
 
 void runSprayLogic() { 
-  bool hasActive = false;
-  for (int i = 0; i < 4; i++) {
-    if (activeNozzles[i]) hasActive = true;
-  }
-  if (!hasActive) return;
+  // 💡 [업그레이드] 불필요한 for문 반복을 제거하는 Early Return(빠른 종료) 최적화
+  // 시스템이 분사 중이 아닐 때는 연산을 즉시 건너뛰어 CPU 리소스를 절약합니다.
+  if (!isRunning) return;
 
   if (isSpraying) {
     if (millis() - prevMotorMillis >= sprayDuration) {
