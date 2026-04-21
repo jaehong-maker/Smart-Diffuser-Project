@@ -104,23 +104,38 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   showPrompt();
 }
 
+static String findNextionCmd(const String &buf) {
+  const char* tokens[] = {"M1", "M2", "M3", "Y1", "Y2", "Y3", "ST", "BM", "RE", "OF", "S1", "S2", "S3", "S4"};
+  for (int i = 0; i < 14; i++) {
+    if (buf.indexOf(tokens[i]) >= 0) return String(tokens[i]);
+  }
+  return "";
+}
+
+static bool processNextionChar(char c, String &buf, bool executeCmd = true) {
+  if (isalnum((unsigned char)c) || c == '_' || c == ' ') buf += c;
+  String cmd = findNextionCmd(buf);
+  if (cmd.length() > 0) {
+    if (executeCmd) handleNextionCmd(cmd);
+    buf = "";
+    return true;
+  }
+  else if (buf.length() > 64) buf = "";
+  return false;
+}
+
 void checkNextionInput() {
-  static String buf = ""; 
+  static String primaryBuf = "";
+
   while (nexSerial.available()) {
     char c = (char)nexSerial.read();
-    
-    lastActivityTime = millis(); // 화면 터치 시 타이머 리셋
-    if (currentMode == MODE_SLEEP) wakeUpSystem(); 
+    uint8_t b = (uint8_t)c;
+    Serial.printf("[NEX RX] 0x%02X '%c'\r\n", b, (b >= 32 && b <= 126) ? c : '.');
 
-    if (isalnum(c) || c == '_' || c == ' ') buf += c;
-    if (buf == "M1" || buf == "M2" || buf == "M3" ||
-        buf == "Y1" || buf == "Y2" || buf == "Y3" ||
-        buf == "ST" || buf == "BM" || buf == "RE" || buf == "OF" ||
-        (buf.startsWith("S") && buf.length() == 2)) {
-      handleNextionCmd(buf);
-      buf = "";
-    }
-    else if (buf.length() > 64) buf = ""; 
+    lastActivityTime = millis(); // 화면 터치 시 타이머 리셋
+    if (currentMode == MODE_SLEEP) wakeUpSystem();
+
+    processNextionChar(c, primaryBuf);
   }
 }
 
@@ -198,25 +213,34 @@ void updateDisplay(int iconID, String text) {
   nexSend("p0.pic=" + String(iconID)); text.replace("\"", "'"); nexSend("t_weather.txt=\"" + text + "\"");
 }
 void updateTempHumi(float tempC, float humi) { nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\""); nexSend("t_humi.txt=\"" + String(humi, 0) + "%\""); }
-void updateProgressBar(int val) { nexSend("j1.val=" + String(constrain(val, 0, 100))); }
+void updateProgressBar(int val) { updateProgressBar(1, val); }
+void updateProgressBar(int barIndex, int val) {
+  int safeIndex = constrain(barIndex, 1, 4);
+  nexSend("j" + String(safeIndex) + ".val=" + String(constrain(val, 0, 100)));
+}
+void updateScentProgressBars() {
+  float fullWeight = (maxWeight > 0.0f) ? maxWeight : 1.0f;
+  for (int i = 0; i < 4; i++) {
+    int remainPercent = (int)((weights[i] / fullWeight) * 100.0f);
+    updateProgressBar(i + 1, remainPercent);
+  }
+}
 
 // 👇 1. connectWiFi 함수 바로 위에 '디스플레이 감시자 태스크'를 추가합니다.
 void displayWatcherTask(void *pvParameters) {
+  static String tempBuf = "";
   for(;;) {
     if (nexSerial.available()) {
       char c = (char)nexSerial.read();
-      static String tempBuf = "";
-      if (isalnum(c) || c == '_' || c == ' ') tempBuf += c;
-      
-      // 디스플레이에서 OF 신호가 들어온 것을 실시간으로 포착!
-      if (tempBuf.indexOf("OF") != -1) {
+      uint8_t b = (uint8_t)c;
+      Serial.printf("[NEX RX/WIFI] 0x%02X '%c'\r\n", b, (b >= 32 && b <= 126) ? c : '.');
+      bool handled = processNextionChar(c, tempBuf, false);
+
+      // Wi-FiManager가 막고 있는 동안 들어온 터치는 오프라인 부팅으로 전환해서 메인 루프를 살립니다.
+      if (handled) {
         Serial.println(C_GREEN "\r\n🔌 [Offline] 오프라인 버튼 터치 감지! 수동 모드로 즉시 전환합니다..." C_RESET);
-        
-        // 플래시 메모리에 오프라인 강제 진입 티켓 발급
         prefs.putBool("force_offline", true); 
         delay(100);
-        
-        // 블로킹을 강제로 깨기 위해 시스템 즉시 재부팅 (0.5초 컷)
         ESP.restart(); 
       }
       if (tempBuf.length() > 20) tempBuf = ""; 
@@ -246,8 +270,8 @@ void connectWiFi() {
 
   WiFiManager wifiManager;
 
-  // ★★★ [핵심 2] 사용자 요청대로 무한정 대기 (0으로 설정) ★★★
-  wifiManager.setConfigPortalTimeout(0); 
+  // Wi-Fi 설정 중에도 수동 모드와 로드셀 표시가 살아야 하므로 무한 대기는 피합니다.
+  wifiManager.setConfigPortalTimeout(30); 
 
   wifiManager.setAPStaticIPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
   wifiManager.setCaptivePortalEnable(true); 
@@ -259,10 +283,10 @@ void connectWiFi() {
 
   if (savedSSID.length() > 0) {
     Serial.printf("\r\n[WiFi] 저장된 와이파이 발견: %s\r\n", savedSSID.c_str());
-    Serial.println("[WiFi] 연결을 무한 대기합니다. 건너뛰려면 디스플레이의 OF 버튼을 누르세요.");
+    Serial.println("[WiFi] 연결을 30초간 대기합니다. 실패하면 오프라인 모드로 계속 진행합니다.");
   } else {
     Serial.println("\r\n[WiFi] 최초 부팅 상태입니다! (와이파이 미설정)");
-    Serial.println("[WiFi] 설정될 때까지 무한 대기합니다. 수동 모드로 가려면 OF 버튼을 누르세요.");
+    Serial.println("[WiFi] 설정을 30초간 대기합니다. 실패하면 오프라인 모드로 계속 진행합니다.");
   }
 
   wifiManager.setAPCallback([](WiFiManager *myWiFiManager) {
@@ -274,9 +298,10 @@ void connectWiFi() {
   TaskHandle_t watcherHandle = NULL;
   xTaskCreatePinnedToCore(displayWatcherTask, "WatcherTask", 2048, NULL, 1, &watcherHandle, 0);
 
-  // 여기서부터 코드가 멈추고 와이파이를 무한정 기다리지만, 백그라운드의 감시자는 계속 일합니다.
+  // 여기서 잠시 Wi-Fi 설정을 기다리지만, 제한 시간이 지나면 오프라인으로 계속 진행합니다.
   if (!wifiManager.autoConnect("SmartDiffuser_Setup")) {
     Serial.println(C_YELLOW "\r\n[Warning] Wi-Fi 설정 실패." C_RESET);
+    updateDisplay(0, "Offline Mode");
   } else {
     Serial.printf("\r\nConnected! IP: %s\r\n", WiFi.localIP().toString().c_str());
     updateDisplay(0, "WiFi Connected");
@@ -389,6 +414,8 @@ void sendServerRequest(String payload) {
 
 // --- 최적화 2: 오디오 버퍼 메모리 할당 방식 개선 (ESP-IDF API 적용) ---
 bool recordAudio(uint8_t** audioBuffer, uint32_t* totalSize) {
+  *audioBuffer = NULL; // [추가] 초기화
+  
   uint32_t dataSize = SAMPLE_RATE * RECORD_TIME * 2;
   *totalSize = sizeof(WavHeader) + dataSize;
   
@@ -451,11 +478,18 @@ void recordAndSendVoice() {
   if (WiFi.status() != WL_CONNECTED) return;
   SystemMode prevMode = currentMode; currentMode = MODE_VOICE; 
   uint8_t* audioBuffer = NULL; uint32_t totalSize = 0;
+
   if (recordAudio(&audioBuffer, &totalSize)) {
     String response = "";
     if (sendAudioToServer(audioBuffer, totalSize, response)) executeVoiceCommand(response);
   }
-  if (audioBuffer != NULL) free(audioBuffer);
+
+  // [수정] 메모리 해제 로직 강화
+  if (audioBuffer != NULL) {
+    free(audioBuffer);
+    audioBuffer = NULL; 
+  }
+  
   currentMode = (prevMode == MODE_VOICE) ? MODE_READY : prevMode; showPrompt();
 }
 
@@ -496,7 +530,7 @@ void initOTA() {
   
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     int percent = (progress / (total / 100));
-    updateProgressBar(percent); // 디스플레이의 j1(프로그레스 바) 실시간 연동
+    updateDisplay(0, String("OTA ") + String(percent) + "%");
     Serial.printf("[OTA] 진행률: %u%%\r", percent);
   });
   
