@@ -257,7 +257,6 @@ static String attachDeviceIdIfMissing(const String &payload) {
   return normalized;
 }
 
-// --- NetworkUI.cpp 파일의 triggerSpray 함수 수정 ---
 void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   forceAllOff();
   
@@ -265,7 +264,10 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   String cmdStr = String(cmd);
   int activeCount = parseAndSetNozzles(cmdStr);
   
-  if (activeCount == 0) return; // 유효하지 않은 명령어 필터링
+  if (activeCount == 0) {
+      updateDisplay(0, "Low Fluid! Blocked"); // 화면에 경고 띄우기
+      return; 
+  }
 
   if (currentMode == MODE_AMBIENT) {
     if (lastAmbientScent == 0) {
