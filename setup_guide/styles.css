@@ -46,6 +46,26 @@ code {
   border-radius: 4px;
 }
 
+.portal-link {
+  display: inline-block;
+  text-decoration: none;
+  transition: transform 0.1s, background 0.15s;
+}
+.portal-link code {
+  background: var(--accent);
+  color: #fff;
+  padding: 0.25em 0.6em;
+  font-weight: 600;
+}
+.portal-link::after {
+  content: " →";
+  color: var(--accent-deep);
+  font-weight: 600;
+  margin-left: 0.15em;
+}
+.portal-link:hover { text-decoration: none; transform: translateY(-1px); }
+.portal-link:hover code { background: var(--accent-deep); }
+
 .skip-link {
   position: absolute;
   left: -9999px;
