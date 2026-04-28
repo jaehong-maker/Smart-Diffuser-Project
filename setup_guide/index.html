@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5a8a72">
+  <meta name="description" content="SmartDiffuser 초기 설정 가이드 — 전원 연결부터 첫 분사까지 5분.">
+  <title>SmartDiffuser 초기 설정 가이드</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="kicker">SmartDiffuser · Quick Start</p>
+      <h1>5분이면 끝나는<br><span class="hl">첫 사용 가이드</span></h1>
+      <p class="lead">디바이스를 박스에서 막 꺼냈다면, 아래 순서대로만 따라오세요.</p>
+      <div class="cta-row">
+        <a href="#step-1" class="cta">설정 시작</a>
+        <a href="#trouble" class="cta cta-ghost">문제 해결</a>
+      </div>
+      <dl class="hero-meta">
+        <div><dt>소요 시간</dt><dd>약 5분</dd></div>
+        <div><dt>준비물</dt><dd>스마트폰, WiFi</dd></div>
+        <div><dt>난이도</dt><dd>쉬움</dd></div>
+      </dl>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="목차">
+    <p class="toc-title">설정 단계</p>
+    <ol>
+      <li><a href="#step-1">전원 켜기</a></li>
+      <li><a href="#step-2">설정용 WiFi 연결</a></li>
+      <li><a href="#step-3">집 WiFi 등록</a></li>
+      <li><a href="#step-4">메인 화면 확인</a></li>
+      <li><a href="#step-5">영점(Tare) 잡기</a></li>
+      <li><a href="#step-6">향 충전하기</a></li>
+      <li><a href="#step-7">모드 선택</a></li>
+    </ol>
+  </nav>
+
+  <main id="main">
+
+    <article id="step-1" class="step">
+      <div class="step-head">
+        <span class="step-num">1</span>
+        <h2>전원 켜기</h2>
+      </div>
+      <p>USB-C 어댑터(5V/2A 이상)를 본체 후면 포트에 연결합니다. 약 2초 후 디스플레이가 켜지고 부팅 화면이 나타납니다.</p>
+      <div class="callout">
+        <p class="callout-title">처음 켜는 디바이스라면</p>
+        <p>WiFi 정보가 저장되어 있지 않으므로 자동으로 <strong>설정 모드(AP 모드)</strong>에 진입합니다. 디스플레이 상단에 <code>SmartDiffuser_Setup</code> 글자가 보이면 정상입니다.</p>
+      </div>
+    </article>
+
+    <article id="step-2" class="step">
+      <div class="step-head">
+        <span class="step-num">2</span>
+        <h2>설정용 WiFi에 연결</h2>
+      </div>
+      <p>스마트폰 WiFi 목록에서 <code>SmartDiffuser_Setup</code>을 선택해 연결하세요. 비밀번호는 없습니다.</p>
+      <ul class="checklist">
+        <li>iOS는 자동으로 설정 페이지가 열립니다.</li>
+        <li>Android는 알림창에 <em>"이 네트워크에 로그인"</em>을 누르거나, 브라우저에서 <code>192.168.4.1</code>을 직접 여세요.</li>
+      </ul>
+    </article>
+
+    <article id="step-3" class="step">
+      <div class="step-head">
+        <span class="step-num">3</span>
+        <h2>집 WiFi 등록</h2>
+      </div>
+      <p>설정 페이지가 열리면 <strong>Configure WiFi</strong>를 누르고, 사용 중인 WiFi를 선택해 비밀번호를 입력합니다.</p>
+      <p><strong>Save</strong>를 누르면 디바이스가 자동으로 재부팅됩니다. 이 과정에서 스마트폰 WiFi는 끊길 수 있어요. 정상입니다.</p>
+      <div class="callout warn">
+        <p class="callout-title">주의</p>
+        <p>2.4GHz 대역만 지원합니다. 5GHz 전용 공유기를 쓰고 있다면 듀얼 밴드 모드로 바꾸거나, 폰의 핫스팟을 임시로 사용하세요.</p>
+      </div>
+    </article>
+
+    <article id="step-4" class="step">
+      <div class="step-head">
+        <span class="step-num">4</span>
+        <h2>메인 화면 확인</h2>
+      </div>
+      <p>약 10초 안에 디스플레이가 메인 화면으로 전환되며, 다음 정보가 표시되면 연결 성공입니다.</p>
+      <div class="screen-mock" aria-hidden="true">
+        <div class="screen-row"><span>날씨</span><span class="dim">맑음</span></div>
+        <div class="screen-row"><span>온도 / 습도</span><span class="dim">22.4°C / 48%</span></div>
+        <div class="screen-row"><span>잔량 1~4</span><span class="dim">100%</span></div>
+      </div>
+      <div class="callout">
+        <p class="callout-title">연결이 안 됐다면</p>
+        <p>디스플레이 우측의 <code>RE</code> 버튼을 눌러 WiFi 정보를 초기화한 뒤, 2단계부터 다시 진행하세요.</p>
+      </div>
+    </article>
+
+    <article id="step-5" class="step">
+      <div class="step-head">
+        <span class="step-num">5</span>
+        <h2>영점(Tare) 잡기</h2>
+      </div>
+      <p>잔량을 정확히 측정하려면 <strong>빈 용기 상태</strong>의 무게를 0으로 맞추는 작업이 필요합니다.</p>
+      <ol class="ordered">
+        <li>4개 향 용기를 비운 상태로 각 슬롯 정중앙에 올립니다.</li>
+        <li>디스플레이 메뉴에서 <code>설정</code>(또는 <code>M3 / Y2</code>)을 누릅니다.</li>
+        <li>잠시 기다리면 4채널 모두 0%로 초기화되고, NVS에 자동 저장됩니다.</li>
+      </ol>
+      <div class="callout">
+        <p class="callout-title">한 번만 하면 됩니다</p>
+        <p>영점 값은 디바이스에 영구 저장됩니다. 용기 모델을 바꾸지 않는 한 다시 할 필요는 없습니다.</p>
+      </div>
+    </article>
+
+    <article id="step-6" class="step">
+      <div class="step-head">
+        <span class="step-num">6</span>
+        <h2>향 충전하기</h2>
+      </div>
+      <p>각 슬롯에 디퓨저 액을 채웁니다. 기본 매핑은 다음과 같습니다.</p>
+      <div class="grid-4">
+        <div class="card"><span class="card-num">1</span><strong>맑음</strong><span class="dim">시트러스 계열 추천</span></div>
+        <div class="card"><span class="card-num">2</span><strong>흐림</strong><span class="dim">우디 계열 추천</span></div>
+        <div class="card"><span class="card-num">3</span><strong>비</strong><span class="dim">아쿠아 계열 추천</span></div>
+        <div class="card"><span class="card-num">4</span><strong>눈</strong><span class="dim">머스크 계열 추천</span></div>
+      </div>
+      <p>채우는 동안 디스플레이의 잔량 게이지(<code>j1~j4</code>)가 실시간으로 차오르는 것을 확인할 수 있습니다.</p>
+    </article>
+
+    <article id="step-7" class="step">
+      <div class="step-head">
+        <span class="step-num">7</span>
+        <h2>모드 선택해서 사용 시작</h2>
+      </div>
+      <p>준비가 끝났습니다. 디스플레이에서 원하는 모드를 선택하세요.</p>
+      <ul class="mode-list">
+        <li><strong>수동(Manual)</strong> — 4개 버튼으로 직접 분사</li>
+        <li><strong>날씨(Weather)</strong> — 현재 지역 날씨에 맞춰 자동 분사</li>
+        <li><strong>앰비언트(Ambient)</strong> — 주변 소음 분석 기반 향 추천</li>
+        <li><strong>음성(Voice)</strong> — 2초 녹음으로 음성 명령 실행</li>
+      </ul>
+      <div class="callout success">
+        <p class="callout-title">설정 완료</p>
+        <p>이제 모든 기능을 사용할 수 있습니다. 사용 중 궁금한 점은 아래 문제 해결을 참고하세요.</p>
+      </div>
+    </article>
+
+  </main>
+
+  <section id="trouble" class="troubleshoot">
+    <h2>문제 해결</h2>
+
+    <details>
+      <summary>설정 WiFi(<code>SmartDiffuser_Setup</code>)가 보이지 않아요</summary>
+      <p>이미 한 번 설정된 디바이스일 수 있습니다. 디스플레이의 <code>RE</code> 버튼을 길게 눌러 WiFi 정보를 초기화한 뒤 재부팅하세요. 부팅 후 다시 AP 모드로 진입합니다.</p>
+    </details>
+
+    <details>
+      <summary>설정 페이지(192.168.4.1)가 안 열려요</summary>
+      <p>모바일 데이터를 잠시 끄고 시도해 보세요. 일부 단말은 인터넷이 안 되는 WiFi에 자동으로 모바일 데이터를 우선시합니다. 그래도 안 되면 <code>OF</code> 버튼을 눌러 오프라인 모드로 진입한 뒤, 시리얼이나 앱을 통해 설정할 수 있습니다.</p>
+    </details>
+
+    <details>
+      <summary>영점을 잡았는데 잔량이 음수로 나와요</summary>
+      <p>용기 위치가 슬롯 중앙에서 벗어났거나, 영점 직후 용기를 살짝 들었다 놓은 경우입니다. 5단계를 다시 진행하세요.</p>
+    </details>
+
+    <details>
+      <summary>분사 버튼을 눌러도 펌프가 동작하지 않아요</summary>
+      <p>해당 채널 잔량이 15% 미만이면 보호 로직이 작동해 분사가 차단됩니다. 향을 보충해 주세요. 보충해도 동작하지 않으면 SETTING 페이지의 <em>자가 진단</em>으로 모터/배관을 점검할 수 있습니다.</p>
+    </details>
+
+    <details>
+      <summary>날씨 모드가 항상 같은 향만 분사돼요</summary>
+      <p>지역 정보가 비어 있거나 잘못 등록된 경우입니다. SETTING 페이지에서 지역명을 다시 입력하거나, 모바일 앱에서 위치 권한을 허용한 뒤 재동기화하세요.</p>
+    </details>
+
+    <details>
+      <summary>디스플레이가 갑자기 꺼져요</summary>
+      <p>일정 시간 입력이 없으면 자동으로 <strong>SLEEP 모드</strong>로 진입해 디스플레이를 끕니다. 화면이나 본체를 한 번 터치하면 다시 켜집니다.</p>
+    </details>
+  </section>
+
+  <section class="tips">
+    <h2>알아두면 좋은 팁</h2>
+    <div class="grid-2">
+      <div class="tip">
+        <h3>모바일 앱 사용</h3>
+        <p>Android 앱을 설치하면 외출 중에도 모드 전환과 잔량 확인이 가능합니다.</p>
+      </div>
+      <div class="tip">
+        <h3>OTA 업데이트</h3>
+        <p>새 펌웨어가 배포되면 케이블 연결 없이 WiFi로 자동 업데이트됩니다. 진행률은 디스플레이에 표시됩니다.</p>
+      </div>
+      <div class="tip">
+        <h3>블렌드 모드</h3>
+        <p><code>BM</code> 버튼으로 활성화한 뒤 향 두 개를 순서대로 누르면, 두 향이 동시에 분사됩니다.</p>
+      </div>
+      <div class="tip">
+        <h3>음성 명령 예시</h3>
+        <p>"맑은 날 같은 향" / "잔잔한 향 부탁해" 같은 자연어가 인식됩니다.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p class="footer-team">성공적이조 · 정보통신공학과 종합설계</p>
+    <p class="footer-version">SmartDiffuser Setup Guide v1.0</p>
+  </footer>
+
+  <button id="topBtn" aria-label="맨 위로" hidden>↑</button>
+
+  <script src="script.js" defer></script>
+</body>
+</html>
