@@ -273,10 +273,23 @@ def save_spray_mapping(device_id, mapping, email=None):
 
 def get_spray_from_kind(device_id, kind_code):
     try:
-        target_kind = int(kind_code)
-        for spray_no, loaded_kind in get_spray_mapping(device_id).items():
-            if int(loaded_kind) == target_kind:
-                return int(spray_no)
+        # kind_code가 단일 향기(예: 5)일 수도 있고, 블렌딩(예: 14)일 수도 있습니다.
+        target_kinds = [int(k) for k in str(kind_code) if k.isdigit()]
+        
+        mapping = get_spray_mapping(device_id)
+        # value: key (kind: spray_no) 로 뒤집기
+        kind_to_spray = {int(k): int(s) for s, k in mapping.items()}
+        
+        valid_sprays = []
+        for tk in target_kinds:
+            if tk in kind_to_spray:
+                valid_sprays.append(str(kind_to_spray[tk]))
+        
+        if valid_sprays:
+            # 중복 제거 후 오름차순 정렬하여 반환 (예: "23")
+            unique_sprays = sorted(list(set(valid_sprays)))
+            return int("".join(unique_sprays))
+            
     except Exception as e:
         logger.error(f"Kind To Spray Error: {e}")
     return None
