@@ -18,9 +18,15 @@ void executeSprayStart(const String& cmdStr, int durationSec) {
     int activeCount = 0;
     for (int i = 0; i < 4; i++) activeNozzles[i] = false;
 
+
+
     for (int i = 0; i < (int)cmdStr.length(); i++) {
         int nozzleIdx = cmdStr.charAt(i) - '1'; 
         if (nozzleIdx >= 0 && nozzleIdx < 4) {
+          if (calculateScentPercent(weights[nozzleIdx]) < 9.0f) {
+                Serial.printf(C_RED "🚨 [안전 장치] %d번 카트리지 잔량 12%% 미만! 모터 보호를 위해 분사를 차단합니다.\r\n" C_RESET, nozzleIdx + 1);
+                continue; 
+            }
             if (!activeNozzles[nozzleIdx]) {
                 activeNozzles[nozzleIdx] = true;
                 lastNozzleSprayTime[nozzleIdx] = millis();
@@ -52,6 +58,10 @@ void executeSprayStart(const String& cmdStr, int durationSec) {
         
         playSound(track); 
         Serial.printf(C_GREEN "[Audio] 재생 시도: %d번 트랙\r\n" C_RESET, track);
+    }else {
+        // ✅ [추가] 만약 선택한 노즐이 모두 12% 미만이라서 켜진 게 없다면?
+        Serial.println(C_YELLOW "⚠️ 작동 가능한 카트리지가 없어 분사가 취소되었습니다." C_RESET);
+        updateDisplay(0, "Low Fluid! Blocked");
     }
 }
 
@@ -333,10 +343,10 @@ void processSettingModeInput() {
 
     case 't':
       for(int i=0; i<4; i++) scales[i].tare(); 
-      Serial.println("\r\n✅ [영점 완료]"); 
+      resetWeightFilters(); // ★ 추가: 지수 이동 평균의 이전 값을 즉시 0으로 리셋
+      Serial.println("\r\n✅ [영점 완료] 필터 잔상이 제거되었습니다."); 
       Serial.printf("📊 현재 잔량: W1:%.1fg | W2:%.1fg | W3:%.1fg | W4:%.1fg\r\n", 
-                    scales[0].get_units(5), scales[1].get_units(5), 
-                    scales[2].get_units(5), scales[3].get_units(5));
+                    weights[0], weights[1], weights[2], weights[3]);
       showPrompt(); 
       break;
 
@@ -733,6 +743,10 @@ int parseAndSetNozzles(String cmdStr) {
     for (int i = 0; i < (int)cmdStr.length(); i++) {
         int cmd = cmdStr.charAt(i) - '0';
         if (cmd >= 1 && cmd <= 4) {
+          if (calculateScentPercent(weights[cmd - 1]) < 9.0f) {
+                Serial.printf(C_RED "🚨 [안전 장치] %d번 카트리지 잔량 9%% 미만! 모터 보호를 위해 분사를 차단합니다.\r\n" C_RESET, cmd);
+                continue; 
+            }
             if (!activeNozzles[cmd - 1]) {
                 activeNozzles[cmd - 1] = true;
                 lastNozzleSprayTime[cmd - 1] = millis();
