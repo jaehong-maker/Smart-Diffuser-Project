@@ -540,7 +540,7 @@ void connectWiFi() {
   WiFiManager wifiManager;
 
   // ★★★ [핵심 2] 사용자 요청대로 무한정 대기 (0으로 설정) ★★★
-  wifiManager.setConfigPortalTimeout(60); 
+  wifiManager.setConfigPortalTimeout(120); 
 
   wifiManager.setAPStaticIPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
   wifiManager.setCaptivePortalEnable(true); 
