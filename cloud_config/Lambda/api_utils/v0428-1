@@ -20,34 +20,6 @@ logger = logging.getLogger()
 s3 = boto3.client("s3")
 transcribe = boto3.client("transcribe")
 
-#hoon#
-def get_ai_recommendation(weather_text, humidity_val):
-    try:
-        # 지훈이의 AI 람다 API 엔드포인트 주소
-        ai_url = "https://vmqkp1y6f4.execute-api.ap-northeast-2.amazonaws.com/default/Diffuser-AI-Final"
-        
-        weather_map = {"맑음": 1, "흐림": 2, "비": 3, "눈": 4}
-        weather_code = 1
-        for key, value in weather_map.items():
-            if key in weather_text:
-                weather_code = value
-                break
-
-        payload = json.dumps({
-            "weather": weather_code, 
-            "humidity": float(humidity_val)
-        }).encode('utf-8')
-
-        req = urllib.request.Request(ai_url, data=payload, method='POST')
-        req.add_header('Content-Type', 'application/json')
-        
-        with urllib.request.urlopen(req, timeout=5) as res:
-            result = json.loads(res.read().decode('utf-8'))
-            return result.get("spray", 1) 
-    except Exception as e:
-        print(f"AI 서버 연동 실패: {e}")
-        return None
-#hoon#
 # api_utils.py
 
 def ask_gemini_recommendation(diary_text, user_history_text):
@@ -69,16 +41,16 @@ def ask_gemini_recommendation(diary_text, user_history_text):
     [사용자의 과거 향기 취향 데이터]
     {user_history_text}
     
-    이 일기를 분석하여 6가지 향기 중 기분 전환에 가장 도움이 될 향기를 추천해줘.
+    이 일기를 분석하여 7가지 옵션(6가지 향기 및 물) 중 기분 전환에 가장 도움이 될 향기를 추천해줘.
     ★중요 조건★: 
     1. 사용자가 과거에 '비선호'로 평가한 향기는 일기 내용과 어울리더라도 가급적 피할 것.
     2. 과거에 '선호'로 평가한 향기를 우선적으로 고려할 것.
     3. 단일 향기가 어울리면 1개만 고르고, 시너지가 나면 2개를 블렌딩해 (예: 1번과 2번 블렌딩 시 12, 3번과 4번 블렌딩 시 34).
     [향기 종류]
-    1: 시트러스 / 2: 센달우드 / 3: 패츄리 / 4: 페퍼민트 / 5: 라벤더 / 6: 바닐라
+    1: 시트러스 / 2: 센달우드 / 3: 패츄리 / 4: 페퍼민트 / 5: 라벤더 / 6: 바닐라 / 7: 물
 
     반드시 아래와 같은 순수 JSON 형식으로만 답변하고 다른 설명글은 절대 쓰지 마:
-    {"kind": 12, "reason": "사용자가 패츄리향을 싫어하여 제외하고, 평소 좋아하는 라벤더와 현재 피로를 풀어줄 시트러스를 블렌딩했습니다."}
+    {{"kind": 12, "reason": "사용자가 패츄리향을 싫어하여 제외하고, 평소 좋아하는 라벤더와 현재 피로를 풀어줄 시트러스를 블렌딩했습니다."}}
 
     """
 
@@ -286,22 +258,25 @@ def ask_gemini_voice_analysis(transcript):
     prompt = f"""
     사용자의 스마트 디퓨저 음성 명령(STT 결과): "{transcript}"
 
-    이 텍스트의 문맥과 감정을 분석하여 어떤 조치를 취해야 할지 JSON 형식으로 대답해 줘.
+    이 텍스트의 문맥(날씨, 기분, 오늘 있었던 일 등)을 분석하여 어떤 조치를 취할지 JSON 형식으로 대답해 줘.
 
-    [향기 종류]
+    [향기 옵션 (kind)]
     0: 기기 정지 (명령: 꺼, 멈춰, 그만 등)
-    1: 맑음 / 시트러스 (문맥: 상쾌함 필요, 아침, 기분 전환, 신남)
-    2: 흐림 / 라벤더 (문맥: 피곤함, 스트레스, 휴식, 차분함, 짜증)
-    3: 비 / 아쿠아 (문맥: 우울함, 진정 필요, 감성적, 슬픔)
-    4: 눈 / 쿨민트 (문맥: 시원함, 집중력, 답답함 해소)
+    1: 시트러스 (문맥: 상쾌함, 맑음, 기분 전환, 신남)
+    2: 센달우드 (문맥: 집중, 숲, 차분함)
+    3: 패츄리 (문맥: 흙내음, 비, 자연, 깊은 휴식)
+    4: 페퍼민트 (문맥: 시원함, 눈, 답답함 해소, 피로 회복)
+    5: 라벤더 (문맥: 피곤함, 흐림, 스트레스, 수면)
+    6: 바닐라 (문맥: 달콤함, 포근함, 위로)
+    7: 물 (문맥: 무향 가습 필요, 건조함)
 
     [규칙]
-    1. 사용자의 감정이나 의도를 파악하여 가장 알맞은 향기 번호(0~4)를 'spray'에 넣을 것.
+    1. 사용자의 감정, 상황, 날씨 언급 등을 종합적으로 파악하여 가장 알맞은 향기 번호(0~7)를 'kind'에 넣을 것.
     2. 시간(초, 분)에 대한 직접적인 언급이 있으면 'duration'에 초 단위로 반영하고, 없으면 기본값 3을 넣을 것.
     3. 다른 말은 절대 쓰지 말고 오직 순수 JSON만 반환할 것.
 
     예시 응답:
-    {{"spray": 2, "duration": 3, "reason": "사용자가 오늘 회사에서 짜증이 났다고 하여 스트레스 완화를 위해 라벤더를 추천함"}}
+    {{"kind": 5, "duration": 3, "reason": "오늘 회사에서 짜증이 났다고 하여 마음을 진정시켜주는 라벤더를 추천함"}}
     """
 
     payload = json.dumps({
@@ -320,12 +295,12 @@ def ask_gemini_voice_analysis(transcript):
             clean_text = text_result.replace("```json", "").replace("```", "").strip()
             result_json = json.loads(clean_text)
             
-            spray_code = int(result_json.get("spray", 1))
+            kind_code = int(result_json.get("kind", 1))
             duration = int(result_json.get("duration", 3))
             reason = result_json.get("reason", "문맥 분석 완료")
             
-            logger.info(f"[Gemini Voice 성공] 향기: {spray_code}, 이유: {reason}")
-            return spray_code, duration, f"AI분석: {reason}"
+            logger.info(f"[Gemini Voice 성공] 향기(kind): {kind_code}, 이유: {reason}")
+            return kind_code, duration, f"AI분석: {reason}"
             
     except Exception as e:
         logger.error(f"[Gemini Voice 에러, 기존 로직으로 전환] {e}")
