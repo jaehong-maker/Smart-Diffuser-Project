@@ -115,10 +115,11 @@ void initSystem() {
   Serial.begin(115200); Serial.setTimeout(5000);
   nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
   delay(300); 
-  nexSend("sleep=0");  // ★ 추가: 부팅 시 디스플레이 수면 모드 강제 해제
+  nexSend("sleep=0");  // 부팅 시 디스플레이 수면 모드 강제 해제
   delay(100);
   nexSend("bauds=9600"); delay(100); nexSend("dim=100");    
   
+  // 워치독 설정
   esp_task_wdt_config_t wdt_config = {
       .timeout_ms = 60000, 
       .idle_core_mask = (1 << 0) | (1 << 1), 
@@ -129,61 +130,63 @@ void initSystem() {
 
   networkQueue = xQueueCreate(10, sizeof(String*));
 
-  pinMode(PIN_SUNNY, OUTPUT); pinMode(PIN_CLOUDY, OUTPUT);
-  pinMode(PIN_RAIN, OUTPUT); pinMode(PIN_SNOW, OUTPUT); pinMode(PIN_LED, OUTPUT);
-  pinMode(PIN_BUSY, INPUT);
-  forceAllOff();
+  // --- 하드웨어 핀 모드 설정 (Config 네임스페이스 적용) ---
+  for (int i = 0; i < 4; i++) {
+    pinMode(Config::SPRAY_PINS[i], OUTPUT);
+  }
+  pinMode(Config::PIN_LED, OUTPUT);
+  pinMode(Config::PIN_DF_BUSY, INPUT);
+  
+  forceAllOff(); // 모든 출력 초기화
 
   Serial.printf(C_BOLD "\r\n 🚀 SMART DIFFUSER V12.7.0 (REFACTORED ARCHITECTURE) \r\n" C_RESET);
 
+  // DFPlayer 초기화
   mySoftwareSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
-  
-  // 💡 [업그레이드] DFPlayer 하드웨어 리셋 대기(3초) 생략으로 초고속 부팅 구현 & 고장 바이패스
   if (!myDFPlayer.begin(mySoftwareSerial, true, false)) { 
     Serial.println(C_RED "⚠️ [Audio] 스피커 연결 불량! 무음 모드로 바이패스합니다." C_RESET);
   }
 
   initMicrophone();
+  
+  // 설정값 복구 (Preferences)
   prefs.begin("diffuser", false);
   String defaultMac = "ESP_" + WiFi.macAddress();
   defaultMac.replace(":", "");
-  deviceId = prefs.getString("deviceId", defaultMac); // 저장된 이름이 없으면 MAC 주소가 기본값
+  deviceId = prefs.getString("deviceId", defaultMac);
   ledR = prefs.getUChar("ledR", 255);
   ledG = prefs.getUChar("ledG", 255);
   ledB = prefs.getUChar("ledB", 255);
   ledBrightness = prefs.getInt("ledBright", 150);
   lastWeatherRegion = prefs.getString("last_region", lastWeatherRegion);
 
+  // LED 스트립 초기화
   strip.begin();
-  strip.setBrightness(150); // 너무 눈부시지 않게 150으로 제한 (0~255)
-  strip.show(); // 일단 꺼진 상태로 대기
+  strip.setBrightness(150);
+  strip.show();
+  
   calibration_factor = prefs.getFloat("cal_factor", 430.0);
-  currentVolume = prefs.getInt("volume", 20); myDFPlayer.volume(currentVolume);
+  currentVolume = prefs.getInt("volume", 20); 
+  myDFPlayer.volume(currentVolume);
 
-  // initSystem() 함수 내부 로드셀 초기화 부분 수정
+  // 로드셀 초기화 및 오프셋 복구
   for (int i = 0; i < 4; i++) {
     scales[i].begin(LOADCELL_DT[i], LOADCELL_SCK[i]);
     scales[i].set_scale(calibration_factor);
   
-    // 1. 저장된 오프셋 키 생성 (예: "off_0", "off_1" 등)
     String key = "off_" + String(i);
-  
-    // 2. Preferences에서 저장된 오프셋 값 읽기 (기본값 0)
     long savedOffset = prefs.getLong(key.c_str(), 0);
   
-    // 3. 읽어온 값이 있다면 적용 (부팅 시 자동 tare 방지)
     if (savedOffset != 0) {
       scales[i].set_offset(savedOffset);
       Serial.printf("[LoadCell %d] 오프셋 복구 완료: %ld\r\n", i + 1, savedOffset);
     } else {
-      // 저장된 값이 없는 최초 실행 시에만 영점 잡기
-      scales[i].tare();
+      scales[i].tare(); // 저장된 값이 없으면 영점 잡기
     }
   
     lastNozzleSprayTime[i] = millis();
 
-    // ★ [추가된 인터럽트 할당 로직] 
-    // DOUT 핀이 HIGH에서 LOW로 떨어질 때(FALLING) 해당 센서의 ISR 실행
+    // 인터럽트 할당
     if (i == 0) attachInterrupt(digitalPinToInterrupt(LOADCELL_DT[0]), isr_hx0, FALLING);
     if (i == 1) attachInterrupt(digitalPinToInterrupt(LOADCELL_DT[1]), isr_hx1, FALLING);
     if (i == 2) attachInterrupt(digitalPinToInterrupt(LOADCELL_DT[2]), isr_hx2, FALLING);
@@ -191,7 +194,7 @@ void initSystem() {
   }
 
   connectWiFi();
-  configTime(9 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  configTime(9 * 3600, 0, "pool.ntp.org", "time.nist.gov"); // NTP 시간 동기화
 
   audioEventQueue = xQueueCreate(5, sizeof(int));
   networkEventGroup = xEventGroupCreate();
@@ -202,14 +205,16 @@ void initSystem() {
   
   lastActivityTime = millis(); 
   setSystemMode(MODE_READY, "System Ready");
-  updateScentProgressBars();
+  updateScentProgressBars(); // 잔량 표시 업데이트
 
+  // 오프라인 강제 진입 등으로 남은 명령 처리
   String pendingNextionCmd = prefs.getString("pending_nextion_cmd", "");
   if (pendingNextionCmd.length() > 0) {
     prefs.remove("pending_nextion_cmd");
     handleNextionCmd(pendingNextionCmd);
   }
 
+  // 백그라운드 태스크 실행
   xTaskCreatePinnedToCore(networkTaskLoop, "NetworkTask", 8192, NULL, 1, &NetworkTaskHandle, 1);
   xTaskCreatePinnedToCore(sensorTaskLoop, "SensorTask", 8192, NULL, 1, &SensorTaskHandle, 0);
 }
@@ -568,37 +573,22 @@ void enterWeatherMode(bool runNow) {
 }
 
 void runSprayLogic() { 
-  // 💡 [업그레이드] 불필요한 for문 반복을 제거하는 Early Return(빠른 종료) 최적화
-  // 시스템이 분사 중이 아닐 때는 연산을 즉시 건너뛰어 CPU 리소스를 절약합니다.
-  if (!isRunning) return;
+    if (!isRunning) return;
 
-  if (isSpraying) {
-    if (millis() - prevMotorMillis >= sprayDuration) {
-      forceAllOff();
-      isSpraying = false; 
-      prevMotorMillis = millis();
-      
-      if (currentMode != MODE_MANUAL) {
-        updateDisplay((currentMode == MODE_WEATHER) ? lastWeatherIconId : 0, "Resting...");
-      }
-    }
-  } else {
-    if (millis() - prevMotorMillis >= REST_TIME) {
-      forceAllOff(); 
-      for (int i = 0; i < 4; i++) {
-        if (activeNozzles[i]) {
-          int pin = getPinFromCommand(i + 1);
-          if (pin != -1) digitalWrite(pin, LOW);
+    unsigned long elapsed = millis() - prevMotorMillis;
+    unsigned long targetInterval = isSpraying ? sprayDuration : REST_TIME;
+
+    if (elapsed >= targetInterval) {
+        isSpraying = !isSpraying;
+        prevMotorMillis = millis();
+        
+        // 이제 Globals.h에 선언되었으므로 에러가 사라집니다!
+        applyNozzleHardwareState();
+
+        if (currentMode != MODE_MANUAL) {
+            updateDisplay(0, isSpraying ? "Spraying..." : "Resting...");
         }
-      }
-      isSpraying = true; 
-      prevMotorMillis = millis();
-      
-      if (currentMode != MODE_MANUAL) {
-        updateDisplay(0, "Spraying...");
-      }
     }
-  }
 }
 
 void runAutoDemoLoop() { 
@@ -618,17 +608,26 @@ void checkSafety() {
   if (millis() - startTimeMillis > MAX_RUN_TIME) { setSystemMode(MODE_READY, "Safety Timeout"); }
 }
 
-void setSystemMode(SystemMode mode, String msg) { 
-  currentMode = mode;
-  if (msg != "") {
-    Serial.printf(C_CYAN "\r\n[Mode] %s\r\n" C_RESET, msg.c_str());
-    updateDisplay(0, msg);
-  }
-  
-  if (mode == MODE_READY) {
-    stopSystem();
-    printMainMenu(); 
-  }
+void setSystemMode(SystemMode mode, String msg) {
+    // 1. 이전 모드에서 빠져나올 때의 정리 작업
+    if (currentMode != mode) {
+        forceAllOff(); 
+        isSpraying = false;
+        isRunning = false;
+    }
+
+    currentMode = mode;
+    
+    // 2. 새로운 모드 진입 로그 및 디스플레이 업데이트
+    if (msg != "") {
+        Serial.printf(C_CYAN "\r\n[Mode Change] -> %s\r\n" C_RESET, msg.c_str());
+        updateDisplay(0, msg);
+    }
+
+    if (mode == MODE_READY) {
+        stopSystem();
+        printMainMenu();
+    }
 }
 
 void printSettingMenu() {
