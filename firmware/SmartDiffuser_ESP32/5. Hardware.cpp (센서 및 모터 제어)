@@ -213,7 +213,12 @@ void checkSensorHealth() {
 
 void monitorWeight() {
   bool updated = false;
-  bool forcePoll = (millis() - lastWeightCheckTime > 250);
+  unsigned long currentTime = millis();
+  bool forcePoll = (currentTime - lastWeightCheckTime > 250);
+
+  // ★ 지수 이동 평균 가중치 (0.1 ~ 0.2 추천)
+  // 낮을수록 더 부드럽게(느리게) 변하고, 높을수록 실제 무게를 더 빨리 반영합니다.
+  const float alpha = 0.15f; 
 
   for (int i = 0; i < 4; i++) {
     if (hxReady[i] || forcePoll) {
@@ -221,23 +226,40 @@ void monitorWeight() {
       
       if (scales[i].is_ready()) { 
         float currentRawWeight = scales[i].get_units(1);
-        // 하드웨어 스파이크(튀는 값) 노이즈 무시
+        
+        // 1. 하드웨어 스파이크(튀는 값) 노이즈 무시
         if (currentRawWeight > 5000.0 || currentRawWeight < -500.0) continue;
         
-        weights[i] = currentRawWeight; 
+        // 2. 지수 이동 평균(EMA) 필터 적용
+        // weights[i]는 전역 변수이므로 이전 루프의 필터링된 값을 기억하고 있습니다.
+        weights[i] = (currentRawWeight * alpha) + (weights[i] * (1.0f - alpha));
+        
+        // 3. 데드존 처리: 0.5g 미만의 미세한 값은 0.0g으로 고정
+        if (abs(weights[i]) < 0.5f) {
+          weights[i] = 0.0f;
+        }
+        
         updated = true;
       }
     }
   }
   
-  if (forcePoll) lastWeightCheckTime = millis();
+  if (forcePoll) lastWeightCheckTime = currentTime;
 
-  // 디스플레이 UART 통신 과부하 방지 (250ms 쿨타임 적용)
   static unsigned long lastUiUpdate = 0;
-  if ((updated || forcePoll) && (millis() - lastUiUpdate > 250)) {
-    lastUiUpdate = millis();
+  if ((updated || forcePoll) && (currentTime - lastUiUpdate > 250)) {
+    lastUiUpdate = currentTime;
     updateScentProgressBars();
   }
+}
+
+/**
+ * [New] 영점 조절 시 필터링된 무게 값을 즉시 0으로 초기화하는 함수
+ */
+void resetWeightFilters() {
+    for (int i = 0; i < 4; i++) {
+        weights[i] = 0.0f;
+    }
 }
 
 void printCalibrationInfo() {
