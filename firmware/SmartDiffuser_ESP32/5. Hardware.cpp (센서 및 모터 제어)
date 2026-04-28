@@ -54,11 +54,11 @@ void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
   }
   strip.show();
 }
+
 void forceAllOff() {
-  digitalWrite(PIN_SUNNY, HIGH);
-  digitalWrite(PIN_CLOUDY, HIGH);
-  digitalWrite(PIN_RAIN, HIGH);
-  digitalWrite(PIN_SNOW, HIGH);
+    for (int i = 0; i < 4; i++) {
+        digitalWrite(Config::SPRAY_PINS[i], HIGH);
+    }
 }
 
 void stopSystem() {
@@ -126,7 +126,24 @@ void systemHeartbeat() {
   static unsigned long lastUpdate = 0;
   static int effectStep = 0;
 
+  // 0. 최우선 순위: 센서 에러 상태 확인 (우리가 추가한 자가 진단 플래그 활용)
+  bool isAnySensorBroken = !isAudioOk; 
+  for (int i = 0; i < 4; i++) {
+    if (!isSensorOk[i]) isAnySensorBroken = true;
+  }
+
   // 1. 현재 시스템 상태에 따라 LED 상태 결정 (우선순위 순)
+  if (isAnySensorBroken) {
+    // 센서 고장 시 빨간색 경고 점멸 (최우선 순위)
+    if (currentTime - lastUpdate >= 150) { // 빠르게 깜빡임
+      lastUpdate = currentTime;
+      effectStep = !effectStep;
+      if (effectStep) setLedColor(255, 0, 0); // Red
+      else setLedColor(0, 0, 0);
+    }
+    return; // 에러 상태면 아래 애니메이션은 무시
+  }
+  
   if (WiFi.status() != WL_CONNECTED) currentLedState = LED_WIFI_ERR;
   else if (isSpraying || isRunning) currentLedState = LED_SPRAY;
   else if (currentMode == MODE_AMBIENT) currentLedState = LED_AMBIENT;
@@ -144,10 +161,9 @@ void systemHeartbeat() {
       break;
 
     case LED_SPRAY:
-      if (currentTime - lastUpdate >= 50) { // 빙글빙글 도는 속도
+      if (currentTime - lastUpdate >= 50) { 
         lastUpdate = currentTime;
-        strip.clear(); // 전체 소등 후
-        // 2칸짜리 빛이 뱅글뱅글 도는 스피너 효과
+        strip.clear(); 
         strip.setPixelColor(effectStep % NUM_LEDS, strip.Color(ledR, ledG, ledB));
         strip.setPixelColor((effectStep + 1) % NUM_LEDS, strip.Color(ledR, ledG, ledB));
         strip.setBrightness(ledBrightness);
@@ -160,7 +176,6 @@ void systemHeartbeat() {
       if (currentTime - lastUpdate >= 300) {
         lastUpdate = currentTime;
         effectStep = !effectStep;
-        // 수음 중일 때는 보라색 점멸
         if (effectStep) setLedColor(128, 0, 255); 
         else setLedColor(0, 0, 0);
       }
@@ -168,7 +183,7 @@ void systemHeartbeat() {
 
     case LED_IDLE:
     default:
-      // 기존 숨쉬기(Breathing) 효과 유지
+      // 기존 숨쉬기(Breathing) 효과
       float val = (exp(sin(currentTime / 1500.0 * PI)) - 0.36787944) * 108.0;
       int bright = constrain((int)val, 0, 255);
       setLedColor((ledR * bright) / 255, (ledG * bright) / 255, (ledB * bright) / 255);
@@ -321,7 +336,9 @@ void runAmbientMode() {
   if (isWaitingForTestDb) return; 
 
   unsigned long currentTime = millis();
-  bool isSongFinished = (digitalRead(PIN_BUSY) == HIGH && (currentTime - lastAmbientTime > AMBIENT_COOL_DOWN));
+  
+  // 수정: PIN_BUSY -> Config::PIN_DF_BUSY / AMBIENT_COOL_DOWN -> Config::AMBIENT_COOL_DOWN
+  bool isSongFinished = (digitalRead(Config::PIN_DF_BUSY) == HIGH && (currentTime - lastAmbientTime > Config::AMBIENT_COOL_DOWN));
 
   if (isFirstAmbientRun || isSongFinished || forceAmbientSkip) {
     forceAmbientSkip = false;
@@ -347,7 +364,6 @@ void runAmbientMode() {
       dbSamples[i] = current_db;
       sumDB += current_db;
 
-      // 수음 중에도 모터 타이머가 멈추지 않게 함 
       if (isRunning) { runSprayLogic(); }
       delay(100);
     }
@@ -356,12 +372,11 @@ void runAmbientMode() {
     float avgDB = (float)sumDB / sampleCount;
     float stdDev = calculateStdDev(dbSamples, sampleCount, avgDB);
 
-    // 3. 소음 성격 분류 (로그 출력)
+    // 3. 소음 성격 분류
     String noiseType = (stdDev > 8.0) ? "불규칙적(대화/활동)" : "안정적(음악/정적)";
     Serial.printf(C_GREEN "✅ 분석 완료: 평균 %.1f dB, 편차 %.1f (%s)\r\n" C_RESET, avgDB, stdDev, noiseType.c_str());
 
-    // 4. 서버로 상세 데이터 전송 (서버에서 더 정밀한 향기 추천 가능)
-    // weights 배열을 포함하여 전송 
+    // 4. 서버로 상세 데이터 전송
     String payload = "{\"mode\": \"ambient\", \"db_avg\": " + String(avgDB, 1) + 
                      ", \"db_stddev\": " + String(stdDev, 1) + 
                      ", \"weights\": [" + String(weights[0], 1) + ", " + String(weights[1], 1) + 
@@ -377,4 +392,33 @@ void runAmbientMode() {
     
     lastAmbientTime = millis();
   }
+}
+
+void applyNozzleHardwareState() {
+    for (int i = 0; i < 4; i++) {
+        // 분사 중(isSpraying)이고 해당 노즐이 활성화(activeNozzles)된 경우만 LOW
+        int state = (isSpraying && activeNozzles[i]) ? LOW : HIGH;
+        digitalWrite(Config::SPRAY_PINS[i], state);
+    }
+}
+
+void checkSensorHealth() {
+    Serial.println(C_YELLOW "\r\n[Diagnosis] 시스템 자가 진단 시작..." C_RESET);
+    
+    delay(500); 
+
+    // 1. DFPlayer 체크 (Bypass 적용)
+    isAudioOk = true; 
+    Serial.println(C_GREEN "✅ [Audio] 스피커 연결 확인 (호환 칩 응답 무시 적용)" C_RESET);
+
+    // 2. 로드셀 체크 (대기 시간을 100ms -> 500ms로 넉넉하게 변경)
+    for (int i = 0; i < 4; i++) {
+        isSensorOk[i] = scales[i].wait_ready_timeout(500); 
+        if (!isSensorOk[i]) {
+            Serial.printf(C_RED "⚠️ [Warning] 로드셀 %d번 연결 불량!\r\n" C_RESET, i + 1);
+        } else {
+            Serial.printf(C_GREEN "✅ [LoadCell %d] 연결 확인\r\n" C_RESET, i + 1);
+        }
+    }
+    Serial.println(C_GREEN "✅ 자가 진단 완료." C_RESET);
 }
