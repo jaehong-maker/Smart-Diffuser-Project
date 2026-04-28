@@ -458,14 +458,21 @@ void updateProgressBar(int barIndex, int val) {
 }
 
 float calculateScentPercent(float weightValue) {
-  const float emptyWeight = 15.5f;
-  const float fallbackFullWeight = 95.4f;
-  const float fullWeight = maxWeight > emptyWeight ? maxWeight : fallbackFullWeight;
+  // Globals.h에 정의된 정확한 이름을 사용합니다. 
+  const float emptyWeight = Config::EMPTY_WEIGHT; 
+  const float fallbackFullWeight = 95.4f; // [cite: 1]
+  
+  // 현재 설정된 최대 무게(maxWeight)가 빈 병보다 무거울 때만 사용합니다. [cite: 1]
+  const float fullWeight = (maxWeight > emptyWeight) ? maxWeight : fallbackFullWeight;
   const float usableWeight = fullWeight - emptyWeight;
 
+  // 분모가 0이 되는 것을 방지합니다. [cite: 1]
   if (usableWeight <= 0.0f) return 0.0f;
 
-  float clampedWeight = weightValue < emptyWeight ? emptyWeight : weightValue;
+  // 측정값이 설정된 빈 병 무게보다 작으면 0으로 처리합니다. [cite: 1]
+  float clampedWeight = (weightValue < emptyWeight) ? emptyWeight : weightValue;
+  
+  // 퍼센트 계산 후 0~100 범위로 제한합니다. [cite: 1]
   float percent = ((clampedWeight - emptyWeight) / usableWeight) * 100.0f;
   return constrain(percent, 0.0f, 100.0f);
 }
