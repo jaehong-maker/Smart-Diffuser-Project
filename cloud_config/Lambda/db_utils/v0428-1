@@ -1,0 +1,506 @@
+# DynamoDB helpers for diffuser state, preferences, users, auth, and ambient mode.
+
+import boto3
+import random
+import logging
+from decimal import Decimal
+from boto3.dynamodb.conditions import Attr
+import config
+
+logger = logging.getLogger()
+
+dynamodb = boto3.resource("dynamodb")
+log_table = dynamodb.Table("DiffuserLog")
+state_table = dynamodb.Table("DiffuserState")
+pref_table = dynamodb.Table("DiffuserPref")
+user_table = dynamodb.Table("DiffuserUsers")
+auth_table = dynamodb.Table("DiffuserAuth")
+ambient_table = dynamodb.Table("AmbientWeights")
+
+
+def _kind_ids():
+    return [int(kind_id) for kind_id in getattr(config, "KIND_IDS", (1, 2, 3, 4, 5, 6))]
+
+
+def _default_spray_to_kind():
+    default_mapping = getattr(config, "DEFAULT_SPRAY_TO_KIND", None)
+    if isinstance(default_mapping, dict):
+        try:
+            return {int(spray): int(kind) for spray, kind in default_mapping.items()}
+        except Exception:
+            pass
+    return {1: 1, 2: 2, 3: 3, 4: 4}
+
+
+def _parse_int(value, default=0):
+    try:
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def _normalize_kind_slots(raw_slots):
+    if isinstance(raw_slots, list):
+        source_values = raw_slots[:4]
+    elif isinstance(raw_slots, str) and raw_slots.strip():
+        source_values = raw_slots.replace(",", "_").split("_")[:4]
+    elif raw_slots not in (None, ""):
+        source_values = [raw_slots]
+    else:
+        source_values = []
+
+    valid_kinds = set(_kind_ids())
+    slots = []
+    for value in source_values:
+        kind = _parse_int(value, 0)
+        slots.append(kind if kind in valid_kinds else 0)
+
+    while len(slots) < 4:
+        slots.append(0)
+
+    return slots[:4]
+
+
+def _mapping_to_kind_slots(mapping):
+    return [_parse_int(mapping.get(spray_no), 0) for spray_no in range(1, 5)]
+
+
+def _parse_spray_mapping(mapping_value):
+    if isinstance(mapping_value, dict):
+        return {int(k): int(v) for k, v in mapping_value.items() if 1 <= int(k) <= 4}
+
+    if isinstance(mapping_value, list):
+        return {idx + 1: int(kind) for idx, kind in enumerate(_normalize_kind_slots(mapping_value))}
+
+    if isinstance(mapping_value, str) and mapping_value.strip():
+        mapping = {}
+        for pair in mapping_value.split(","):
+            if ":" in pair:
+                spray, kind = pair.split(":", 1)
+                spray_no = _parse_int(spray, 0)
+                kind_no = _parse_int(kind, 0)
+                if 1 <= spray_no <= 4:
+                    mapping[spray_no] = kind_no
+        if mapping:
+            return mapping
+
+        slots = _normalize_kind_slots(mapping_value)
+        return {idx + 1: kind for idx, kind in enumerate(slots)}
+
+    return {}
+
+
+def _ambient_scent_ids():
+    return [int(scent_id) for scent_id in getattr(config, "AMBIENT_SCENT_IDS", _kind_ids())]
+
+
+def _ambient_device_scent_ids():
+    configured = getattr(config, "AMBIENT_DEVICE_SCENT_IDS", None)
+    if configured is not None:
+        return [int(scent_id) for scent_id in configured]
+    return _ambient_scent_ids()
+
+
+def _build_ambient_seed_update():
+    assignments = [
+        f"scent_{scent_id}_score = if_not_exists(scent_{scent_id}_score, :zero)"
+        for scent_id in _ambient_scent_ids()
+    ]
+    return "SET " + ", ".join(assignments)
+
+
+def _read_ambient_scores(item):
+    scores = {}
+    for scent_id in _ambient_scent_ids():
+        scores[scent_id] = int(item.get(f"scent_{scent_id}_score", 0))
+    return scores
+
+
+def list_ambient_context_keys():
+    context_keys = []
+    for time_slot in getattr(config, "AMBIENT_TIME_SLOTS", ()):
+        for noise_bucket in getattr(config, "AMBIENT_NOISE_BUCKETS", ()):
+            context_keys.append(f"{time_slot['label']}_{noise_bucket['label']}")
+    return context_keys
+
+
+def ensure_ambient_context(context_key):
+    normalized_key = str(context_key or "").strip()
+    if not normalized_key:
+        return False
+
+    ambient_table.update_item(
+        Key={"context_key": normalized_key},
+        UpdateExpression=_build_ambient_seed_update(),
+        ExpressionAttributeValues={":zero": 0},
+    )
+    return True
+
+
+def seed_ambient_defaults():
+    seeded = 0
+    for context_key in list_ambient_context_keys():
+        try:
+            ensure_ambient_context(context_key)
+            seeded += 1
+        except Exception as e:
+            logger.error(f"Ambient Seed Error ({context_key}): {e}")
+    return seeded
+
+
+def get_ambient_recommendation(context_key):
+    try:
+        ensure_ambient_context(context_key)
+        resp = ambient_table.get_item(Key={"context_key": str(context_key)})
+        item = resp.get("Item") or {}
+
+        scores = _read_ambient_scores(item)
+        candidate_ids = _ambient_device_scent_ids()
+        candidate_scores = {kind_id: scores.get(kind_id, 0) for kind_id in candidate_ids}
+
+        max_score = max(candidate_scores.values()) if candidate_scores else 0
+        if max_score <= 0:
+            return int(getattr(config, "AMBIENT_DEFAULT_SCENT", 1)), scores
+
+        best_kinds = [kind for kind, score in candidate_scores.items() if score == max_score]
+        return int(min(best_kinds)), scores
+    except Exception as e:
+        logger.error(f"Ambient Recommendation Error: {e}")
+        return int(getattr(config, "AMBIENT_DEFAULT_SCENT", 1)), {
+            kind_id: 0 for kind_id in _ambient_scent_ids()
+        }
+
+
+def save_ambient_feedback(context_key, scent_code, weight_change):
+    try:
+        normalized_key = str(context_key or "").strip()
+        scent_no = int(scent_code)
+        if scent_no not in _ambient_scent_ids():
+            return False
+
+        ensure_ambient_context(normalized_key)
+        score_col = f"scent_{scent_no}_score"
+        ambient_table.update_item(
+            Key={"context_key": normalized_key},
+            UpdateExpression=f"ADD {score_col} :val",
+            ExpressionAttributeValues={":val": int(weight_change)},
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Ambient Feedback Save Error: {e}")
+        return False
+
+
+def get_spray_mapping(device_id):
+    """Return {spray_no: kind_no}. Supports both spray_mapping and kind_slots."""
+    try:
+        res = state_table.get_item(Key={"deviceId": device_id})
+        item = res.get("Item") or {}
+
+        if item.get("spray_mapping") is not None:
+            mapping = _parse_spray_mapping(item.get("spray_mapping"))
+            if mapping:
+                return {**_default_spray_to_kind(), **mapping}
+
+        if item.get("kind_slots") is not None:
+            slots = _normalize_kind_slots(item.get("kind_slots"))
+            return {idx + 1: kind for idx, kind in enumerate(slots)}
+
+        if item.get("scent_slots") is not None:
+            slots = _normalize_kind_slots(item.get("scent_slots"))
+            return {idx + 1: kind for idx, kind in enumerate(slots)}
+    except Exception as e:
+        logger.error(f"Spray Mapping Load Error: {e}")
+
+    return _default_spray_to_kind()
+
+
+def get_kind_slots(device_id):
+    return _mapping_to_kind_slots(get_spray_mapping(device_id))
+
+
+def save_spray_mapping(device_id, mapping):
+    try:
+        parsed_mapping = _parse_spray_mapping(mapping)
+        if not parsed_mapping:
+            parsed_mapping = _default_spray_to_kind()
+
+        normalized_mapping = {spray: parsed_mapping.get(spray, 0) for spray in range(1, 5)}
+        kind_slots = _mapping_to_kind_slots(normalized_mapping)
+        mapping_str = ",".join(f"{spray}:{kind}" for spray, kind in normalized_mapping.items())
+
+        state_table.update_item(
+            Key={"deviceId": device_id},
+            UpdateExpression="set spray_mapping = :m, kind_slots = :ks",
+            ExpressionAttributeValues={":m": mapping_str, ":ks": kind_slots},
+        )
+        return normalized_mapping
+    except Exception as e:
+        logger.error(f"Spray Mapping Save Error: {e}")
+        return None
+
+
+def get_spray_from_kind(device_id, kind_code):
+    try:
+        target_kind = int(kind_code)
+        for spray_no, loaded_kind in get_spray_mapping(device_id).items():
+            if int(loaded_kind) == target_kind:
+                return int(spray_no)
+    except Exception as e:
+        logger.error(f"Kind To Spray Error: {e}")
+    return None
+
+
+def get_kind_from_spray(device_id, spray_no):
+    try:
+        return get_spray_mapping(device_id).get(int(spray_no))
+    except Exception as e:
+        logger.error(f"Spray To Kind Error: {e}")
+        return None
+
+
+def _active_kinds(device_id):
+    mapping = get_spray_mapping(device_id)
+    valid_kinds = set(_kind_ids())
+    return [int(kind) for kind in mapping.values() if int(kind) in valid_kinds]
+
+
+def get_music_track(device_id, spray_or_kind_code):
+    """Return a music track for the resolved spray slot.
+
+    The argument may be a spray number, a kind number, or a blend-like code.
+    If a kind is loaded in a spray slot, that slot's saved music is used.
+    """
+    original_code = spray_or_kind_code
+    try:
+        code_str = str(spray_or_kind_code)
+        if len(code_str) >= 2 and 1 <= int(code_str) <= 89:
+            candidates = [int(digit) for digit in code_str if int(digit) in _kind_ids()]
+            spray_or_kind_code = random.choice(candidates) if candidates else int(code_str[0])
+
+        code = int(spray_or_kind_code)
+        spray_no = get_spray_from_kind(device_id, code)
+        if spray_no is None and 1 <= code <= 4:
+            spray_no = code
+
+        res = state_table.get_item(Key={"deviceId": device_id})
+        if "Item" in res and "music_tracks" in res["Item"]:
+            track_list = str(res["Item"]["music_tracks"]).split("_")
+            if spray_no is not None and 1 <= int(spray_no) <= 4 and len(track_list) == 4:
+                return int(track_list[int(spray_no) - 1])
+    except Exception as e:
+        logger.error(f"Music Load Error: {e}")
+
+    defaults = {1: 1, 2: 6, 3: 11, 4: 16}
+    try:
+        code = int(str(original_code)[0])
+        spray_no = get_spray_from_kind(device_id, code)
+        target = int(spray_no) if spray_no is not None else code
+        return defaults.get(target, target)
+    except Exception:
+        return 0
+
+
+def save_feedback(device_id, context, kind_code, weight_change):
+    try:
+        kind_no = int(kind_code)
+        if kind_no not in _kind_ids():
+            return False
+
+        score_col = f"scent_{kind_no}_score"
+        pref_table.update_item(
+            Key={"deviceId": str(device_id), "context": str(context)},
+            UpdateExpression=f"ADD {score_col} :val",
+            ExpressionAttributeValues={":val": int(weight_change)},
+        )
+        return True
+    except Exception as e:
+        print(f"[DEBUG] 저장 실패 원인: {str(e)}")
+        logger.error(f"Feedback Save Error: {e}")
+        return False
+
+
+def get_personalized_scent(device_id, context, default_kind):
+    try:
+        resp = pref_table.get_item(Key={"deviceId": str(device_id), "context": str(context)})
+        item = resp.get("Item")
+        if not item:
+            return default_kind, "기본 추천"
+
+        scores = {kind: int(item.get(f"scent_{kind}_score", 0)) for kind in _kind_ids()}
+        active_kinds = _active_kinds(device_id)
+        candidate_scores = {kind: scores.get(kind, 0) for kind in active_kinds}
+
+        if not candidate_scores:
+            return default_kind, "기본 추천"
+
+        max_score = max(candidate_scores.values())
+        if max_score > 0:
+            best_kinds = [kind for kind, score in candidate_scores.items() if score == max_score]
+            if int(default_kind) in best_kinds:
+                return default_kind, "가중치 확인(유지)"
+            return random.choice(best_kinds), "사용자 선호 가중치 적용"
+
+        return default_kind, "기본 추천"
+    except Exception as e:
+        logger.error(f"Personalization Error: {e}")
+        return default_kind, "에러(기본값)"
+
+
+def manage_mailbox(device_id, save_cmd=None, save_region=None, save_duration=None, is_peek=False):
+    try:
+        if save_cmd is not None:
+            update_exp = "set pending_cmd = :c"
+            exp_vals = {":c": int(save_cmd)}
+
+            if save_region:
+                update_exp += ", pending_region = :r, last_region = :r"
+                exp_vals[":r"] = str(save_region)
+
+            if save_duration is not None:
+                update_exp += ", pending_duration = :d"
+                exp_vals[":d"] = int(save_duration)
+
+            state_table.update_item(
+                Key={"deviceId": device_id},
+                UpdateExpression=update_exp,
+                ExpressionAttributeValues=exp_vals,
+            )
+            logger.info(f"[Mailbox_Write] ID:{device_id} Cmd:{save_cmd}")
+            return int(save_cmd)
+
+        res = state_table.get_item(Key={"deviceId": device_id})
+        if "Item" in res:
+            item = res["Item"]
+            cmd = int(item.get("pending_cmd", -1))
+            saved_region = item.get("pending_region", "") or item.get("last_region", "")
+            saved_duration = int(item.get("pending_duration", 3))
+
+            if cmd != -1:
+                if not is_peek:
+                    state_table.update_item(
+                        Key={"deviceId": device_id},
+                        UpdateExpression="set pending_cmd = :z, pending_region = :e, pending_duration = :d",
+                        ExpressionAttributeValues={":z": -1, ":e": "", ":d": 3},
+                    )
+                    logger.info(f"[Mailbox_Read] ID:{device_id} Executing Cmd:{cmd}")
+                else:
+                    logger.info(f"[Mailbox_Peek] ID:{device_id} Peeked Cmd:{cmd}")
+
+                return cmd, saved_region, saved_duration
+
+            if saved_region:
+                return -1, saved_region, saved_duration
+
+        return -1, get_saved_region(device_id), 3
+    except Exception as e:
+        logger.error(f"Mailbox Error: {e}")
+        return -1, get_saved_region(device_id), 3
+
+
+def remember_last_region(device_id, region):
+    try:
+        normalized = str(region or "").strip()
+        if not normalized:
+            return
+        state_table.update_item(
+            Key={"deviceId": device_id},
+            UpdateExpression="set last_region = :r",
+            ExpressionAttributeValues={":r": normalized},
+        )
+    except Exception as e:
+        logger.error(f"Remember Region Error: {e}")
+
+
+def get_saved_region(device_id):
+    try:
+        res = state_table.get_item(Key={"deviceId": device_id})
+        item = res.get("Item") or {}
+        region = str(item.get("last_region", "") or "").strip()
+        if region:
+            return region
+    except Exception as e:
+        logger.error(f"State Region Load Error: {e}")
+
+    try:
+        resp = user_table.scan(
+            FilterExpression=Attr("deviceId").eq(str(device_id)),
+            ProjectionExpression="#r",
+            ExpressionAttributeNames={"#r": "region"},
+            Limit=1,
+        )
+        items = resp.get("Items") or []
+        if items:
+            region = str(items[0].get("region", "") or "").strip()
+            if region:
+                return region
+    except Exception as e:
+        logger.error(f"User Region Load Error: {e}")
+
+    return ""
+
+
+def get_device_state(device_id):
+    try:
+        res = state_table.get_item(Key={"deviceId": device_id})
+        if "Item" in res:
+            return res["Item"]
+        return {
+            "deviceId": device_id,
+            "last_spray_time": "2000-01-01T00:00:00",
+            "current_capacity": Decimal(str(config.MAX_CAPACITY)),
+            "last_spray_code": 0,
+            "weight_g": Decimal("0"),
+            "weights": [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")],
+            "kind_slots": _mapping_to_kind_slots(_default_spray_to_kind()),
+        }
+    except Exception as e:
+        logger.error(f"Device State Load Error: {e}")
+        return None
+
+
+def _normalize_weight_list(weights_value):
+    normalized = []
+
+    if isinstance(weights_value, list):
+        source_values = weights_value[:4]
+    else:
+        source_values = [weights_value]
+
+    for value in source_values:
+        try:
+            normalized.append(float(value))
+        except Exception:
+            normalized.append(0.0)
+
+    while len(normalized) < 4:
+        normalized.append(0.0)
+
+    return normalized[:4]
+
+
+def update_device_state(device_id, last_time, new_capacity, spray_code, weights_value):
+    try:
+        normalized_weights = _normalize_weight_list(weights_value)
+        kind_slots = get_kind_slots(device_id)
+        kind_code = get_kind_from_spray(device_id, spray_code) or 0
+
+        state_table.update_item(
+            Key={"deviceId": device_id},
+            UpdateExpression=(
+                "set last_spray_time = :t, current_capacity = :c, "
+                "last_spray_code = :s, last_kind_code = :k, "
+                "weight_g = :wg, weights = :w, kind_slots = :ks"
+            ),
+            ExpressionAttributeValues={
+                ":t": last_time,
+                ":c": Decimal(str(new_capacity)),
+                ":s": int(spray_code),
+                ":k": int(kind_code),
+                ":wg": Decimal(str(normalized_weights[0])),
+                ":w": [Decimal(str(weight)) for weight in normalized_weights],
+                ":ks": kind_slots,
+            },
+        )
+    except Exception as e:
+        logger.error(f"Update Device State Error: {e}")
