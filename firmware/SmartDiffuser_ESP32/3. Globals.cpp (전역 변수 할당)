@@ -1,83 +1,112 @@
 #include "Globals.h"
 
-// 객체 생성
+// ==========================================
+// [5] 전역 객체 (Global Objects)
+// ==========================================
 HardwareSerial mySoftwareSerial(2);
 HardwareSerial nexSerial(1);
 DFRobotDFPlayerMini myDFPlayer;
 HX711 scales[4];
+Preferences prefs;
+WiFiServer webServer(80);
+Adafruit_NeoPixel strip(NUM_LEDS, PIN_LED, NEO_GRB + NEO_KHZ800);
 
+// FreeRTOS 핸들러 초기화
 TaskHandle_t SensorTaskHandle = NULL;
+TaskHandle_t NetworkTaskHandle = NULL;
 QueueHandle_t audioEventQueue = NULL;
 QueueHandle_t networkQueue = NULL;
 EventGroupHandle_t networkEventGroup = NULL;
-TaskHandle_t NetworkTaskHandle = NULL;
 
-Preferences prefs;
-WiFiServer webServer(80);
+// ==========================================
+// [6] 전역 변수 (Global Variables)
+// ==========================================
+// --- 시스템 상태 ---
+SystemMode currentMode = MODE_READY; 
 String deviceId = "SmartDiffuser_01";
+bool isRunning = false;
+bool isCommunicate = false; 
+unsigned long lastActivityTime = 0;
 
-// 변수 초기화
+// --- 네트워크 ---
 const char* ssid      = "Jaehong_WiFi";
 const char* password  = "12345678";
 String serverName     = "https://tgrwszo3iwurntqeq76s5rro640asnwq.lambda-url.ap-northeast-2.on.aws/";
-volatile bool hxReady[4] = {false, false, false, false};
+unsigned long wifiRetryInterval = 5000;
+unsigned long lastWifiRetryMillis = 0;
 
-// 노즐별 마지막 분사 시간 (초기값은 부팅 시점)
-unsigned long lastNozzleSprayTime[4] = {0, 0, 0, 0};
-
+// --- 하드웨어 제어 (센서, 모터, LED, 볼륨) ---
+bool isSensorOk[4] = {true, true, true, true};
+bool isAudioOk = true;
+bool activeNozzles[4] = {false, false, false, false};
+bool isSpraying   = false;
 unsigned long sprayDuration = 3000;
 long REST_TIME        = 6000;
 int currentIntensity  = 2;
 const long MAX_RUN_TIME     = 270000;
-float calibration_factor = 430.0;
 int currentVolume = 20;
 
-SystemMode currentMode = MODE_READY; 
-bool isRunning    = false;
-bool isCommunicate = false; 
-bool activeNozzles[4] = {false, false, false, false};
-bool isSpraying   = false;
-bool blendModeEnabled = false;
-String blendSelection = "";
-bool blendSprayActive = false;
-bool schedulerEnabled = true;
-int activeStartHour   = 8; 
-int activeEndHour     = 23;
-
-String lastWebMessage = "Ready";
-String inputBuffer    = "";
-String lastWeatherLabel = "Weather";
-String globalPayload = ""; 
-
-unsigned long lastPollTime = 0;
-unsigned long wifiRetryInterval = 5000;
-unsigned long lastWifiRetryMillis = 0;
-const unsigned long POLL_INTERVAL = 3000;
-float weights[4] = {0.0, 0.0, 0.0, 0.0};
-unsigned long lastWeightCheckTime = 0;
-const float WEIGHT_THRESHOLD = 5.0;
-
-int soundThreshold = 75;
-unsigned long lastReactionTime = 0;
-int demoStep = 0;
-unsigned long prevDemoMillis  = 0;
-unsigned long prevMotorMillis = 0;
-unsigned long lastCheckTime = 0;
-unsigned long prevLedMillis = 0;
-unsigned long startTimeMillis = 0;
-int lastWeatherIconId = 0;
-
+uint8_t ledR = 255; 
+uint8_t ledG = 255; 
+uint8_t ledB = 255; 
 int ledBrightness = 150;
 int ledFadeAmount = 5;
 
+// --- 향수 및 무게 데이터 ---
+float weights[4] = {0.0, 0.0, 0.0, 0.0};
+float maxWeight = 95.4; 
+float calibration_factor = 430.0;
+unsigned long lastWeightCheckTime = 0;
+const float WEIGHT_THRESHOLD = 5.0;
+volatile bool hxReady[4] = {false, false, false, false};
+
+// --- 블렌딩 모드 ---
+bool blendModeEnabled = false;
+String blendSelection = "";
+bool blendSprayActive = false;
+
+// --- 날씨 모드 ---
 unsigned long lastWeatherCallMillis = 0;
 const unsigned long WEATHER_INTERVAL = 3600000;
 String lastWeatherRegion = "서울";
+int lastWeatherIconId = 0;
+String lastWeatherLabel = "Weather";
 
-unsigned long lastActivityTime = 0;
-unsigned long lastAmbientTime = 0;    // 추가: 앰비언트 모드 타이머 초기화
-const unsigned long SLEEP_TIMEOUT = 300000; // 5분 절전 시간
+// --- 타이머 및 스케줄러 ---
+unsigned long lastNozzleSprayTime[4] = {0, 0, 0, 0};
+bool schedulerEnabled = true;
+int activeStartHour   = 8; 
+int activeEndHour     = 23;
+unsigned long lastPollTime = 0;
+const unsigned long POLL_INTERVAL = 3000;
 
+// --- 오디오 및 앰비언트 모드 ---
+int soundThreshold = 75;
+int currentDbLevel = 0; 
+unsigned long lastReactionTime = 0;
+int ambientCycleCount = 0;
+int ambientCycleStorage[5] = {0, 0, 0, 0, 0};
+bool isFirstAmbientRun = true;
+int lastAmbientScent = 0;
+bool isWaitingForTestDb = false;
+unsigned long lastAmbientTime = 0;    
+int currentAmbientTrack = 0;
+bool forceAmbientSkip = false;
+
+// --- 기타 (데모, 터미널) ---
+String lastWebMessage = "Ready";
+String inputBuffer    = "";
+String globalPayload = ""; 
+int demoStep = 0;
+unsigned long prevDemoMillis  = 0;
+unsigned long prevMotorMillis = 0;
+unsigned long startTimeMillis = 0;
+unsigned long lastCheckTime = 0;
+unsigned long prevLedMillis = 0;
+
+// ==========================================
+// [7] 공통 헬퍼 함수
+// ==========================================
 void SprayIntensity(int intensityVal) {
     currentIntensity = intensityVal;
     if (currentIntensity == 1) REST_TIME = 9000;      
@@ -94,21 +123,3 @@ int getPinFromCommand(int cmd) {
     default: return -1;
   }
 }
-
-int ambientCycleCount = 0;
-int ambientCycleStorage[5] = {0, 0, 0, 0, 0};
-bool isFirstAmbientRun = true;
-int lastAmbientScent = 0;
-bool isWaitingForTestDb = false;
-int currentAmbientTrack = 0;
-bool forceAmbientSkip = false;
-
-// 변수 초기화 구역에 추가
-uint8_t ledR = 255; 
-uint8_t ledG = 255; 
-uint8_t ledB = 255; // 초기값은 흰색으로 셋팅
-float maxWeight = 95.4; // 꽉 찬 병 무게 기준 (나중에 95.0 등으로 세밀하게 조정 가능)
-int currentDbLevel = 0; // ★ 추가
-
-// 객체 생성 구역(맨 위쪽)에 추가
-Adafruit_NeoPixel strip(NUM_LEDS, PIN_LED, NEO_GRB + NEO_KHZ800);
