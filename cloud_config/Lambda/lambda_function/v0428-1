@@ -227,7 +227,14 @@ def lambda_handler(event, context):
                         "transcript": normalized_transcript
                     }, ensure_ascii=False)
                 }
-            spray_code, duration, result_text = api_utils._voice_to_spray(normalized_transcript)
+            
+            kind_code, duration, result_text = api_utils.ask_gemini_voice_analysis(normalized_transcript)
+            if kind_code == 0:
+                spray_code = 0
+            else:
+                spray_code = db_utils.get_spray_from_kind(device_id, kind_code)
+                if not spray_code:
+                    spray_code = 1
 
             # 쿨타임 체크
             state = db_utils.get_device_state(device_id) or {}
@@ -460,8 +467,11 @@ def lambda_handler(event, context):
                     return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"message": "비밀번호가 틀렸습니다.", "result": "FAIL"}, ensure_ascii=False)}
 
                 my_music = user_info.get('music_tracks', '1_6_11_16')
+                my_mapping = user_info.get('spray_mapping')
                 try:
                     db_utils.state_table.update_item(Key={'deviceId': device_id}, UpdateExpression="set music_tracks = :m", ExpressionAttributeValues={':m': str(my_music)})
+                    if my_mapping:
+                        db_utils.save_spray_mapping(device_id, my_mapping)
                 except: pass
 
                 return {
@@ -500,6 +510,21 @@ def lambda_handler(event, context):
                 return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"spray": 0, "message": "개인 음악 설정 완료", "result_text": "OK"}, ensure_ascii=False)}
             else:
                 return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"spray": 0, "message": "포맷 오류", "result_text": "FAIL"}, ensure_ascii=False)}
+        except Exception as e:
+            return {"statusCode": 500, "body": str(e)}
+
+    # [ACTION] SET_MAPPING
+    elif action == "SET_MAPPING":
+        try:
+            u_email = body.get("email")
+            mapping_data = body.get("mapping")
+            
+            if mapping_data:
+                normalized = db_utils.save_spray_mapping(device_id, mapping_data, u_email)
+                if normalized:
+                    return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"spray": 0, "message": "향기 배치 설정 완료", "result_text": "OK"}, ensure_ascii=False)}
+            
+            return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"spray": 0, "message": "포맷 오류", "result_text": "FAIL"}, ensure_ascii=False)}
         except Exception as e:
             return {"statusCode": 500, "body": str(e)}
 
@@ -797,7 +822,12 @@ def lambda_handler(event, context):
             context_key, time_slot, noise_bucket, normalized_db = _build_ambient_context(db_level_raw, now_kst)
 
             db_utils.seed_ambient_defaults()
-            spray_code, ambient_scores = db_utils.get_ambient_recommendation(context_key)
+            # 1. 기기 정보를 넘겨주어 장착된 향기 중 가장 랭킹이 높은 kind 추출
+            best_kind, ambient_scores = db_utils.get_ambient_recommendation(context_key, device_id)
+            # 2. 해당 kind가 장착된 하드웨어 spray 슬롯 번호(1~4)로 변환
+            spray_code = db_utils.get_spray_from_kind(device_id, best_kind)
+            if not spray_code:
+                spray_code = 1 # 안전 장치
             duration = _parse_int(
                 body.get("dur", body.get("duration", config.AMBIENT_DURATION_SECONDS)),
                 config.AMBIENT_DURATION_SECONDS
@@ -1003,15 +1033,7 @@ def lambda_handler(event, context):
 
                     context_key = f"Weather_{w_key}_{time_zone}"
 
-                    ai_recommendation = api_utils.get_ai_recommendation(w_res, humidity)
-                    
-                    if ai_recommendation is not None:
-                        spray_code = ai_recommendation
-                        result_text = f"Docker AI 모델 추천: {w_res}"
-                        logic_name = "Jihoon_Docker_AI"
-                        duration = 3
-                    else:
-                        spray_code, result_text, logic_name, duration = logic_weather_mode(w_res, humidity)
+                    spray_code, result_text, logic_name, duration = logic_weather_mode(w_res, humidity)
                 else:
                     spray_code, result_text, logic_name, duration = 1, "API키없음", "Error", 3
                     weather_text = "환경 변수 오류"
