@@ -274,6 +274,7 @@ def lambda_handler(event, context):
     # [B] 일반 JSON 모드 처리
     # ------------------------------------------------------    
     raw_body = event.get("body", {})
+
     try:
         if isinstance(raw_body, str):
             body = json.loads(raw_body) if raw_body else {}
@@ -961,17 +962,22 @@ def lambda_handler(event, context):
         
         # 1. 변경된 Gemini 함수 호출 (일기 내용과 과거 기록 전달)
         # 당장 과거 기록 변수가 없다면 빈 문자열("")을 넘겨줍니다.
-        gemini_spray_str, ai_reason = api_utils.ask_gemini_recommendation(diary_text=user_emo, user_history_text="")
+        gemini_kind_str, ai_reason = api_utils.ask_gemini_recommendation(diary_text=user_emo, user_history_text="")
         
-        # 2. Gemini는 블렌딩(예: "12")을 반환할 수도 있으므로, 제일 앞자리 숫자만 정수로 가져오도록 안전장치 추가
+        # 2. 반환받은 향기(kind) 문자열(예: "14" 또는 "5")을 실제 물리적 spray 번호로 매핑
         try:
-            gemini_spray = int(str(gemini_spray_str)[0]) if gemini_spray_str != "0" else 0
+            kind_code = int(gemini_kind_str) if gemini_kind_str != "0" else 0
         except Exception:
-            gemini_spray = 0
+            kind_code = 0
 
-        if gemini_spray > 0:
-            # 3. GPT 변수명들을 Gemini에 맞게 수정
-            spray_code, result_text, logic_name = gemini_spray, ai_reason, "AI_Gemini_Emotion"
+        if kind_code > 0:
+            mapped_spray = db_utils.get_spray_from_kind(device_id, kind_code)
+            if not mapped_spray:
+                # 추천받은 향기가 기기에 하나도 안 꽂혀있다면 기본값인 1번 펌프로 폴백
+                mapped_spray = 1
+                ai_reason += " (알림: 추천 향기가 기기에 없어 기본 1번 칸 향기로 대체 분사됩니다.)"
+                
+            spray_code, result_text, logic_name = mapped_spray, ai_reason, "AI_Gemini_Emotion"
             duration = 3
         else:
             spray_code, result_text, logic_name, duration = logic_emotion_mode(user_emo)
