@@ -218,11 +218,14 @@ void runSystem() {
   runScheduler();
 
   if (currentMode == MODE_AMBIENT) { 
+    // ★ 해결: 앰비언트 모드 안에서도 LED 애니메이션이 계속 갱신되도록 추가했습니다!
+    systemHeartbeat(); 
+    
     runAmbientMode(); 
     monitorWeight(); // 로드셀 센서 실시간 읽기 동작 허용
     pollServer();    // 1분 주기 서버 동기화 동작 허용
     checkSerialInput(); 
-    // ★ 추가된 부분: 시스템(IDLE Task)에 CPU 제어권을 잠시 양보하여 워치독 에러 방지
+    // 시스템(IDLE Task)에 CPU 제어권을 잠시 양보하여 워치독 에러 방지
     vTaskDelay(WDT_YIELD_TIME_MS);
     return; 
   }
@@ -236,7 +239,7 @@ void runSystem() {
   } 
 
   manageWiFi(); 
-  systemHeartbeat(); 
+  systemHeartbeat(); // 일반 모드일 때의 LED 애니메이션
   handleWebClient(); 
   autoWeatherScheduler(); 
   pollServer(); 
@@ -250,7 +253,7 @@ void runSystem() {
 
   checkSerialInput();
 
-  // [추가] CPU 제어권을 시스템(IDLE Task)에 잠시 양보하여 워치독 트리거 방지
+  // CPU 제어권을 시스템(IDLE Task)에 잠시 양보하여 워치독 트리거 방지
   vTaskDelay(WDT_YIELD_TIME_MS);
 }
 
@@ -740,4 +743,38 @@ bool isNozzleSafe(int index) {
     }
 
     return true;
+}
+
+void resetScaleZero() {
+    Serial.println(C_YELLOW "\r\n[Calibration] ⚖️ 안전 영점(Tare) 재설정 프로세스 시작..." C_RESET);
+    
+    // 1. 혹시 모를 안전을 위해 모든 분사 및 모터 동작 강제 정지
+    forceAllOff();
+    isRunning = false;
+    isSpraying = false;
+
+    // 2. 4개의 저울 영점 다시 잡기
+    for(int i = 0; i < 4; i++) {
+        // 일시적인 튀는 값을 방지하기 위해 tare() 호출
+        scales[i].tare(); 
+        
+        // 3. 새로 잡힌 영점(오프셋) 값을 플래시 메모리에 덮어쓰기 (재부팅해도 유지되도록)
+        String key = "off_" + String(i);
+        long currentOffset = scales[i].get_offset();
+        prefs.putLong(key.c_str(), currentOffset);
+        
+        Serial.printf(C_GREEN "✅ %d번 로드셀 영점 세팅 완료 (Offset: %ld)\r\n" C_RESET, i + 1, currentOffset);
+    }
+    
+    // 4. 영점이 잡혔으니 현재 잔량(weights 배열)을 0으로 초기화
+    for(int i = 0; i < 4; i++) {
+        weights[i] = 0.0f;
+    }
+
+    // 5. 디스플레이의 잔량 게이지바(ProgressBar) 즉시 업데이트
+    updateScentProgressBars();
+
+    // 6. 디스플레이 화면에 팝업 메시지 띄우기 (동료 팀원과 협의 후 수정 가능)
+    updateDisplay(0, "Tare Complete!");
+    Serial.println(C_CYAN "🎉 [Calibration] 모든 영점 조절 및 저장이 완료되었습니다!" C_RESET);
 }
