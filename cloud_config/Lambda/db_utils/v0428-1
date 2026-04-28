@@ -148,22 +148,31 @@ def seed_ambient_defaults():
     return seeded
 
 
-def get_ambient_recommendation(context_key):
+def get_ambient_recommendation(context_key, device_id):
     try:
         ensure_ambient_context(context_key)
         resp = ambient_table.get_item(Key={"context_key": str(context_key)})
         item = resp.get("Item") or {}
 
         scores = _read_ambient_scores(item)
-        candidate_ids = _ambient_device_scent_ids()
-        candidate_scores = {kind_id: scores.get(kind_id, 0) for kind_id in candidate_ids}
+        
+        # 1. 기기에 장착된 향기(kind) 목록 추출
+        installed_kinds = set(_active_kinds(device_id))
+        if not installed_kinds:
+            installed_kinds = set(_default_spray_to_kind().values())
 
-        max_score = max(candidate_scores.values()) if candidate_scores else 0
-        if max_score <= 0:
-            return int(getattr(config, "AMBIENT_DEFAULT_SCENT", 1)), scores
+        # 2. 모든 향기를 점수 내림차순(점수가 같으면 kind 오름차순)으로 정렬
+        sorted_kinds = sorted(scores.keys(), key=lambda k: (-scores[k], k))
+        
+        best_kind = int(getattr(config, "AMBIENT_DEFAULT_SCENT", 1))
+        
+        # 3. 1위부터 순회하며 기기에 장착되어 있으면 즉시 선택 (fallback 로직 완벽 적용)
+        for kind in sorted_kinds:
+            if kind in installed_kinds:
+                best_kind = kind
+                break
 
-        best_kinds = [kind for kind, score in candidate_scores.items() if score == max_score]
-        return int(min(best_kinds)), scores
+        return best_kind, scores
     except Exception as e:
         logger.error(f"Ambient Recommendation Error: {e}")
         return int(getattr(config, "AMBIENT_DEFAULT_SCENT", 1)), {
@@ -191,9 +200,20 @@ def save_ambient_feedback(context_key, scent_code, weight_change):
         return False
 
 
-def get_spray_mapping(device_id):
+def get_spray_mapping(device_id, email=None):
     """Return {spray_no: kind_no}. Supports both spray_mapping and kind_slots."""
     try:
+        if email:
+            try:
+                user_res = user_table.get_item(Key={"email": email})
+                user_item = user_res.get("Item") or {}
+                if user_item.get("spray_mapping"):
+                    mapping = _parse_spray_mapping(user_item.get("spray_mapping"))
+                    if mapping:
+                        return {**_default_spray_to_kind(), **mapping}
+            except Exception as e:
+                logger.error(f"User Table Mapping Load Error: {e}")
+
         res = state_table.get_item(Key={"deviceId": device_id})
         item = res.get("Item") or {}
 
@@ -219,7 +239,7 @@ def get_kind_slots(device_id):
     return _mapping_to_kind_slots(get_spray_mapping(device_id))
 
 
-def save_spray_mapping(device_id, mapping):
+def save_spray_mapping(device_id, mapping, email=None):
     try:
         parsed_mapping = _parse_spray_mapping(mapping)
         if not parsed_mapping:
@@ -234,6 +254,17 @@ def save_spray_mapping(device_id, mapping):
             UpdateExpression="set spray_mapping = :m, kind_slots = :ks",
             ExpressionAttributeValues={":m": mapping_str, ":ks": kind_slots},
         )
+        
+        if email:
+            try:
+                user_table.update_item(
+                    Key={"email": email},
+                    UpdateExpression="set spray_mapping = :m",
+                    ExpressionAttributeValues={":m": mapping_str},
+                )
+            except Exception as e:
+                logger.error(f"User Table Mapping Save Error: {e}")
+
         return normalized_mapping
     except Exception as e:
         logger.error(f"Spray Mapping Save Error: {e}")
