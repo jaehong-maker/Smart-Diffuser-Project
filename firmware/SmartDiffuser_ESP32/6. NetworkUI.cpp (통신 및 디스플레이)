@@ -3,6 +3,204 @@
 static WiFiClientSecure sharedClient;
 static bool isSessionInit = false;
 
+struct EncodedRegionText {
+  const char *utf8;
+  const uint8_t *encoded;
+  size_t length;
+};
+
+struct EncodedWeatherText {
+  const char *utf8;
+  const uint8_t *encoded;
+  size_t length;
+};
+
+static const uint8_t REGION_SEOUL[]    = {0xBC, 0xAD, 0xBF, 0xEF, 0x3A};
+static const uint8_t REGION_SUWON[]    = {0xBC, 0xF6, 0xBF, 0xF8, 0x3A};
+static const uint8_t REGION_SEONGNAM[] = {0xBC, 0xBA, 0xB3, 0xB2, 0x3A};
+static const uint8_t REGION_ANYANG[]   = {0xBE, 0xC8, 0xBE, 0xE7, 0x3A};
+static const uint8_t REGION_GOYANG[]   = {0xB0, 0xED, 0xBE, 0xE7, 0x3A};
+static const uint8_t REGION_YONGIN[]   = {0xBF, 0xEB, 0xC0, 0xCE, 0x3A};
+static const uint8_t REGION_BUCHEON[]  = {0xBA, 0xCE, 0xC3, 0xB5, 0x3A};
+static const uint8_t REGION_ANSAN[]    = {0xBE, 0xC8, 0xBB, 0xEA, 0x3A};
+static const uint8_t REGION_NAMYANGJU[] = {0xB3, 0xB2, 0xBE, 0xE7, 0xC1, 0xD6, 0x3A};
+static const uint8_t REGION_HWASEONG[] = {0xC8, 0xAD, 0xBC, 0xBA, 0x3A};
+static const uint8_t REGION_PYEONGTAEK[] = {0xC6, 0xF2, 0xC5, 0xC3, 0x3A};
+static const uint8_t REGION_UIJEONGBU[] = {0xC0, 0xC7, 0xC1, 0xA4, 0xBA, 0xCE, 0x3A};
+static const uint8_t REGION_PAJU[]     = {0xC6, 0xC4, 0xC1, 0xD6, 0x3A};
+static const uint8_t REGION_GIMPO[]    = {0xB1, 0xE8, 0xC6, 0xF7, 0x3A};
+static const uint8_t REGION_GWANGMYEONG[] = {0xB1, 0xA4, 0xB8, 0xED, 0x3A};
+static const uint8_t REGION_GWANGJU[]  = {0xB1, 0xA4, 0xC1, 0xD6, 0x3A};
+static const uint8_t REGION_ICHEON[]   = {0xC0, 0xCC, 0xC3, 0xB5, 0x3A};
+static const uint8_t REGION_YANGJU[]   = {0xBE, 0xE7, 0xC1, 0xD6, 0x3A};
+static const uint8_t REGION_GURI[]     = {0xB1, 0xB8, 0xB8, 0xAE, 0x3A};
+static const uint8_t REGION_POCHEON[]  = {0xC6, 0xF7, 0xC3, 0xB5, 0x3A};
+static const uint8_t REGION_YANGPYEONG[] = {0xBE, 0xE7, 0xC6, 0xF2, 0x3A};
+static const uint8_t REGION_GAPYEONG[] = {0xB0, 0xA1, 0xC6, 0xF2, 0x3A};
+static const uint8_t REGION_SIHEUNG[]  = {0xBD, 0xC3, 0xC8, 0xEF, 0x3A};
+static const uint8_t REGION_INCHEON[]  = {0xC0, 0xCE, 0xC3, 0xB5, 0x3A};
+static const uint8_t REGION_GANGWON[]  = {0xB0, 0xAD, 0xBF, 0xF8, 0x3A};
+static const uint8_t REGION_CHUNGBUK[] = {0xC3, 0xE6, 0xBA, 0xCF, 0x3A};
+static const uint8_t REGION_CHUNGNAM[] = {0xC3, 0xE6, 0xB3, 0xB2, 0x3A};
+static const uint8_t REGION_DAEJEON[]  = {0xB4, 0xEB, 0xC0, 0xFC, 0x3A};
+static const uint8_t REGION_SEJONG[]   = {0xBC, 0xBC, 0xC1, 0xBE, 0x3A};
+static const uint8_t REGION_JEONBUK[]  = {0xC0, 0xFC, 0xBA, 0xCF, 0x3A};
+static const uint8_t REGION_JEONNAM[]  = {0xC0, 0xFC, 0xB3, 0xB2, 0x3A};
+static const uint8_t REGION_DAEGU[]    = {0xB4, 0xEB, 0xB1, 0xB8, 0x3A};
+static const uint8_t REGION_GYEONGBUK[] = {0xB0, 0xE6, 0xBA, 0xCF, 0x3A};
+static const uint8_t REGION_ULLEUNGDO[] = {0xBF, 0xEF, 0xB8, 0xAA, 0xB5, 0xB5, 0x3A};
+static const uint8_t REGION_GYEONGNAM[] = {0xB0, 0xE6, 0xB3, 0xB2, 0x3A};
+static const uint8_t REGION_BUSAN[]    = {0xBA, 0xCE, 0xBB, 0xEA, 0x3A};
+static const uint8_t REGION_ULSAN[]    = {0xBF, 0xEF, 0xBB, 0xEA, 0x3A};
+static const uint8_t REGION_JEJU[]     = {0xC1, 0xA6, 0xC1, 0xD6, 0x3A};
+
+static const uint8_t WEATHER_SUNNY[]   = {0xB8, 0xBC, 0xC0, 0xBD};
+static const uint8_t WEATHER_CLOUDY[]  = {0xC8, 0xE5, 0xB8, 0xB2};
+static const uint8_t WEATHER_HUMID[]   = {0xC8, 0xE5, 0xB8, 0xB2, 0x28, 0xB0, 0xED, 0xBD, 0xC0, 0xB5, 0xB5, 0x29};
+static const uint8_t WEATHER_RAIN[]    = {0xBA, 0xF1};
+static const uint8_t WEATHER_SNOW[]    = {0xB4, 0xAB};
+static const uint8_t WEATHER_PRECIP[]  = {0xB0, 0xAD, 0xBC, 0xF6};
+static const uint8_t WEATHER_CLOUD[]   = {0xB1, 0xB8, 0xB8, 0xA7};
+static const uint8_t WEATHER_UNKNOWN[] = {0xB3, 0xAF, 0xBE, 0xBE, 0x20, 0xBE, 0xCB, 0x20, 0xBC, 0xF6, 0x20, 0xBE, 0xF8, 0xC0, 0xBD, 0x28, 0x41, 0x50, 0x49, 0x20, 0xC1, 0xF6, 0xBF, 0xAC, 0x29};
+static const uint8_t WEATHER_FAIL[]    = {0xB3, 0xAF, 0xBE, 0xBE, 0x20, 0xC5, 0xEB, 0xBD, 0xC5, 0x20, 0xBD, 0xC7, 0xC6, 0xD0};
+static const uint8_t WEATHER_ENV_ERR[] = {0xC8, 0xAF, 0xB0, 0xE6, 0x20, 0xBA, 0xAF, 0xBC, 0xF6, 0x20, 0xBF, 0xC0, 0xB7, 0xF9};
+
+static const EncodedRegionText ENCODED_REGIONS[] = {
+  {"\xEC\x84\x9C\xEC\x9A\xB8", REGION_SEOUL, sizeof(REGION_SEOUL)},
+  {"\xEC\x88\x98\xEC\x9B\x90", REGION_SUWON, sizeof(REGION_SUWON)},
+  {"\xEC\x84\xB1\xEB\x82\xA8", REGION_SEONGNAM, sizeof(REGION_SEONGNAM)},
+  {"\xEC\x95\x88\xEC\x96\x91", REGION_ANYANG, sizeof(REGION_ANYANG)},
+  {"\xEA\xB3\xA0\xEC\x96\x91", REGION_GOYANG, sizeof(REGION_GOYANG)},
+  {"\xEC\x9A\xA9\xEC\x9D\xB8", REGION_YONGIN, sizeof(REGION_YONGIN)},
+  {"\xEB\xB6\x80\xEC\xB2\x9C", REGION_BUCHEON, sizeof(REGION_BUCHEON)},
+  {"\xEC\x95\x88\xEC\x82\xB0", REGION_ANSAN, sizeof(REGION_ANSAN)},
+  {"\xEB\x82\xA8\xEC\x96\x91\xEC\xA3\xBC", REGION_NAMYANGJU, sizeof(REGION_NAMYANGJU)},
+  {"\xED\x99\x94\xEC\x84\xB1", REGION_HWASEONG, sizeof(REGION_HWASEONG)},
+  {"\xED\x8F\x89\xED\x83\x9D", REGION_PYEONGTAEK, sizeof(REGION_PYEONGTAEK)},
+  {"\xEC\x9D\x98\xEC\xA0\x95\xEB\xB6\x80", REGION_UIJEONGBU, sizeof(REGION_UIJEONGBU)},
+  {"\xED\x8C\x8C\xEC\xA3\xBC", REGION_PAJU, sizeof(REGION_PAJU)},
+  {"\xEA\xB9\x80\xED\x8F\xAC", REGION_GIMPO, sizeof(REGION_GIMPO)},
+  {"\xEA\xB4\x91\xEB\xAA\x85", REGION_GWANGMYEONG, sizeof(REGION_GWANGMYEONG)},
+  {"\xEA\xB4\x91\xEC\xA3\xBC", REGION_GWANGJU, sizeof(REGION_GWANGJU)},
+  {"\xEC\x9D\xB4\xEC\xB2\x9C", REGION_ICHEON, sizeof(REGION_ICHEON)},
+  {"\xEC\x96\x91\xEC\xA3\xBC", REGION_YANGJU, sizeof(REGION_YANGJU)},
+  {"\xEA\xB5\xAC\xEB\xA6\xAC", REGION_GURI, sizeof(REGION_GURI)},
+  {"\xED\x8F\xAC\xEC\xB2\x9C", REGION_POCHEON, sizeof(REGION_POCHEON)},
+  {"\xEC\x96\x91\xED\x8F\x89", REGION_YANGPYEONG, sizeof(REGION_YANGPYEONG)},
+  {"\xEA\xB0\x80\xED\x8F\x89", REGION_GAPYEONG, sizeof(REGION_GAPYEONG)},
+  {"\xEC\x8B\x9C\xED\x9D\xA5", REGION_SIHEUNG, sizeof(REGION_SIHEUNG)},
+  {"\xEC\x9D\xB8\xEC\xB2\x9C", REGION_INCHEON, sizeof(REGION_INCHEON)},
+  {"\xEA\xB0\x95\xEC\x9B\x90", REGION_GANGWON, sizeof(REGION_GANGWON)},
+  {"\xEC\xB6\xA9\xEB\xB6\x81", REGION_CHUNGBUK, sizeof(REGION_CHUNGBUK)},
+  {"\xEC\xB6\xA9\xEB\x82\xA8", REGION_CHUNGNAM, sizeof(REGION_CHUNGNAM)},
+  {"\xEB\x8C\x80\xEC\xA0\x84", REGION_DAEJEON, sizeof(REGION_DAEJEON)},
+  {"\xEC\x84\xB8\xEC\xA2\x85", REGION_SEJONG, sizeof(REGION_SEJONG)},
+  {"\xEC\xA0\x84\xEB\xB6\x81", REGION_JEONBUK, sizeof(REGION_JEONBUK)},
+  {"\xEC\xA0\x84\xEB\x82\xA8", REGION_JEONNAM, sizeof(REGION_JEONNAM)},
+  {"\xEB\x8C\x80\xEA\xB5\xAC", REGION_DAEGU, sizeof(REGION_DAEGU)},
+  {"\xEA\xB2\xBD\xEB\xB6\x81", REGION_GYEONGBUK, sizeof(REGION_GYEONGBUK)},
+  {"\xEC\x9A\xB8\xEB\xA6\x89\xEB\x8F\x84", REGION_ULLEUNGDO, sizeof(REGION_ULLEUNGDO)},
+  {"\xEA\xB2\xBD\xEB\x82\xA8", REGION_GYEONGNAM, sizeof(REGION_GYEONGNAM)},
+  {"\xEB\xB6\x80\xEC\x82\xB0", REGION_BUSAN, sizeof(REGION_BUSAN)},
+  {"\xEC\x9A\xB8\xEC\x82\xB0", REGION_ULSAN, sizeof(REGION_ULSAN)},
+  {"\xEC\xA0\x9C\xEC\xA3\xBC", REGION_JEJU, sizeof(REGION_JEJU)}
+};
+
+static const EncodedWeatherText ENCODED_WEATHERS[] = {
+  {"\xEB\xA7\x91\xEC\x9D\x8C", WEATHER_SUNNY, sizeof(WEATHER_SUNNY)},
+  {"\xED\x9D\x90\xEB\xA6\xBC", WEATHER_CLOUDY, sizeof(WEATHER_CLOUDY)},
+  {"\xED\x9D\x90\xEB\xA6\xBC\x28\xEA\xB3\xA0\xEC\x8A\xB5\xEB\x8F\x84\x29", WEATHER_HUMID, sizeof(WEATHER_HUMID)},
+  {"\xEB\xB9\x84", WEATHER_RAIN, sizeof(WEATHER_RAIN)},
+  {"\xEB\x88\x88", WEATHER_SNOW, sizeof(WEATHER_SNOW)},
+  {"\xEA\xB0\x95\xEC\x88\x98", WEATHER_PRECIP, sizeof(WEATHER_PRECIP)},
+  {"\xEA\xB5\xAC\xEB\xA6\x84", WEATHER_CLOUD, sizeof(WEATHER_CLOUD)},
+  {"\xEB\x82\xA0\xEC\x94\xA8\x20\xEC\x95\x8C\x20\xEC\x88\x98\x20\xEC\x97\x86\xEC\x9D\x8C\x28\x41\x50\x49\x20\xEC\xA7\x80\xEC\x97\xB0\x29", WEATHER_UNKNOWN, sizeof(WEATHER_UNKNOWN)},
+  {"\xEB\x82\xA0\xEC\x94\xA8\x20\xED\x86\xB5\xEC\x8B\xA0\x20\xEC\x8B\xA4\xED\x8C\xA8", WEATHER_FAIL, sizeof(WEATHER_FAIL)},
+  {"\xED\x99\x98\xEA\xB2\xBD\x20\xEB\xB3\x80\xEC\x88\x98\x20\xEC\x98\xA4\xEB\xA5\x98", WEATHER_ENV_ERR, sizeof(WEATHER_ENV_ERR)}
+};
+
+static String sanitizeNextionText(String text) {
+  text.replace("\"", "'");
+  return text;
+}
+
+static void nexWriteTerminator() {
+  nexSerial.write(0xFF);
+  nexSerial.write(0xFF);
+  nexSerial.write(0xFF);
+}
+
+static bool sendEncodedRegionText(const String &regionText) {
+  for (size_t i = 0; i < sizeof(ENCODED_REGIONS) / sizeof(ENCODED_REGIONS[0]); i++) {
+    if (regionText == ENCODED_REGIONS[i].utf8) {
+      nexSerial.print("t_region.txt=\"");
+      nexSerial.write(ENCODED_REGIONS[i].encoded, ENCODED_REGIONS[i].length);
+      nexSerial.print("\"");
+      nexWriteTerminator();
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool sendEncodedWeatherBytes(const uint8_t *encoded, size_t length) {
+  nexSerial.print("t_weather.txt=\"");
+  nexSerial.write(encoded, length);
+  nexSerial.print("\"");
+  nexWriteTerminator();
+  return true;
+}
+
+static bool sendEncodedWeatherText(const String &weatherText) {
+  for (size_t i = 0; i < sizeof(ENCODED_WEATHERS) / sizeof(ENCODED_WEATHERS[0]); i++) {
+    if (weatherText == ENCODED_WEATHERS[i].utf8) {
+      return sendEncodedWeatherBytes(ENCODED_WEATHERS[i].encoded, ENCODED_WEATHERS[i].length);
+    }
+  }
+
+  if (weatherText.indexOf("\xEB\xB9\x84") >= 0) return sendEncodedWeatherBytes(WEATHER_RAIN, sizeof(WEATHER_RAIN));
+  if (weatherText.indexOf("\xEA\xB0\x95\xEC\x88\x98") >= 0) return sendEncodedWeatherBytes(WEATHER_PRECIP, sizeof(WEATHER_PRECIP));
+  if (weatherText.indexOf("\xEB\x88\x88") >= 0) return sendEncodedWeatherBytes(WEATHER_SNOW, sizeof(WEATHER_SNOW));
+  if (weatherText.indexOf("\xED\x9D\x90\xEB\xA6\xBC") >= 0) return sendEncodedWeatherBytes(WEATHER_CLOUDY, sizeof(WEATHER_CLOUDY));
+  if (weatherText.indexOf("\xEA\xB5\xAC\xEB\xA6\x84") >= 0) return sendEncodedWeatherBytes(WEATHER_CLOUD, sizeof(WEATHER_CLOUD));
+  if (weatherText.indexOf("\xEB\xA7\x91") >= 0) return sendEncodedWeatherBytes(WEATHER_SUNNY, sizeof(WEATHER_SUNNY));
+  if (weatherText.indexOf("\xEC\x95\x8C\x20\xEC\x88\x98\x20\xEC\x97\x86\xEC\x9D\x8C") >= 0) return sendEncodedWeatherBytes(WEATHER_UNKNOWN, sizeof(WEATHER_UNKNOWN));
+  if (weatherText.indexOf("\xED\x86\xB5\xEC\x8B\xA0\x20\xEC\x8B\xA4\xED\x8C\xA8") >= 0) return sendEncodedWeatherBytes(WEATHER_FAIL, sizeof(WEATHER_FAIL));
+  if (weatherText.indexOf("\xEC\x98\xA4\xEB\xA5\x98") >= 0) return sendEncodedWeatherBytes(WEATHER_ENV_ERR, sizeof(WEATHER_ENV_ERR));
+
+  return false;
+}
+
+static int weatherIconFromText(const String &weatherText) {
+  String normalized = weatherText;
+  normalized.trim();
+
+  if (normalized.indexOf("비") >= 0 || normalized.indexOf("강수") >= 0) return 3;
+  if (normalized.indexOf("눈") >= 0) return 4;
+  if (normalized.indexOf("흐림") >= 0 || normalized.indexOf("구름") >= 0) return 2;
+  if (normalized.indexOf("맑") >= 0 || normalized.indexOf("해") >= 0) return 1;
+  return 0;
+}
+
+static void updateWeatherFields() {
+  String regionText = lastWeatherRegion;
+  regionText.trim();
+
+  String weatherText = lastWeatherLabel;
+  weatherText.trim();
+  if (weatherText.length() == 0 || weatherText == "Loading") weatherText = "Weather";
+
+  if (regionText.length() == 0) {
+    nexSend("t_region.txt=\"\"");
+  } else if (!sendEncodedRegionText(regionText)) {
+    String regionField = regionText + ":";
+    nexSend("t_region.txt=\"" + sanitizeNextionText(regionField) + "\"");
+  }
+  if (!sendEncodedWeatherText(weatherText)) {
+    nexSend("t_weather.txt=\"" + sanitizeNextionText(weatherText) + "\"");
+  }
+}
+
 // ★ 추가: MAC 주소 기반 고유 디바이스 ID 생성 함수
 String getUniqueDeviceId() {
   String mac = WiFi.macAddress();
@@ -19,6 +217,9 @@ void rememberWeatherRegion(const String &region) {
 
   lastWeatherRegion = region;
   prefs.putString("last_region", lastWeatherRegion);
+  if (currentMode == MODE_WEATHER) {
+    updateWeatherFields();
+  }
   Serial.printf(C_CYAN "\r\n[Weather] Saved region updated: %s\r\n" C_RESET, lastWeatherRegion.c_str());
 }
 
@@ -211,13 +412,24 @@ void handleNextionCmd(const String &cmd) {
     wifiManager.resetSettings(); // 플래시 메모리 와이파이 정보 삭제
     ESP.restart(); // 재부팅 (재부팅되면 저장된게 없으니 다시 무한 대기 모드로 진입)
   }
+  else if (cmd == "TZ") { // 디스플레이에서 TZ(Tare Zero) 신호가 오면
+    resetScaleZero();     // 우리가 미리 짜둔 영점 함수를 실행!
+  }
 }
 
 void nexSend(const String &cmd) { nexSerial.print(cmd); nexSerial.write(0xFF); nexSerial.write(0xFF); nexSerial.write(0xFF); }
 void updateDisplay(int iconID, String text) { 
   if (currentMode == MODE_WEATHER && lastWeatherIconId >= 1 && lastWeatherIconId <= 4) iconID = lastWeatherIconId;
-  if (currentMode == MODE_WEATHER && text.length() == 0) text = lastWeatherLabel;
-  nexSend("p0.pic=" + String(iconID)); text.replace("\"", "'"); nexSend("t_weather.txt=\"" + text + "\"");
+  nexSend("p0.pic=" + String(iconID));
+
+  if (currentMode == MODE_WEATHER) {
+    updateWeatherFields();
+    return;
+  }
+
+  if (text.length() == 0) text = lastWeatherLabel;
+  nexSend("t_region.txt=\"\"");
+  nexSend("t_weather.txt=\"" + sanitizeNextionText(text) + "\"");
 }
 void updateTempHumi(float tempC, float humi) { nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\""); nexSend("t_humi.txt=\"" + String(humi, 0) + "%\""); }
 void updateProgressBar(int val) { updateProgressBar(1, val); }
@@ -399,6 +611,7 @@ void networkTaskLoop(void *pvParameters) {
           JsonDocument doc;
           if (!deserializeJson(doc, response)) {
             String targetRegion = doc["target_region"] | "";
+            String weatherText = doc["weather"] | "";
             bool hadSavedRegion = lastWeatherRegion.length() > 0;
             if (targetRegion.length() > 0) {
               rememberWeatherRegion(targetRegion);
@@ -406,6 +619,18 @@ void networkTaskLoop(void *pvParameters) {
                 lastWeatherCallMillis = millis();
                 sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
               }
+            }
+
+            if (weatherText.length() > 0) {
+              lastWeatherLabel = weatherText;
+              lastWeatherIconId = weatherIconFromText(weatherText);
+              if (currentMode == MODE_WEATHER) {
+                updateDisplay(lastWeatherIconId, "");
+              }
+            }
+
+            if (!doc["temp"].isNull() && !doc["humidity"].isNull()) {
+              updateTempHumi(doc["temp"] | 0.0f, doc["humidity"] | 0.0f);
             }
 
             int cmd = doc["spray"] | -1;
