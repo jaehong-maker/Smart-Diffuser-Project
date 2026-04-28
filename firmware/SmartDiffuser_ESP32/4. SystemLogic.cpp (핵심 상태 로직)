@@ -115,11 +115,10 @@ void initSystem() {
   Serial.begin(115200); Serial.setTimeout(5000);
   nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
   delay(300); 
-  nexSend("sleep=0");  // 부팅 시 디스플레이 수면 모드 강제 해제
+  nexSend("sleep=0");  // ★ 추가: 부팅 시 디스플레이 수면 모드 강제 해제
   delay(100);
   nexSend("bauds=9600"); delay(100); nexSend("dim=100");    
   
-  // 워치독 설정
   esp_task_wdt_config_t wdt_config = {
       .timeout_ms = 60000, 
       .idle_core_mask = (1 << 0) | (1 << 1), 
@@ -130,26 +129,20 @@ void initSystem() {
 
   networkQueue = xQueueCreate(10, sizeof(String*));
 
-  // --- 하드웨어 핀 모드 설정 (Config 네임스페이스 적용) ---
-  for (int i = 0; i < 4; i++) {
-    pinMode(Config::SPRAY_PINS[i], OUTPUT);
-  }
-  pinMode(Config::PIN_LED, OUTPUT);
-  pinMode(Config::PIN_DF_BUSY, INPUT);
-  
-  forceAllOff(); // 모든 출력 초기화
+  pinMode(PIN_SUNNY, OUTPUT); pinMode(PIN_CLOUDY, OUTPUT);
+  pinMode(PIN_RAIN, OUTPUT); pinMode(PIN_SNOW, OUTPUT); pinMode(PIN_LED, OUTPUT);
+  pinMode(PIN_BUSY, INPUT);
+  forceAllOff();
 
   Serial.printf(C_BOLD "\r\n 🚀 SMART DIFFUSER V12.7.0 (REFACTORED ARCHITECTURE) \r\n" C_RESET);
 
-  // DFPlayer 초기화
   mySoftwareSerial.begin(9600, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
+  
   if (!myDFPlayer.begin(mySoftwareSerial, true, false)) { 
     Serial.println(C_RED "⚠️ [Audio] 스피커 연결 불량! 무음 모드로 바이패스합니다." C_RESET);
   }
 
   initMicrophone();
-  
-  // 설정값 복구 (Preferences)
   prefs.begin("diffuser", false);
   String defaultMac = "ESP_" + WiFi.macAddress();
   defaultMac.replace(":", "");
@@ -160,16 +153,12 @@ void initSystem() {
   ledBrightness = prefs.getInt("ledBright", 150);
   lastWeatherRegion = prefs.getString("last_region", lastWeatherRegion);
 
-  // LED 스트립 초기화
   strip.begin();
-  strip.setBrightness(150);
-  strip.show();
-  
+  strip.setBrightness(150); 
+  strip.show(); 
   calibration_factor = prefs.getFloat("cal_factor", 430.0);
-  currentVolume = prefs.getInt("volume", 20); 
-  myDFPlayer.volume(currentVolume);
+  currentVolume = prefs.getInt("volume", 20); myDFPlayer.volume(currentVolume);
 
-  // 로드셀 초기화 및 오프셋 복구
   for (int i = 0; i < 4; i++) {
     scales[i].begin(LOADCELL_DT[i], LOADCELL_SCK[i]);
     scales[i].set_scale(calibration_factor);
@@ -181,20 +170,22 @@ void initSystem() {
       scales[i].set_offset(savedOffset);
       Serial.printf("[LoadCell %d] 오프셋 복구 완료: %ld\r\n", i + 1, savedOffset);
     } else {
-      scales[i].tare(); // 저장된 값이 없으면 영점 잡기
+      scales[i].tare();
     }
   
     lastNozzleSprayTime[i] = millis();
 
-    // 인터럽트 할당
     if (i == 0) attachInterrupt(digitalPinToInterrupt(LOADCELL_DT[0]), isr_hx0, FALLING);
     if (i == 1) attachInterrupt(digitalPinToInterrupt(LOADCELL_DT[1]), isr_hx1, FALLING);
     if (i == 2) attachInterrupt(digitalPinToInterrupt(LOADCELL_DT[2]), isr_hx2, FALLING);
     if (i == 3) attachInterrupt(digitalPinToInterrupt(LOADCELL_DT[3]), isr_hx3, FALLING);
   }
 
+  // ★ 시스템 보호를 위한 부팅 시 자가 진단 실행
+  checkSensorHealth();
+
   connectWiFi();
-  configTime(9 * 3600, 0, "pool.ntp.org", "time.nist.gov"); // NTP 시간 동기화
+  configTime(9 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
   audioEventQueue = xQueueCreate(5, sizeof(int));
   networkEventGroup = xEventGroupCreate();
@@ -205,16 +196,14 @@ void initSystem() {
   
   lastActivityTime = millis(); 
   setSystemMode(MODE_READY, "System Ready");
-  updateScentProgressBars(); // 잔량 표시 업데이트
+  updateScentProgressBars();
 
-  // 오프라인 강제 진입 등으로 남은 명령 처리
   String pendingNextionCmd = prefs.getString("pending_nextion_cmd", "");
   if (pendingNextionCmd.length() > 0) {
     prefs.remove("pending_nextion_cmd");
     handleNextionCmd(pendingNextionCmd);
   }
 
-  // 백그라운드 태스크 실행
   xTaskCreatePinnedToCore(networkTaskLoop, "NetworkTask", 8192, NULL, 1, &NetworkTaskHandle, 1);
   xTaskCreatePinnedToCore(sensorTaskLoop, "SensorTask", 8192, NULL, 1, &SensorTaskHandle, 0);
 }
@@ -478,7 +467,7 @@ void handleInput(String input) {
     int cmdInt = input.toInt();
     switch (cmdInt) {
       case 1: setSystemMode(MODE_MANUAL, "Manual Mode"); printManualMenu(); showPrompt(); break;
-      case 2: setSystemMode(MODE_WEATHER, "Weather Mode"); break;
+      case 2: enterWeatherMode(false); break;
       case 3: setSystemMode(MODE_SETTING, "Setting Mode"); printSettingMenu(); showPrompt(); break;
       case 4: demoStep = 0; setSystemMode(MODE_DEMO, "Demo Mode"); break;
       case 5: Serial.println("\r\n[System] 음성 인식 기능이 비활성화되었습니다."); showPrompt(); break;
@@ -512,7 +501,11 @@ void handleInput(String input) {
   else if (currentMode == MODE_WEATHER) {
     rememberWeatherRegion(input);
     Serial.printf("\r\n🔍 [%s] 지역 날씨 조회 요청 중...\r\n", input.c_str());
-    updateDisplay(0, "Checking " + lastWeatherRegion); 
+    lastWeatherIconId = 0;
+    if (lastWeatherLabel.length() == 0 || lastWeatherLabel == "Loading") {
+      lastWeatherLabel = "Weather";
+    }
+    updateDisplay(0, "");
     lastWeatherCallMillis = millis();
     sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
   }
@@ -557,14 +550,16 @@ void runManualMode(String input) {
 }
 
 void enterWeatherMode(bool runNow) {
-  setSystemMode(MODE_WEATHER, "Weather Mode");
+  lastWeatherIconId = 0;
+  if (lastWeatherLabel.length() == 0 || lastWeatherLabel == "Loading") {
+    lastWeatherLabel = "Weather";
+  }
+  setSystemMode(MODE_WEATHER);
   Serial.println(C_YELLOW "👉 지역명을 입력하세요" C_RESET);
   if (lastWeatherRegion.length() > 0) {
     Serial.printf(C_YELLOW "\r\n[Weather] Saved region: %s\r\n" C_RESET, lastWeatherRegion.c_str());
-    updateDisplay(0, "Weather " + lastWeatherRegion);
-  } else {
-    updateDisplay(0, "Weather Sync...");
   }
+  updateDisplay(0, "");
 
   if (runNow) {
     lastWeatherCallMillis = millis();
@@ -573,22 +568,58 @@ void enterWeatherMode(bool runNow) {
 }
 
 void runSprayLogic() { 
-    if (!isRunning) return;
+  // 시스템이 분사 중이 아닐 때는 연산을 즉시 건너뛰어 CPU 리소스를 절약합니다.
+  if (!isRunning) return;
 
-    unsigned long elapsed = millis() - prevMotorMillis;
-    unsigned long targetInterval = isSpraying ? sprayDuration : REST_TIME;
-
-    if (elapsed >= targetInterval) {
-        isSpraying = !isSpraying;
-        prevMotorMillis = millis();
-        
-        // 이제 Globals.h에 선언되었으므로 에러가 사라집니다!
-        applyNozzleHardwareState();
-
-        if (currentMode != MODE_MANUAL) {
-            updateDisplay(0, isSpraying ? "Spraying..." : "Resting...");
-        }
+  if (isSpraying) {
+    if (millis() - prevMotorMillis >= sprayDuration) {
+      forceAllOff();
+      isSpraying = false; 
+      prevMotorMillis = millis();
+      
+      if (currentMode != MODE_MANUAL) {
+        updateDisplay((currentMode == MODE_WEATHER) ? lastWeatherIconId : 0, "Resting...");
+      }
     }
+  } else {
+    if (millis() - prevMotorMillis >= REST_TIME) {
+      
+      // --- ★ [업그레이드] 분사 전 안전 검사 로직 시작 ---
+      bool anySafe = false;
+      for (int i = 0; i < 4; i++) {
+        if (activeNozzles[i]) {
+          if (!isNozzleSafe(i)) {
+            activeNozzles[i] = false; // 위험한 노즐은 스스로 끄기
+          } else {
+            anySafe = true; // 하나라도 안전하면 분사 허용
+          }
+        }
+      }
+
+      // 켜진 노즐이 모두 위험 상태면 시스템 강제 종료
+      if (!anySafe) {
+        stopSystem();
+        updateDisplay(0, "Check Refill");
+        Serial.println(C_RED "🛑 [안전 장치 작동] 용액 부족 또는 센서 오류로 분사를 중단합니다." C_RESET);
+        return;
+      }
+      // --- 안전 검사 로직 끝 ---
+
+      forceAllOff(); 
+      for (int i = 0; i < 4; i++) {
+        if (activeNozzles[i]) {
+          int pin = getPinFromCommand(i + 1);
+          if (pin != -1) digitalWrite(pin, LOW);
+        }
+      }
+      isSpraying = true; 
+      prevMotorMillis = millis();
+      
+      if (currentMode != MODE_MANUAL) {
+        updateDisplay(0, "Spraying...");
+      }
+    }
+  }
 }
 
 void runAutoDemoLoop() { 
@@ -608,26 +639,17 @@ void checkSafety() {
   if (millis() - startTimeMillis > MAX_RUN_TIME) { setSystemMode(MODE_READY, "Safety Timeout"); }
 }
 
-void setSystemMode(SystemMode mode, String msg) {
-    // 1. 이전 모드에서 빠져나올 때의 정리 작업
-    if (currentMode != mode) {
-        forceAllOff(); 
-        isSpraying = false;
-        isRunning = false;
-    }
-
-    currentMode = mode;
-    
-    // 2. 새로운 모드 진입 로그 및 디스플레이 업데이트
-    if (msg != "") {
-        Serial.printf(C_CYAN "\r\n[Mode Change] -> %s\r\n" C_RESET, msg.c_str());
-        updateDisplay(0, msg);
-    }
-
-    if (mode == MODE_READY) {
-        stopSystem();
-        printMainMenu();
-    }
+void setSystemMode(SystemMode mode, String msg) { 
+  currentMode = mode;
+  if (msg != "") {
+    Serial.printf(C_CYAN "\r\n[Mode] %s\r\n" C_RESET, msg.c_str());
+    updateDisplay(0, msg);
+  }
+  
+  if (mode == MODE_READY) {
+    stopSystem();
+    printMainMenu(); 
+  }
 }
 
 void printSettingMenu() {
@@ -703,4 +725,19 @@ void runScheduler() {
             }
         }
     }
+}
+
+bool isNozzleSafe(int index) {
+    if (index < 0 || index > 3) return false;
+
+    // 1. 센서가 고장 났으면 안전을 위해 차단
+    if (!isSensorOk[index]) return false;
+
+    // 2. 용액 부족 체크 (빈 병 무게 15.5g + 안전 마진 2.0g)
+    if (weights[index] < (Config::EMPTY_WEIGHT + 2.0f)) {
+        Serial.printf(C_RED "[Safety] %d번 노즐 용액 부족으로 분사 차단!\r\n" C_RESET, index + 1);
+        return false;
+    }
+
+    return true;
 }
