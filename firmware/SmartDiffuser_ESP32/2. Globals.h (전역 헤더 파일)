@@ -236,6 +236,7 @@ void playSound(int trackNum);
 void bootAnimation();
 void systemHeartbeat();
 void monitorWeight();
+void resetWeightFilters(); // 이 줄을 추가하세요!
 void printCalibrationInfo();
 void runAmbientMode();
 void setLedColor(uint8_t r, uint8_t g, uint8_t b);
