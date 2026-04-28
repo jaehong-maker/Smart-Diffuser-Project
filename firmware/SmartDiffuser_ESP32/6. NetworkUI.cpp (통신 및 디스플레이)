@@ -605,60 +605,83 @@ void pollServer() {
   }
 }
 
-// 네트워크 전용 태스크가 큐를 감시함
+// =================================================================
+// 📡 [분리된 함수] 서버 응답(JSON)을 해석하고 동작을 실행하는 전담 로직
+// =================================================================
+static void processServerResponse(const String& response) {
+  JsonDocument doc;
+  if (deserializeJson(doc, response)) return; // 파싱 실패 시 무시
+
+  // 1. 날씨 및 지역 정보 업데이트
+  String targetRegion = doc["target_region"] | "";
+  String weatherText = doc["weather"] | "";
+  bool hadSavedRegion = lastWeatherRegion.length() > 0;
+
+  if (targetRegion.length() > 0) {
+    rememberWeatherRegion(targetRegion);
+    if (currentMode == MODE_WEATHER && !hadSavedRegion) {
+      lastWeatherCallMillis = millis();
+      sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
+    }
+  }
+
+  if (weatherText.length() > 0) {
+    lastWeatherLabel = weatherText;
+    lastWeatherIconId = weatherIconFromText(weatherText);
+    if (currentMode == MODE_WEATHER) {
+      updateDisplay(lastWeatherIconId, "");
+    }
+  }
+
+  // 2. 온습도 업데이트
+  if (!doc["temp"].isNull() && !doc["humidity"].isNull()) {
+    updateTempHumi(doc["temp"] | 0.0f, doc["humidity"] | 0.0f);
+  }
+
+  // 3. 분사 제어 및 강제 정지 명령 처리
+  int cmd = doc["spray"] | -1;
+  if (cmd > 0) {
+    int dur = doc["duration"] | 3; 
+    int music = doc["music"] | 0; 
+    String txt = doc["result_text"] | "명령 수신";
+    triggerSpray(cmd, dur, music, txt, (currentMode == MODE_WEATHER));
+  } else if (cmd == 0) {
+    stopSystem();
+    updateDisplay(0, "Stopped by Server");
+    Serial.println(C_YELLOW "\r\n🛑 서버 명령으로 시스템 강제 정지\r\n" C_RESET);
+  }
+}
+
+// =================================================================
+// 📡 [메인 태스크] 큐(Queue)에서 메시지를 꺼내 서버로 전송만 담당 (다이어트 성공!)
+// =================================================================
 void networkTaskLoop(void *pvParameters) {
   for (;;) {
     String* currentMsgPtr;
+    
+    // 큐에 보낼 메시지가 들어올 때까지 대기 (CPU 점유율 0%)
     if (xQueueReceive(networkQueue, &currentMsgPtr, portMAX_DELAY) == pdTRUE) {
       String payload = *currentMsgPtr;
-      delete currentMsgPtr; 
+      delete currentMsgPtr; // 메모리 누수 방지
 
       isCommunicate = true; 
-      initNetworkSession(); HTTPClient http; http.setTimeout(10000); 
+      initNetworkSession(); 
+      HTTPClient http; 
+      http.setTimeout(10000); 
+      
       if (http.begin(sharedClient, serverName)) {
         http.addHeader("Content-Type", "application/json");
         int httpCode = http.POST(payload);
+        
         if (httpCode == HTTP_CODE_OK) {
           String response = http.getString();
-          JsonDocument doc;
-          if (!deserializeJson(doc, response)) {
-            String targetRegion = doc["target_region"] | "";
-            String weatherText = doc["weather"] | "";
-            bool hadSavedRegion = lastWeatherRegion.length() > 0;
-            if (targetRegion.length() > 0) {
-              rememberWeatherRegion(targetRegion);
-              if (currentMode == MODE_WEATHER && !hadSavedRegion) {
-                lastWeatherCallMillis = millis();
-                sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
-              }
-            }
-
-            if (weatherText.length() > 0) {
-              lastWeatherLabel = weatherText;
-              lastWeatherIconId = weatherIconFromText(weatherText);
-              if (currentMode == MODE_WEATHER) {
-                updateDisplay(lastWeatherIconId, "");
-              }
-            }
-
-            if (!doc["temp"].isNull() && !doc["humidity"].isNull()) {
-              updateTempHumi(doc["temp"] | 0.0f, doc["humidity"] | 0.0f);
-            }
-
-            int cmd = doc["spray"] | -1;
-            if (cmd > 0) {
-              int dur = doc["duration"] | 3; int music = doc["music"] | 0; 
-              String txt = doc["result_text"] | "명령 수신";
-              triggerSpray(cmd, dur, music, txt, (currentMode == MODE_WEATHER));
-            } else if (cmd == 0) {
-              // ★ 추가: 0일 때 강제 정지 동작 수행
-              stopSystem();
-              updateDisplay(0, "Stopped by Server");
-              Serial.println(C_YELLOW "\r\n🛑 서버 명령으로 시스템 강제 정지\r\n" C_RESET);
-            }
-          }
+          processServerResponse(response); // 👉 분리된 함수로 응답 데이터 토스!
+        } else {
+          Serial.printf(C_RED "⚠️ [Network] HTTP 에러 코드: %d\r\n" C_RESET, httpCode);
         }
         http.end();
+      } else {
+        Serial.println(C_RED "⚠️ [Network] 서버 연결 실패" C_RESET);
       }
       isCommunicate = false;
     }
