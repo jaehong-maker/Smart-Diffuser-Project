@@ -347,71 +347,88 @@ void checkNextionInput() {
   }
 }
 
+// =================================================================
+// 🖥️ [분리된 헬퍼 함수 1] 블렌딩 모드(BM) 켜기/끄기 토글 처리
+// =================================================================
+static void toggleBlendMode() {
+  blendModeEnabled = !blendModeEnabled;
+  blendSelection = "";
+  blendSprayActive = false;
+
+  if (blendModeEnabled) {
+    nexSend("b_blend.txt=\"blendOFF\"");
+    updateDisplay(0, "Pick 2 scents");
+    Serial.println("\r\n[BLEND] ON");
+  } else {
+    nexSend("b_blend.txt=\"blendON\"");
+    updateDisplay(0, "Manual Mode");
+    Serial.println("\r\n[BLEND] OFF");
+  }
+}
+
+// =================================================================
+// 🖥️ [분리된 헬퍼 함수 2] S1~S4 향수 분사 버튼 처리
+// =================================================================
+static void handleScentButton(const String &cmd) {
+  int scent = cmd.substring(1).toInt();
+  if (scent < 1 || scent > 4) return;
+
+  Serial.printf("\r\n[S BUTTON] %s\r\n", cmd.c_str());
+  currentMode = MODE_MANUAL;
+
+  // 일반 모드일 경우 즉시 분사
+  if (!blendModeEnabled) {
+    runManualMode(String(scent));
+    return;
+  }
+
+  // 블렌딩 모드일 경우 번호 조합
+  String scentStr = String(scent);
+  if (blendSelection.indexOf(scentStr) == -1) {
+    blendSelection += scentStr;
+  }
+
+  if (blendSelection.length() == 1) {
+    updateDisplay(0, "1st scent selected");
+  } else if (blendSelection.length() == 2) {
+    runManualMode(blendSelection);
+    blendSelection = "";
+    updateDisplay(0, "Blending Mode");
+  }
+}
+
+// =================================================================
+// 🖥️ [메인 라우터] 넥션 디스플레이 명령어 분배기
+// =================================================================
 void handleNextionCmd(const String &cmd) {
+  // 1. 화면 터치 노이즈 및 UI 업데이트 응답(쓰레기값) 무시
   if (cmd.startsWith("p0") || cmd.startsWith("t_weather") || cmd.startsWith("j0")) return;
 
+  // 2. 명령어 교통정리 분기점
   if (cmd == "M2" || cmd == "Y3") {
     enterWeatherMode(true);
-  }
+  } 
   else if (cmd == "M1" || cmd == "Y1") {
     setSystemMode(MODE_MANUAL, "Manual Mode");
-  }
+  } 
   else if (cmd == "M3" || cmd == "Y2") {
     setSystemMode(MODE_SETTING, "Setting Mode");
-  }
+  } 
   else if (cmd == "ST") {
     setSystemMode(MODE_READY, "Stopped");
-
-    }
+  } 
   else if (cmd == "BM") {
-    blendModeEnabled = !blendModeEnabled;
-    blendSelection = "";
-    blendSprayActive = false;
-
-    if (blendModeEnabled) {
-      nexSend("b_blend.txt=\"blendOFF\"");
-      updateDisplay(0, "Pick 2 scents");
-      Serial.println("\r\n[BLEND] ON");
-    } else {
-      nexSend("b_blend.txt=\"blendON\"");
-      updateDisplay(0, "Manual Mode");
-      Serial.println("\r\n[BLEND] OFF");
-    }
-  }
+    toggleBlendMode(); // 👉 분리된 헬퍼 함수 호출
+  } 
   else if (cmd.startsWith("S")) {
-    int scent = cmd.substring(1).toInt();
-    if (scent < 1 || scent > 4) return;
-
-    Serial.printf("\r\n[S BUTTON] %s\r\n", cmd.c_str());
-
-    currentMode = MODE_MANUAL;
-
-    if (!blendModeEnabled) {
-      runManualMode(String(scent));
-      return;
-    }
-
-    String scentStr = String(scent);
-
-    if (blendSelection.indexOf(scentStr) == -1) {
-      blendSelection += scentStr;
-    }
-
-    if (blendSelection.length() == 1) {
-      updateDisplay(0, "1st scent selected");
-    }
-    else if (blendSelection.length() == 2) {
-      runManualMode(blendSelection);
-      blendSelection = "";
-      updateDisplay(0, "Blending Mode");
-    }
-  }
+    handleScentButton(cmd); // 👉 분리된 헬퍼 함수 호출
+  } 
   else if (cmd == "RE") {
     Serial.println("Wi-Fi 설정 초기화 및 재부팅!");
     WiFiManager wifiManager;
     wifiManager.resetSettings(); // 플래시 메모리 와이파이 정보 삭제
-    ESP.restart(); // 재부팅 (재부팅되면 저장된게 없으니 다시 무한 대기 모드로 진입)
-  }
+    ESP.restart(); // 재부팅
+  } 
   else if (cmd == "TZ") {
     resetScaleZero();
     nexSend("page 4");
@@ -569,38 +586,30 @@ void manageWiFi() {
   } else { if (!wasConnected) { wasConnected = true; wifiRetryInterval = 5000; } }
 }
 
-// --- 최적화 1: 서버 폴링 문자열 사전 할당 ---
 void pollServer() {
-  if (currentMode == MODE_DEMO || isCommunicate) return; 
+  if (currentMode == MODE_DEMO || isCommunicate) return; // 통신 중복 방지 
+  
   unsigned long now = millis();
   if (now - lastPollTime >= POLL_INTERVAL) {
     lastPollTime = now;
+    
     if (WiFi.status() == WL_CONNECTED) {
-      JsonDocument reqDoc; 
-      reqDoc["action"] = "POLL"; 
-      reqDoc["deviceId"] = deviceId; 
-      reqDoc["db_level"] = currentDbLevel;      
+      // 힙 메모리 파편화를 막기 위해 StaticJsonDocument 사용 
+      StaticJsonDocument<256> doc; 
+      doc["action"] = "POLL";
+      doc["deviceId"] = deviceId;
+      doc["db_level"] = currentDbLevel;
       
-      // ★ 중요: 아래 줄이 wArray를 선언하는 핵심 코드입니다.
-      JsonArray wArray = reqDoc["weights"].to<JsonArray>();
-      
+      JsonArray wArray = doc.createNestedArray("weights");
       for (int i = 0; i < 4; i++) {
-        // 실제 무게(weights[i])에서 빈 병 무게(15.5g)를 뺍니다.
-        float percent = calculateScentPercent(weights[i]);
-        // (가용 무게 / 전체 가용 범위) * 100으로 퍼센트를 계산합니다.
-        // Shared percent calculation keeps the display and ESP32 logic aligned.
-
-        // 0% 미만이나 100% 초과가 되지 않도록 잡아줍니다.
-        percent = constrain(percent, 0.0, 100.0);
-
-        // 소수점 첫째 자리까지 전송하기 위한 처리입니다.
-        wArray.add((float)((int)(percent * 10)) / 10.0);
+        // 무게 퍼센트 계산 후 소수점 한자리로 정리 
+        float percent = calculateScentPercent(weights[i]); 
+        wArray.add(round(percent * 10.0f) / 10.0f); 
       }
       
-      String payload; 
-      payload.reserve(128); 
-      serializeJson(reqDoc, payload);
-      sendServerRequest(payload); 
+      String payload;
+      serializeJson(doc, payload);
+      sendServerRequest(payload); // 서버로 전송 큐 삽입 
     }
   }
 }
