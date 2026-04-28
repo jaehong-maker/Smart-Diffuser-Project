@@ -68,7 +68,7 @@ namespace Config {
     const int SPRAY_PINS[4] = {4, 13, 14, 27}; 
     const int PIN_LED = 2;
     const int PIN_DF_BUSY = 21;
-    const float EMPTY_WEIGHT = 15.5f;
+    const float EMPTY_WEIGHT = 19.8f;
     const unsigned long AMBIENT_COOL_DOWN = 5000; 
 }
 
