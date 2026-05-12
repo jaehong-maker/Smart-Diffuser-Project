@@ -596,7 +596,7 @@ def lambda_handler(event, context):
             r = int(body.get("led_r", 255))
             g = int(body.get("led_g", 255))
             b = int(body.get("led_b", 255))
-            br = int(body.get("led_br", 150))
+            br = int(body.get("led_bright", 150)) # 앱에서 보내는 키도 led_bright로 통일
             
             db_utils.state_table.update_item(
                 Key={'deviceId': device_id},
@@ -823,7 +823,7 @@ def lambda_handler(event, context):
                 "led_r": led_r,
                 "led_g": led_g,
                 "led_b": led_b,
-                "led_br": led_br,
+                "led_bright": led_br, # 펌웨어(NetworkUI.cpp)와 동기화를 위해 led_bright로 전송
                 "weights": normalized_weights,
                 "result_text": "명령없음" if spray_code in [0, -1] else f"명령:{spray_code}"
             }, ensure_ascii=False)
