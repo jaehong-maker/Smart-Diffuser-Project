@@ -24,7 +24,7 @@ void executeSprayStart(const String& cmdStr, int durationSec) {
         int nozzleIdx = cmdStr.charAt(i) - '1'; 
         if (nozzleIdx >= 0 && nozzleIdx < 4) {
           if (calculateScentPercent(weights[nozzleIdx]) < 9.0f) {
-                Serial.printf(C_RED "🚨 [안전 장치] %d번 카트리지 잔량 12%% 미만! 모터 보호를 위해 분사를 차단합니다.\r\n" C_RESET, nozzleIdx + 1);
+                Serial.printf(C_RED "🚨 [안전 장치] %d번 카트리지 잔량 9%% 미만! 모터 보호를 위해 분사를 차단합니다.\r\n" C_RESET, nozzleIdx + 1);
                 continue; 
             }
             if (!activeNozzles[nozzleIdx]) {
