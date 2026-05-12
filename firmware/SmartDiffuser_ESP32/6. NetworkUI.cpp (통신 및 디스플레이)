@@ -820,13 +820,13 @@ void changeVolume(int vol) {
   showPrompt(); 
 }
 
-// [수정 후]
 void initOTA() { 
   ArduinoOTA.setHostname("SmartDiffuser"); 
-  ArduinoOTA.setPassword("1234"); // ★ OTA 무선 업로드 패스워드 추가
+  ArduinoOTA.setPassword("1234"); 
   
   ArduinoOTA.onStart([]() {
-    forceAllOff(); // 진행 중 안전을 위해 모든 핀 출력을 즉시 차단
+    esp_task_wdt_delete(NULL); // 업데이트 시작: 감시견 취침
+    forceAllOff(); 
     updateDisplay(0, "OTA Updating...");
     Serial.println("\r\n[OTA] 무선 업데이트 시작...");
   });
@@ -834,6 +834,7 @@ void initOTA() {
   ArduinoOTA.onEnd([]() {
     updateDisplay(0, "Update Success!");
     Serial.println("\r\n[OTA] 무선 업데이트 완료!");
+    esp_task_wdt_add(NULL); // 완료 시 감시견 복구 (안전을 위해)
   });
   
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
@@ -845,6 +846,10 @@ void initOTA() {
   ArduinoOTA.onError([](ota_error_t error) {
     updateDisplay(0, "OTA Error!");
     Serial.printf("\r\n[OTA] 에러 발생 코드: [%u]\r\n", error);
+    
+    // ★ 최종 수정: 에러 발생 시 감시견을 어설프게 건드리지 않고, 1.5초 뒤 깔끔하게 재부팅!
+    delay(1500);
+    ESP.restart(); 
   });
   
   ArduinoOTA.begin(); 
