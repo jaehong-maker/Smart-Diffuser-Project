@@ -12,59 +12,6 @@ void IRAM_ATTR isr_hx1() { hxReady[1] = true; }
 void IRAM_ATTR isr_hx2() { hxReady[2] = true; }
 void IRAM_ATTR isr_hx3() { hxReady[3] = true; }
 
-void executeSprayStart(const String& cmdStr, int durationSec) {
-    forceAllOff(); 
-    
-    int activeCount = 0;
-    for (int i = 0; i < 4; i++) activeNozzles[i] = false;
-
-
-
-    for (int i = 0; i < (int)cmdStr.length(); i++) {
-        int nozzleIdx = cmdStr.charAt(i) - '1'; 
-        if (nozzleIdx >= 0 && nozzleIdx < 4) {
-          if (calculateScentPercent(weights[nozzleIdx]) < 9.0f) {
-                Serial.printf(C_RED "🚨 [안전 장치] %d번 카트리지 잔량 9%% 미만! 모터 보호를 위해 분사를 차단합니다.\r\n" C_RESET, nozzleIdx + 1);
-                continue; 
-            }
-            if (!activeNozzles[nozzleIdx]) {
-                activeNozzles[nozzleIdx] = true;
-                lastNozzleSprayTime[nozzleIdx] = millis();
-                
-                int pin = getPinFromCommand(nozzleIdx + 1);
-                if (pin != -1) digitalWrite(pin, LOW); 
-                activeCount++;
-            }
-        }
-    }
-
-    if (activeCount > 0) {
-        isRunning = true;
-        isSpraying = true;
-        sprayDuration = (unsigned long)durationSec * 1000;
-        prevMotorMillis = millis();
-        startTimeMillis = millis();
-        
-        // --- [수정된 부분] ---
-        // SD 카드에 파일이 하나뿐일 경우를 대비해, 
-        // 무조건 1번 트랙을 틀거나 명령어가 숫자 하나일 때만 해당 트랙을 재생합니다.
-        int track = 1; 
-        if (cmdStr.length() == 1) {
-            track = cmdStr.charAt(0) - '0';
-        }
-        
-        // 0번 트랙은 없으므로 방어 로직 추가
-        if (track < 1) track = 1;
-        
-        playSound(track); 
-        Serial.printf(C_GREEN "[Audio] 재생 시도: %d번 트랙\r\n" C_RESET, track);
-    }else {
-        // ✅ [추가] 만약 선택한 노즐이 모두 12% 미만이라서 켜진 게 없다면?
-        Serial.println(C_YELLOW "⚠️ 작동 가능한 카트리지가 없어 분사가 취소되었습니다." C_RESET);
-        updateDisplay(0, "Low Fluid! Blocked");
-    }
-}
-
 // --- 서브 루틴: 시스템 기상 ---
 void wakeUpSystem() {
   if (currentMode != MODE_SLEEP) return;
@@ -757,11 +704,77 @@ int parseAndSetNozzles(String cmdStr) {
     return activeCount;
 }
 
+// =================================================================
+// 🚿 [통합 분사 제어 컨트롤러] 모든 분사(수동, 서버, 날씨, 음성) 전담
+// =================================================================
+void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
+  forceAllOff();
+  
+  // 1. 명령어 파싱 및 잔량(9% 미만) 안전 검사
+  String cmdStr = String(cmd);
+  int activeCount = parseAndSetNozzles(cmdStr);
+  
+  // 2. 작동 가능한 노즐이 없으면 강제 취소
+  if (activeCount == 0) {
+      Serial.println(C_YELLOW "⚠️ 작동 가능한 카트리지가 없어 분사가 취소되었습니다." C_RESET);
+      updateDisplay(0, "Low Fluid! Blocked"); 
+      return; 
+  }
+
+  // 3. 앰비언트 모드 향기 쿨타임(연속 분사 방지) 로직
+  if (currentMode == MODE_AMBIENT) {
+    if (lastAmbientScent == 0) {
+      lastAmbientScent = cmd; 
+    } else if (lastAmbientScent != cmd) {
+      Serial.printf(C_MAGENTA "\r\n[향기 쿨타임] 추천 향이 %d번에서 %d번으로 변경되었습니다. 이번 턴 분사는 생략!\r\n" C_RESET, lastAmbientScent, cmd);
+      lastAmbientScent = cmd; 
+      return; 
+    }
+  }
+
+  // 4. 시스템 분사 상태 ON 및 타이머 설정
+  isRunning = true; 
+  isSpraying = true; 
+  sprayDuration = dur * 1000;
+  prevMotorMillis = millis(); 
+  startTimeMillis = millis(); 
+  
+  // 5. 모터(펌프) 하드웨어 핀 작동
+  for (int i = 0; i < 4; i++) {
+    if (activeNozzles[i]) {
+      int targetPin = getPinFromCommand(i + 1);
+      if (targetPin != -1) digitalWrite(targetPin, LOW);
+    }
+  }
+  
+  // 6. 상황에 맞는 스피커 음악 자동 재생
+  if (currentMode != MODE_AMBIENT) {
+    int track = 1;
+    if (music > 0 && music <= 20) {
+        track = music; // 서버에서 지정해준 특정 곡
+    } else {
+        track = (cmd >= 10) ? 1 : cmd; // 수동 분사일 때 번호에 맞춤 (혼합이면 1번 곡)
+    }
+    playSound(track);
+    Serial.printf(C_GREEN "[Audio] 재생 시도: %d번 트랙\r\n" C_RESET, track);
+  }
+
+  // 7. 디스플레이 및 웹 로그 업데이트
+  lastWebMessage = "성공: " + txt; 
+  if (!isWeatherMode) {
+    updateDisplay((cmd >= 10) ? 0 : cmd, txt);
+  }
+
+  Serial.printf("\r\n" C_GREEN "✅ 분사 실행: %s (명령:%d)\r\n" C_RESET, txt.c_str(), cmd);
+  if (currentMode != MODE_SLEEP && currentMode != MODE_VOICE && !isWaitingForTestDb) {
+      showPrompt();
+  }
+}
+
 /**
  * @brief 기존 코드와의 호환성을 위해 유지하는 수동 모드 실행 함수
- * handleInput이나 Nextion 명령 처리부에서 사용합니다.
  */
 void runManualMode(String input) {
-    // 우리가 새로 만든 최적화 함수를 호출합니다 (기본 3초 분사)
-    executeSprayStart(input, 3);
+    // 수동 명령어(1~4, 13 등)를 통합 컨트롤러로 릴레이 (기본 3초 분사)
+    triggerSpray(input.toInt(), 3, 0, "Manual Spray", false);
 }
