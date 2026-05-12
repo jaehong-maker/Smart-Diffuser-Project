@@ -257,56 +257,6 @@ static String attachDeviceIdIfMissing(const String &payload) {
   return normalized;
 }
 
-void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
-  forceAllOff();
-  
-  // DRY 원칙 적용: SystemLogic 모듈의 파싱 및 노즐 활성화 유틸리티 재사용
-  String cmdStr = String(cmd);
-  int activeCount = parseAndSetNozzles(cmdStr);
-  
-  if (activeCount == 0) {
-      updateDisplay(0, "Low Fluid! Blocked"); // 화면에 경고 띄우기
-      return; 
-  }
-
-  if (currentMode == MODE_AMBIENT) {
-    if (lastAmbientScent == 0) {
-      lastAmbientScent = cmd; // 최초 향 저장
-    } else if (lastAmbientScent != cmd) {
-      Serial.printf(C_MAGENTA "\r\n[향기 쿨타임] 추천 향이 %d번에서 %d번으로 변경되었습니다. 이번 턴 분사는 생략!\r\n" C_RESET, lastAmbientScent, cmd);
-      lastAmbientScent = cmd; 
-      return; // 분사 모터를 돌리지 않고 종료
-    }
-  }
-
-  isRunning = true; 
-  isSpraying = true; 
-  sprayDuration = dur * 1000;
-  prevMotorMillis = millis(); 
-  startTimeMillis = millis(); 
-  
-  for (int i = 0; i < 4; i++) {
-    if (activeNozzles[i]) {
-      int targetPin = getPinFromCommand(i + 1);
-      if (targetPin != -1) digitalWrite(targetPin, LOW);
-    }
-  }
-  
-  // 삼항 연산자를 활용한 재생 트랙 선택 로직 간소화
-  if (music != 0 && currentMode != MODE_AMBIENT) { 
-    int targetMusic = (music > 0 && music <= 20) ? music : ((cmd >= 10) ? 1 : cmd);
-    playSound(targetMusic);
-  }
-
-  lastWebMessage = "성공: " + txt; 
-  if (!isWeatherMode) {
-    updateDisplay((cmd >= 10) ? 0 : cmd, txt);
-  }
-
-  Serial.printf("\r\n\033[32m✅ 분사 실행: %s (명령:%d)\033[0m\r\n", txt.c_str(), cmd);
-  showPrompt();
-}
-
 static String findNextionCmd(const String &buf) {
   const char* tokens[] = {
     "M1", "M2", "M3",
