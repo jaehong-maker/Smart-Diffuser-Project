@@ -96,7 +96,6 @@ bool forceAmbientSkip = false;
 // --- 기타 (데모, 터미널) ---
 String lastWebMessage = "Ready";
 String inputBuffer    = "";
-String globalPayload = ""; 
 int demoStep = 0;
 unsigned long prevDemoMillis  = 0;
 unsigned long prevMotorMillis = 0;
