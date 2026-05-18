@@ -91,7 +91,6 @@ void initSystem() {
   lastWebMessage.reserve(128);
   lastWeatherRegion.reserve(32);
   blendSelection.reserve(8);
-  globalPayload.reserve(256);
 
   Serial.begin(115200); Serial.setTimeout(5000);
   nexSerial.begin(9600, SERIAL_8N1, NEXTION_RX_PIN, NEXTION_TX_PIN);
