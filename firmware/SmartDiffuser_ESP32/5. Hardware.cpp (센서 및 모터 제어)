@@ -388,6 +388,11 @@ void runAmbientMode() {
       dbSamples[i] = current_db; sumDB += current_db;
 
       if (isRunning) runSprayLogic();
+      
+      // ★ [최종 디테일] 3초간의 수음 중에도 시스템이 멈춘 것처럼 보이지 않게 처리!
+      esp_task_wdt_reset();   // 워치독 갱신 (에러 방지)
+      checkNextionInput();    // 넥션 화면 터치 즉각 반응 허용
+
       delay(100);
     }
 
