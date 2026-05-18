@@ -553,13 +553,13 @@ void pollServer() {
     lastPollTime = now;
     
     if (WiFi.status() == WL_CONNECTED) {
-      // 힙 메모리 파편화를 막기 위해 StaticJsonDocument 사용 
-      StaticJsonDocument<256> doc; 
+      // ★ [최종 디테일] 최신 ArduinoJson 7 버전에 맞게 객체와 배열 생성 문법 통일
+      JsonDocument doc; 
       doc["action"] = "POLL";
       doc["deviceId"] = deviceId;
       doc["db_level"] = currentDbLevel;
       
-      JsonArray wArray = doc.createNestedArray("weights");
+      JsonArray wArray = doc["weights"].to<JsonArray>(); 
       for (int i = 0; i < 4; i++) {
         // 무게 퍼센트 계산 후 소수점 한자리로 정리 
         float percent = calculateScentPercent(weights[i]); 
@@ -618,8 +618,41 @@ static void processServerResponse(const String& response) {
     updateDisplay(0, "Stopped by Server");
     Serial.println(C_YELLOW "\r\n🛑 서버 명령으로 시스템 강제 정지\r\n" C_RESET);
   }
+  // ★ [추가] 분사(spray) 명령 없이 music 단독 명령이 온 경우 처리 ★
+  else if (!doc["music"].isNull()) {
+    int track = doc["music"] | 0;
+    if (track > 0 && track <= 20) {
+      playSound(track); // 스피커로 해당 트랙 즉시 재생
+      updateDisplay(0, "Music Playing");
+      Serial.printf(C_GREEN "\r\n🎵 서버 단독 명령으로 %d번 오디오 트랙을 재생합니다.\r\n" C_RESET, track);
+    }
+  }
 
-  // ★ 4. [추가] 서버 명령으로 LED 색상 및 밝기 실시간 변경 ★
+  // 4. 발향 강도 설정
+  if (!doc["intensity"].isNull()) {
+    currentIntensity = doc["intensity"] | 2;
+    // 강도(1, 2, 3)에 따라 휴식 시간(REST_TIME) 조정 (기본 30초, 20초, 10초 등)
+    if (currentIntensity == 1) REST_TIME = 45000;      // 약함
+    else if (currentIntensity == 2) REST_TIME = 30000; // 보통
+    else if (currentIntensity == 3) REST_TIME = 15000; // 강함
+  }
+
+  // ★ [추가] 5. 스피커 볼륨 설정
+  if (!doc["volume"].isNull()) {
+    int vol = doc["volume"] | 20;
+    if (vol != currentVolume) {
+      changeVolume(vol);
+    }
+  }
+
+  // ★ [추가] 6. 타이머(스케줄러) 설정
+  if (!doc["timer_enabled"].isNull()) {
+    schedulerEnabled = doc["timer_enabled"] | false;
+    activeStartHour = doc["timer_start"] | 9;
+    activeEndHour = doc["timer_end"] | 22;
+  }
+
+  // ★ 7. [기존] 서버 명령으로 LED 색상 및 밝기 실시간 변경 ★
   if (!doc["led_r"].isNull() && !doc["led_g"].isNull() && !doc["led_b"].isNull()) {
     ledR = constrain(doc["led_r"] | 255, 0, 255);
     ledG = constrain(doc["led_g"] | 255, 0, 255);
