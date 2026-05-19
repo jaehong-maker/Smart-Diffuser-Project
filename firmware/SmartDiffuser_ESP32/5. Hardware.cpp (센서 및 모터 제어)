@@ -265,8 +265,22 @@ void printCalibrationInfo() {
 // [5] 오디오 (마이크 수음, 스피커 및 앰비언트 분석)
 // ===================================================================================
 
-void playSound(int trackNum) { 
-  myDFPlayer.play(trackNum); 
+void playSound(int trackNum) {
+  int safeTrack = constrain(trackNum, 1, 20);
+  if (currentVolume < 15) {
+    currentVolume = 15;
+    prefs.putInt("volume", currentVolume);
+  }
+  int safeVolume = constrain(currentVolume, 15, 30);
+
+  Serial.printf(C_GREEN "[Audio] play request: track=%d volume=%d busy=%d\r\n" C_RESET,
+                safeTrack, safeVolume, digitalRead(PIN_BUSY));
+
+  myDFPlayer.stop();
+  delay(120);
+  myDFPlayer.volume(safeVolume);
+  delay(30);
+  myDFPlayer.play(safeTrack);
 }
 
 void initMicrophone() {
