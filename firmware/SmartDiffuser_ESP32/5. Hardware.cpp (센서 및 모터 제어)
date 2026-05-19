@@ -184,14 +184,6 @@ void resetManualState() {
   nexSend("b_blend.txt=\"blendON\"");
 }
 
-void stopSprayOnly() {
-  forceAllOff();
-  isRunning = false; isSpraying = false;
-  for (int i = 0; i < 4; i++) activeNozzles[i] = false;
-  myDFPlayer.stop();
-  blendSelection = ""; blendSprayActive = false;
-}
-
 void checkSensorHealth() {
     Serial.println(C_YELLOW "\r\n[Diagnosis] 시스템 자가 진단 시작..." C_RESET);
     delay(500); 
@@ -375,7 +367,7 @@ void runAmbientMode() {
 
     Serial.printf(C_CYAN "\r\n[Ambient Analysis] 주변 소음 패턴 분석 중...\r\n" C_RESET);
 
-    const int sampleCount = 30;
+    const int sampleCount = 100;
     int dbSamples[sampleCount];
     long sumDB = 0;
     
