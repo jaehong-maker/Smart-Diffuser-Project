@@ -218,7 +218,8 @@ void checkSensorHealth();
 void runScheduler(); 
 void runAutoCleaning(); 
 void resetScaleZero();
-float calculateScentPercent(float currentWeight);
+float calculateScentPercent(float currentWeight); // <--- void를 float으로 변경!
+void SprayIntensity(int intensityVal);
 
 // 📄 Hardware.cpp
 void initMicrophone();
