@@ -630,11 +630,7 @@ static void processServerResponse(const String& response) {
 
   // 4. 발향 강도 설정
   if (!doc["intensity"].isNull()) {
-    currentIntensity = doc["intensity"] | 2;
-    // 강도(1, 2, 3)에 따라 휴식 시간(REST_TIME) 조정 (기본 30초, 20초, 10초 등)
-    if (currentIntensity == 1) REST_TIME = 45000;      // 약함
-    else if (currentIntensity == 2) REST_TIME = 30000; // 보통
-    else if (currentIntensity == 3) REST_TIME = 15000; // 강함
+    SprayIntensity(doc["intensity"] | 2);
   }
 
   // ★ [추가] 5. 스피커 볼륨 설정
@@ -652,44 +648,27 @@ static void processServerResponse(const String& response) {
     activeEndHour = doc["timer_end"] | 22;
   }
 
-  // ★ 7. 서버 명령으로 LED 색상 및 밝기 실시간 변경 (최적화 완료) ★
+  // ★ 7. [기존] 서버 명령으로 LED 색상 및 밝기 실시간 변경 ★
   if (!doc["led_r"].isNull() && !doc["led_g"].isNull() && !doc["led_b"].isNull()) {
+    ledR = constrain(doc["led_r"] | 255, 0, 255);
+    ledG = constrain(doc["led_g"] | 255, 0, 255);
+    ledB = constrain(doc["led_b"] | 255, 0, 255);
     
-    // 1단계: 서버에서 온 값을 일단 임시 변수에 담습니다.
-    uint8_t newR = constrain(doc["led_r"] | 255, 0, 255);
-    uint8_t newG = constrain(doc["led_g"] | 255, 0, 255);
-    uint8_t newB = constrain(doc["led_b"] | 255, 0, 255);
-    
-    int newBright = ledBrightness; 
+    // 밝기 값이 오면 업데이트, 없으면 유지
     if (!doc["led_bright"].isNull()) {
-      newBright = constrain(doc["led_bright"] | 150, 0, 255);
-    }
-
-    // 2단계: 기존에 설정된 값과 하나라도 다를 때만 업데이트를 진행합니다! (플래시 수명 보호)
-    if (newR != ledR || newG != ledG || newB != ledB || newBright != ledBrightness) {
-      
-      // 전역 변수 업데이트
-      ledR = newR; 
-      ledG = newG; 
-      ledB = newB; 
-      ledBrightness = newBright;
-
-      // 값이 바뀌었을 때만 플래시 메모리에 영구 저장
+      ledBrightness = constrain(doc["led_bright"] | 150, 0, 255);
       prefs.putInt("ledBright", ledBrightness);
-      prefs.putUChar("ledR", ledR);
-      prefs.putUChar("ledG", ledG);
-      prefs.putUChar("ledB", ledB);
-
-      Serial.printf(C_GREEN "\r\n🎨 서버 명령으로 LED 변경: R:%d G:%d B:%d 밝기:%d\r\n" C_RESET, ledR, ledG, ledB, ledBrightness);
-      
-      // 즉시 색상 반영
-      setLedColor(ledR, ledG, ledB); 
-      
-      // 모니터에 프롬프트(👉 명령 입력 >>) 다시 띄워주기
-      if (currentMode != MODE_SLEEP && currentMode != MODE_VOICE && !isWaitingForTestDb) {
-        showPrompt();
-      }
     }
+
+    // 플래시 메모리에 영구 저장 (기기를 껐다 켜도 유지되도록)
+    prefs.putUChar("ledR", ledR);
+    prefs.putUChar("ledG", ledG);
+    prefs.putUChar("ledB", ledB);
+
+    Serial.printf(C_GREEN "\r\n🎨 서버 명령으로 LED 변경: R:%d G:%d B:%d 밝기:%d\r\n" C_RESET, ledR, ledG, ledB, ledBrightness);
+    
+    // 즉시 색상 반영 (Hardware.cpp의 함수 호출)
+    setLedColor(ledR, ledG, ledB); 
   }
 }
 
