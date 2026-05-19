@@ -122,4 +122,3 @@ int getPinFromCommand(int cmd) {
     default: return -1;
   }
 }
-
