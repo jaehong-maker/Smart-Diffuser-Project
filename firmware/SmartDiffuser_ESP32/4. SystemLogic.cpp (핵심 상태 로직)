@@ -138,7 +138,12 @@ void initSystem() {
   strip.setBrightness(150); // 너무 눈부시지 않게 150으로 제한 (0~255)
   strip.show(); // 일단 꺼진 상태로 대기
   calibration_factor = prefs.getFloat("cal_factor", 430.0);
-  currentVolume = prefs.getInt("volume", 20); myDFPlayer.volume(currentVolume);
+  currentVolume = prefs.getInt("volume", 15);
+  if (currentVolume <= 0) {
+    currentVolume = 15;
+    prefs.putInt("volume", currentVolume);
+  }
+  myDFPlayer.volume(currentVolume);
   SprayIntensity(prefs.getInt("intensity", currentIntensity));
 
   // initSystem() 함수 내부 로드셀 초기화 부분 수정
