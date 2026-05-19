@@ -170,6 +170,9 @@ void initSystem() {
     if (i == 3) attachInterrupt(digitalPinToInterrupt(LOADCELL_DT[3]), isr_hx3, FALLING);
   }
 
+  // 와이파이 연결 전에 시스템 자가 진단 실행
+  checkSensorHealth();
+
   connectWiFi();
   configTime(9 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
