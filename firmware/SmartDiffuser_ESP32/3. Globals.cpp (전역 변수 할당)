@@ -44,7 +44,7 @@ unsigned long sprayDuration = 3000;
 long REST_TIME        = 6000;
 int currentIntensity  = 2;
 const long MAX_RUN_TIME     = 270000;
-int currentVolume = 20;
+int currentVolume = 15;
 
 uint8_t ledR = 255; 
 uint8_t ledG = 255; 
