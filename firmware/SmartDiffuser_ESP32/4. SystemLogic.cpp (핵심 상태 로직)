@@ -139,7 +139,7 @@ void initSystem() {
   strip.show(); // 일단 꺼진 상태로 대기
   calibration_factor = prefs.getFloat("cal_factor", 430.0);
   currentVolume = prefs.getInt("volume", 15);
-  if (currentVolume <= 0) {
+  if (currentVolume < 0 || currentVolume > 30) {
     currentVolume = 15;
     prefs.putInt("volume", currentVolume);
   }
@@ -208,6 +208,7 @@ void runSystem() {
   esp_task_wdt_reset(); 
   handleOTA(); 
   checkNextionInput(); 
+  updateClockDisplay();
 
   // --- 스케줄러 추가 ---
   runScheduler();
@@ -316,13 +317,10 @@ void processSettingModeInput() {
       showPrompt();
       break;
 
-    // SystemLogic.cpp 의 processSettingModeInput() 내 case 'p' 수정
-    case 'p':
-    {
+    case 'p': {
         String payload = "{\"action\": \"POLL\", \"weights\": [";
         for(int i = 0; i < 4; i++) {
-            float percent = calculateScentPercent(weights[i]);
-            payload += String(percent, 1);
+            payload += String(calculateScentPercent(weights[i]), 1);
             if(i < 3) payload += ", ";
         }
         payload += "]}";
@@ -524,6 +522,7 @@ void enterWeatherMode(bool runNow) {
 }
 
 void runSprayLogic() { 
+  updateClockDisplay();
   // 💡 [업그레이드] 불필요한 for문 반복을 제거하는 Early Return(빠른 종료) 최적화
   // 시스템이 분사 중이 아닐 때는 연산을 즉시 건너뛰어 CPU 리소스를 절약합니다.
   if (!isRunning) return;
