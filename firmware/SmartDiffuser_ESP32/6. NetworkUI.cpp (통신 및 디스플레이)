@@ -441,6 +441,28 @@ void updateDisplay(int iconID, String text) {
   nexSend("t_region.txt=\"\"");
   nexSend("t_weather.txt=\"" + sanitizeNextionText(text) + "\"");
 }
+
+// =================================================================
+// 🕒 디스플레이 상단 시계(시간) 업데이트 함수
+// =================================================================
+void updateClockDisplay() {
+  static unsigned long lastClockUpdate = 0;
+
+  // 1초마다 한 번씩만 업데이트 (과부하 방지)
+  if (millis() - lastClockUpdate < 1000) return;
+  lastClockUpdate = millis();
+
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    nexSend("t_time.txt=\"--:--\"");
+    return;
+  }
+
+  char timeText[6];
+  snprintf(timeText, sizeof(timeText), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+  nexSend("t_time.txt=\"" + String(timeText) + "\"");
+}
+
 void updateTempHumi(float tempC, float humi) { nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\""); nexSend("t_humi.txt=\"" + String(humi, 0) + "%\""); }
 void updateProgressBar(int val) { updateProgressBar(1, val); }
 
@@ -563,7 +585,12 @@ void connectWiFi() {
     Serial.println(C_YELLOW "\r\n[Warning] Wi-Fi 설정 실패." C_RESET);
   } else {
     Serial.printf("\r\nConnected! IP: %s\r\n", WiFi.localIP().toString().c_str());
-    updateDisplay(0, "WiFi Connected");
+    nexSend("page 0");
+    delay(100);
+    updateDisplay(0, "Connected");
+    delay(2000);
+    nexSend("t_region.txt=\"\"");
+    nexSend("t_weather.txt=\"\"");
   }
 
   // 와이파이 연결이 무사히 끝났다면 감시자 태스크는 임무를 다했으므로 삭제해줍니다.
