@@ -50,7 +50,7 @@ uint8_t ledR = 255;
 uint8_t ledG = 255; 
 uint8_t ledB = 255; 
 int ledBrightness = 150;
-int ledFadeAmount = 5;
+bool ledEnabled = true;
 
 // --- 향수 및 무게 데이터 ---
 float weights[4] = {0.0, 0.0, 0.0, 0.0};
@@ -100,8 +100,6 @@ int demoStep = 0;
 unsigned long prevDemoMillis  = 0;
 unsigned long prevMotorMillis = 0;
 unsigned long startTimeMillis = 0;
-unsigned long lastCheckTime = 0;
-unsigned long prevLedMillis = 0;
 
 // ==========================================
 // [7] 공통 헬퍼 함수
