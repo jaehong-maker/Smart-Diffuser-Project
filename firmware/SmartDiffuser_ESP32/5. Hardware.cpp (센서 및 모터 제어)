@@ -57,9 +57,18 @@ float calculateStdDev(int* samples, int count, float average) {
 
 void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
   strip.setBrightness(ledBrightness); 
+  
   for(int i = 0; i < NUM_LEDS; i++) {
-    strip.setPixelColor(i, strip.Color(r, g, b));
+    // 인덱스 0, 1, 2, 3 (처음 4개)는 강제로 끕니다 (R:0, G:0, B:0)
+    if (i < 4) {
+      strip.setPixelColor(i, strip.Color(0, 0, 0));
+    } 
+    // 나머지 8개(인덱스 4~11)는 정상적으로 색상을 켭니다
+    else {
+      strip.setPixelColor(i, strip.Color(r, g, b));
+    }
   }
+  
   strip.show();
 }
 
@@ -73,6 +82,11 @@ void bootAnimation() {
 }
 
 void systemHeartbeat() {
+  if (!ledEnabled) {
+    setLedColor(0, 0, 0);
+    return;
+  }
+
   unsigned long currentTime = millis();
   static unsigned long lastUpdate = 0;
   static int effectStep = 0;
@@ -171,7 +185,6 @@ void stopSystem() {
   for (int i = 0; i < 4; i++) activeNozzles[i] = false;
   
   myDFPlayer.stop();
-  updateDisplay(0, "Ready");
 }
 
 void resetManualState() {
@@ -267,11 +280,7 @@ void printCalibrationInfo() {
 
 void playSound(int trackNum) {
   int safeTrack = constrain(trackNum, 1, 20);
-  if (currentVolume < 15) {
-    currentVolume = 15;
-    prefs.putInt("volume", currentVolume);
-  }
-  int safeVolume = constrain(currentVolume, 15, 30);
+  int safeVolume = constrain(currentVolume, 0, 30);
 
   Serial.printf(C_GREEN "[Audio] play request: track=%d volume=%d busy=%d\r\n" C_RESET,
                 safeTrack, safeVolume, digitalRead(PIN_BUSY));
@@ -398,6 +407,7 @@ void runAmbientMode() {
       // ★ [최종 디테일] 3초간의 수음 중에도 시스템이 멈춘 것처럼 보이지 않게 처리!
       esp_task_wdt_reset();   // 워치독 갱신 (에러 방지)
       checkNextionInput();    // 넥션 화면 터치 즉각 반응 허용
+      updateClockDisplay();
 
       delay(100);
     }
