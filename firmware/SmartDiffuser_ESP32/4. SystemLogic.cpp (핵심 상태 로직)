@@ -136,7 +136,7 @@ void initSystem() {
 
   strip.begin();
   strip.setBrightness(150); // 너무 눈부시지 않게 150으로 제한 (0~255)
-  strip.show(); // 일단 꺼진 상태로 대기
+  setLedColor(0, 0, 0); // strip.show() 대신 우리가 만든 함수로 초기화! (앞쪽 4개 완벽 차단)
   calibration_factor = prefs.getFloat("cal_factor", 430.0);
   currentVolume = prefs.getInt("volume", 15);
   if (currentVolume < 0 || currentVolume > 30) {
@@ -317,10 +317,13 @@ void processSettingModeInput() {
       showPrompt();
       break;
 
-    case 'p': {
+    // SystemLogic.cpp 의 processSettingModeInput() 내 case 'p' 수정
+    case 'p':
+    {
         String payload = "{\"action\": \"POLL\", \"weights\": [";
         for(int i = 0; i < 4; i++) {
-            payload += String(calculateScentPercent(weights[i]), 1);
+            float percent = calculateScentPercent(weights[i]);
+            payload += String(percent, 1);
             if(i < 3) payload += ", ";
         }
         payload += "]}";
@@ -493,28 +496,17 @@ void handleInput(String input) {
   else if (currentMode == MODE_WEATHER) {
     rememberWeatherRegion(input);
     Serial.printf("\r\n🔍 [%s] 지역 날씨 조회 요청 중...\r\n", input.c_str());
-    lastWeatherIconId = 0;
-    if (lastWeatherLabel.length() == 0 || lastWeatherLabel == "Loading") {
-      lastWeatherLabel = "Weather";
-    }
-    updateDisplay(0, "");
     lastWeatherCallMillis = millis();
     sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
   }
 }
 
 void enterWeatherMode(bool runNow) {
-  lastWeatherIconId = 0;
-  if (lastWeatherLabel.length() == 0 || lastWeatherLabel == "Loading") {
-    lastWeatherLabel = "Weather";
-  }
   setSystemMode(MODE_WEATHER);
   Serial.println(C_YELLOW "👉 지역명을 입력하세요" C_RESET);
   if (lastWeatherRegion.length() > 0) {
     Serial.printf(C_YELLOW "\r\n[Weather] Saved region: %s\r\n" C_RESET, lastWeatherRegion.c_str());
   }
-  updateDisplay(0, "");
-
   if (runNow) {
     lastWeatherCallMillis = millis();
     sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
@@ -532,10 +524,6 @@ void runSprayLogic() {
       forceAllOff();
       isSpraying = false; 
       prevMotorMillis = millis();
-      
-      if (currentMode != MODE_MANUAL) {
-        updateDisplay((currentMode == MODE_WEATHER) ? lastWeatherIconId : 0, "Resting...");
-      }
     }
   } else {
     if (millis() - prevMotorMillis >= REST_TIME) {
@@ -548,10 +536,6 @@ void runSprayLogic() {
       }
       isSpraying = true; 
       prevMotorMillis = millis();
-      
-      if (currentMode != MODE_MANUAL) {
-        updateDisplay(0, "Spraying...");
-      }
     }
   }
 }
@@ -577,7 +561,6 @@ void setSystemMode(SystemMode mode, String msg) {
   currentMode = mode;
   if (msg != "") {
     Serial.printf(C_CYAN "\r\n[Mode] %s\r\n" C_RESET, msg.c_str());
-    updateDisplay(0, msg);
   }
   
   if (mode == MODE_READY) {
