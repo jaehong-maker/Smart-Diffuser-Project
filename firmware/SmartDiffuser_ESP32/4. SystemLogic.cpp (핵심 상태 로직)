@@ -503,6 +503,7 @@ void handleInput(String input) {
 
 void enterWeatherMode(bool runNow) {
   setSystemMode(MODE_WEATHER);
+  updateDisplay(lastWeatherIconId, "");
   Serial.println(C_YELLOW "👉 지역명을 입력하세요" C_RESET);
   if (lastWeatherRegion.length() > 0) {
     Serial.printf(C_YELLOW "\r\n[Weather] Saved region: %s\r\n" C_RESET, lastWeatherRegion.c_str());
