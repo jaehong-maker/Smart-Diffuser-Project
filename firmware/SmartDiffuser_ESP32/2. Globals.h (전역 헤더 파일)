@@ -154,7 +154,6 @@ extern const long MAX_RUN_TIME;
 extern int currentVolume;
 extern uint8_t ledR, ledG, ledB; 
 extern int ledBrightness;
-extern int ledFadeAmount;
 extern bool ledEnabled;
 
 // 향수 및 무게 데이터
