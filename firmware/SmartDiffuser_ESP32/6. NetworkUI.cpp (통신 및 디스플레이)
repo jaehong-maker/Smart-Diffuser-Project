@@ -2,6 +2,10 @@
 
 static WiFiClientSecure sharedClient;
 static bool isSessionInit = false;
+static bool hasWeatherSnapshot = false;
+static bool hasTempHumiSnapshot = false;
+static float lastWeatherTempC = 0.0f;
+static float lastWeatherHumi = 0.0f;
 
 struct EncodedRegionText {
   const char *utf8;
@@ -175,11 +179,28 @@ static int weatherIconFromText(const String &weatherText) {
   String normalized = weatherText;
   normalized.trim();
 
-  if (normalized.indexOf("비") >= 0 || normalized.indexOf("강수") >= 0) return 3;
-  if (normalized.indexOf("눈") >= 0) return 4;
-  if (normalized.indexOf("흐림") >= 0 || normalized.indexOf("구름") >= 0) return 2;
-  if (normalized.indexOf("맑") >= 0 || normalized.indexOf("해") >= 0) return 1;
+  if (normalized.indexOf("\xEB\xB9\x84") >= 0 || normalized.indexOf("\xEA\xB0\x95\xEC\x88\x98") >= 0) return 3;
+  if (normalized.indexOf("\xEB\x88\x88") >= 0) return 4;
+  if (normalized.indexOf("\xED\x9D\x90\xEB\xA6\xBC") >= 0 || normalized.indexOf("\xEA\xB5\xAC\xEB\xA6\x84") >= 0) return 2;
+  if (normalized.indexOf("\xEB\xA7\x91") >= 0 || normalized.indexOf("\xED\x95\xB4") >= 0) return 1;
   return 0;
+}
+
+static bool hasValidWeatherText(const String &weatherText) {
+  String normalized = weatherText;
+  normalized.trim();
+  return normalized.length() > 0 && normalized != "Loading" && normalized != "Weather";
+}
+
+static void sendCachedTempHumi() {
+  if (!hasTempHumiSnapshot) {
+    nexSend("t_temp.txt=\"\"");
+    nexSend("t_humi.txt=\"\"");
+    return;
+  }
+
+  nexSend("t_temp.txt=\"" + String(lastWeatherTempC, 1) + "C\"");
+  nexSend("t_humi.txt=\"" + String(lastWeatherHumi, 0) + "%\"");
 }
 
 static void updateWeatherFields() {
@@ -188,17 +209,23 @@ static void updateWeatherFields() {
 
   String weatherText = lastWeatherLabel;
   weatherText.trim();
-  if (weatherText.length() == 0 || weatherText == "Loading") weatherText = "Weather";
+
+  if (!hasWeatherSnapshot || !hasValidWeatherText(weatherText)) {
+    nexSend("t_region.txt=\"\"");
+    nexSend("t_weather.txt=\"\"");
+    sendCachedTempHumi();
+    return;
+  }
 
   if (regionText.length() == 0) {
     nexSend("t_region.txt=\"\"");
   } else if (!sendEncodedRegionText(regionText)) {
-    String regionField = regionText + ":";
-    nexSend("t_region.txt=\"" + sanitizeNextionText(regionField) + "\"");
+    nexSend("t_region.txt=\"\"");
   }
   if (!sendEncodedWeatherText(weatherText)) {
-    nexSend("t_weather.txt=\"" + sanitizeNextionText(weatherText) + "\"");
+    sendEncodedWeatherBytes(WEATHER_UNKNOWN, sizeof(WEATHER_UNKNOWN));
   }
+  sendCachedTempHumi();
 }
 
 // ★ 추가: MAC 주소 기반 고유 디바이스 ID 생성 함수
@@ -216,10 +243,11 @@ void rememberWeatherRegion(const String &region) {
   if (region.length() == 0 || region == lastWeatherRegion) return;
 
   lastWeatherRegion = region;
-  prefs.putString("last_region", lastWeatherRegion);
   if (currentMode == MODE_WEATHER) {
-    updateWeatherFields();
+    hasWeatherSnapshot = false;
+    hasTempHumiSnapshot = false;
   }
+  prefs.putString("last_region", lastWeatherRegion);
   Serial.printf(C_CYAN "\r\n[Weather] Saved region updated: %s\r\n" C_RESET, lastWeatherRegion.c_str());
 }
 
@@ -437,9 +465,7 @@ void updateDisplay(int iconID, String text) {
     return;
   }
 
-  if (text.length() == 0) text = lastWeatherLabel;
-  nexSend("t_region.txt=\"\"");
-  nexSend("t_weather.txt=\"" + sanitizeNextionText(text) + "\"");
+  if (text.length() == 0) return;
 }
 
 // =================================================================
@@ -463,7 +489,13 @@ void updateClockDisplay() {
   nexSend("t_time.txt=\"" + String(timeText) + "\"");
 }
 
-void updateTempHumi(float tempC, float humi) { nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\""); nexSend("t_humi.txt=\"" + String(humi, 0) + "%\""); }
+void updateTempHumi(float tempC, float humi) {
+  lastWeatherTempC = tempC;
+  lastWeatherHumi = humi;
+  hasTempHumiSnapshot = true;
+  nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\"");
+  nexSend("t_humi.txt=\"" + String(humi, 0) + "%\"");
+}
 void updateProgressBar(int val) { updateProgressBar(1, val); }
 
 void updateProgressBar(int barIndex, int val) {
@@ -587,10 +619,9 @@ void connectWiFi() {
     Serial.printf("\r\nConnected! IP: %s\r\n", WiFi.localIP().toString().c_str());
     nexSend("page 0");
     delay(100);
-    updateDisplay(0, "Connected");
+    nexSend("t_wifi.txt=\"Connected\"");
     delay(2000);
-    nexSend("t_region.txt=\"\"");
-    nexSend("t_weather.txt=\"\"");
+    nexSend("page 0");
   }
 
   // 와이파이 연결이 무사히 끝났다면 감시자 태스크는 임무를 다했으므로 삭제해줍니다.
@@ -648,8 +679,11 @@ static void processServerResponse(const String& response) {
   if (deserializeJson(doc, response)) return; 
 
   // 1. 날씨 및 지역 정보 업데이트
-  String targetRegion = doc["target_region"] | "";
   String weatherText = doc["weather"] | "";
+  String targetRegion = doc["target_region"] | "";
+  if (targetRegion.length() == 0 && weatherText.length() > 0) {
+    targetRegion = doc["region"] | "";
+  }
   bool hadSavedRegion = lastWeatherRegion.length() > 0;
 
   if (targetRegion.length() > 0) {
@@ -663,6 +697,7 @@ static void processServerResponse(const String& response) {
   if (weatherText.length() > 0) {
     lastWeatherLabel = weatherText;
     lastWeatherIconId = weatherIconFromText(weatherText);
+    hasWeatherSnapshot = hasValidWeatherText(lastWeatherLabel);
     if (currentMode == MODE_WEATHER) {
       updateDisplay(lastWeatherIconId, "");
     }
