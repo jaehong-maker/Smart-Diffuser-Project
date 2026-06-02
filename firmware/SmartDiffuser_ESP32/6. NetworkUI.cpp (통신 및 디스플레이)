@@ -11,6 +11,24 @@ static const int VOLUME_PAGE_BASE = 58;
 static const int VOLUME_LEVEL_MIN = 0;
 static const int VOLUME_LEVEL_MAX = 10;
 
+static const int PAGE_MODE_SELECT = 1;
+static const int PAGE_WEATHER = 2;
+static const int PAGE_MANUAL = 3;
+static const int PAGE_MANUAL_SCENT_BASE = 4; // scent 1~4 -> page5~8
+static const int PAGE_BLEND_HOME = 9;
+static const int PAGE_WIFI_RESET = 20;
+static const int PAGE_DEVICE_STATUS = 21;
+static const int PAGE_TARE = 22;
+static const int PAGE_LED_ON = 23;
+static const int PAGE_LED_OFF = 24;
+static const int PAGE_LED_DIM = 25;
+static const int PAGE_LED_NORMAL = 26;
+static const int PAGE_LED_BRIGHT = 27;
+static const int PAGE_INTENSITY_HOME = 28;
+static const int PAGE_INTENSITY_LOW = 30;
+static const int PAGE_INTENSITY_MEDIUM = 31;
+static const int PAGE_INTENSITY_HIGH = 32;
+
 struct EncodedRegionText {
   const char *utf8;
   const uint8_t *encoded;
@@ -136,6 +154,30 @@ static void nexWriteTerminator() {
   nexSerial.write(0xFF);
   nexSerial.write(0xFF);
   nexSerial.write(0xFF);
+}
+
+static void showPage(int pageId) {
+  nexSend("page page" + String(pageId));
+}
+
+static int blendSinglePage(int scent) {
+  switch (scent) {
+    case 1: return 10;
+    case 2: return 14;
+    case 3: return 17;
+    case 4: return 19;
+    default: return PAGE_BLEND_HOME;
+  }
+}
+
+static int blendPairPage(const String &selection) {
+  if (selection.indexOf("1") >= 0 && selection.indexOf("2") >= 0) return 11;
+  if (selection.indexOf("1") >= 0 && selection.indexOf("3") >= 0) return 12;
+  if (selection.indexOf("1") >= 0 && selection.indexOf("4") >= 0) return 13;
+  if (selection.indexOf("2") >= 0 && selection.indexOf("3") >= 0) return 15;
+  if (selection.indexOf("2") >= 0 && selection.indexOf("4") >= 0) return 16;
+  if (selection.indexOf("3") >= 0 && selection.indexOf("4") >= 0) return 18;
+  return PAGE_BLEND_HOME;
 }
 
 static bool sendEncodedRegionText(const String &regionText) {
@@ -317,6 +359,8 @@ static bool readJsonFloatField(JsonDocument &doc, const char *fieldName, float &
 
 static String findNextionCmd(const String &buf) {
   const char* tokens[] = {
+    "MM", "DS", "IM", "WR",
+    "LN", "LO", "LF", "L1", "L2", "L3",
     "M1", "M2", "M3",
     "Y1", "Y2", "Y3",
     "I1", "I2", "I3",
@@ -369,10 +413,12 @@ static void toggleBlendMode() {
 
   if (blendModeEnabled) {
     nexSend("b_blend.txt=\"blendOFF\"");
+    showPage(PAGE_BLEND_HOME);
     updateDisplay(0, "Pick 2 scents");
     Serial.println("\r\n[BLEND] ON");
   } else {
     nexSend("b_blend.txt=\"blendON\"");
+    showPage(PAGE_MANUAL);
     updateDisplay(0, "Manual Mode");
     Serial.println("\r\n[BLEND] OFF");
   }
@@ -390,6 +436,7 @@ static void handleScentButton(const String &cmd) {
 
   // 일반 모드일 경우 즉시 분사
   if (!blendModeEnabled) {
+    showPage(PAGE_MANUAL_SCENT_BASE + scent);
     runManualMode(String(scent));
     return;
   }
@@ -401,8 +448,10 @@ static void handleScentButton(const String &cmd) {
   }
 
   if (blendSelection.length() == 1) {
+    showPage(blendSinglePage(scent));
     updateDisplay(0, "1st scent selected");
   } else if (blendSelection.length() == 2) {
+    showPage(blendPairPage(blendSelection));
     runManualMode(blendSelection);
     blendSelection = "";
     updateDisplay(0, "Blending Mode");
@@ -417,6 +466,9 @@ static void handleIntensityButton(const String &cmd) {
   if (intensity < 1 || intensity > 3) return;
 
   SprayIntensity(intensity);
+  if (currentIntensity == 1) showPage(PAGE_INTENSITY_LOW);
+  else if (currentIntensity == 2) showPage(PAGE_INTENSITY_MEDIUM);
+  else showPage(PAGE_INTENSITY_HIGH);
 
   const char *label = (currentIntensity == 1) ? "Low" : (currentIntensity == 2) ? "Medium" : "High";
   updateDisplay(0, String("Intensity ") + label);
@@ -429,7 +481,7 @@ static int getDisplayVolumeLevel() {
 
 static void showDisplayVolumePage(int level) {
   int displayLevel = constrain(level, VOLUME_LEVEL_MIN, VOLUME_LEVEL_MAX);
-  nexSend("page page" + String(VOLUME_PAGE_BASE + displayLevel));
+  showPage(VOLUME_PAGE_BASE + displayLevel);
 }
 
 static void setDisplayVolumeLevel(int level) {
@@ -449,24 +501,75 @@ static void handleVolumeButton(const String &cmd) {
   }
 }
 
+static void showCurrentLedPage() {
+  showPage(ledEnabled ? PAGE_LED_ON : PAGE_LED_OFF);
+}
+
+static void setDisplayLedEnabled(bool enabled) {
+  ledEnabled = enabled;
+  prefs.putBool("ledEnabled", ledEnabled);
+  showPage(ledEnabled ? PAGE_LED_ON : PAGE_LED_OFF);
+  setLedColor(ledEnabled ? ledR : 0, ledEnabled ? ledG : 0, ledEnabled ? ledB : 0);
+}
+
+static void setDisplayLedBrightness(int brightness, int pageId) {
+  ledEnabled = true;
+  ledBrightness = constrain(brightness, 0, 255);
+  prefs.putBool("ledEnabled", ledEnabled);
+  prefs.putInt("ledBright", ledBrightness);
+  showPage(pageId);
+  setLedColor(ledR, ledG, ledB);
+}
+
+static void handleLedButton(const String &cmd) {
+  if (cmd == "LO") {
+    setDisplayLedEnabled(true);
+  } else if (cmd == "LF") {
+    setDisplayLedEnabled(false);
+  } else if (cmd == "L1") {
+    setDisplayLedBrightness(60, PAGE_LED_DIM);
+  } else if (cmd == "L2") {
+    setDisplayLedBrightness(150, PAGE_LED_NORMAL);
+  } else if (cmd == "L3") {
+    setDisplayLedBrightness(255, PAGE_LED_BRIGHT);
+  }
+}
+
 void handleNextionCmd(const String &cmd) {
   // 1. 화면 터치 노이즈 및 UI 업데이트 응답(쓰레기값) 무시
   if (cmd.startsWith("p0") || cmd.startsWith("t_weather") || cmd.startsWith("j0")) return;
 
-  // 2. 명령어 교통정리 분기점
-  if (cmd == "M2" || cmd == "Y3") {
+  if (cmd == "MM") {
+    showPage(PAGE_MODE_SELECT);
+  }
+  else if (cmd == "DS") {
+    showPage(PAGE_DEVICE_STATUS);
+    updateScentProgressBars();
+  }
+  else if (cmd == "IM") {
+    showPage(PAGE_INTENSITY_HOME);
+  }
+  else if (cmd == "WR") {
+    showPage(PAGE_WIFI_RESET);
+  }
+  else if (cmd == "M2" || cmd == "Y3") {
+    showPage(PAGE_WEATHER);
     beginWeatherRefresh();
     enterWeatherMode(true);
     delay(150);
     beginWeatherRefresh();
   } 
   else if (cmd == "M1" || cmd == "Y1") {
+    showPage(PAGE_MANUAL);
     setSystemMode(MODE_MANUAL, "Manual Mode");
   } 
   else if (cmd == "M3" || cmd == "Y2") {
+    showPage(PAGE_DEVICE_STATUS);
+    updateScentProgressBars();
     setSystemMode(MODE_SETTING, "Setting Mode");
   } 
   else if (cmd == "ST") {
+    showPage(PAGE_MODE_SELECT);
     setSystemMode(MODE_READY, "Stopped");
   } 
   else if (cmd == "BM") {
@@ -477,6 +580,10 @@ void handleNextionCmd(const String &cmd) {
   }
   else if (cmd.startsWith("V")) {
     handleVolumeButton(cmd);
+  }
+  else if (cmd.startsWith("L")) {
+    if (cmd == "LN") showCurrentLedPage();
+    else handleLedButton(cmd);
   }
   else if (cmd.startsWith("S")) {
     handleScentButton(cmd); // 👉 분리된 헬퍼 함수 호출
@@ -494,7 +601,7 @@ void handleNextionCmd(const String &cmd) {
   } 
   else if (cmd == "TZ") {
     resetScaleZero();
-    nexSend("page 4");
+    showPage(PAGE_TARE);
   }
 }
 
@@ -847,6 +954,8 @@ static void processServerResponse(const String& response) {
     prefs.putUChar("ledR", ledR);
     prefs.putUChar("ledG", ledG);
     prefs.putUChar("ledB", ledB);
+    prefs.putBool("ledEnabled", ledEnabled);
+    setLedColor(ledR, ledG, ledB);
 
     Serial.printf(C_GREEN "\r\n🎨 서버 명령으로 LED 변경: R:%d G:%d B:%d 밝기:%d\r\n" C_RESET, ledR, ledG, ledB, ledBrightness);
     
