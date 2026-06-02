@@ -125,13 +125,12 @@ void initSystem() {
 
   initMicrophone();
   prefs.begin("diffuser", false);
-  String defaultMac = "ESP_" + WiFi.macAddress();
-  defaultMac.replace(":", "");
-  deviceId = prefs.getString("deviceId", defaultMac); // 저장된 이름이 없으면 MAC 주소가 기본값
+  
   ledR = prefs.getUChar("ledR", 255);
   ledG = prefs.getUChar("ledG", 255);
   ledB = prefs.getUChar("ledB", 255);
   ledBrightness = prefs.getInt("ledBright", 150);
+  ledEnabled = prefs.getBool("ledEnabled", true);
   lastWeatherRegion = prefs.getString("last_region", lastWeatherRegion);
 
   strip.begin();
@@ -434,11 +433,13 @@ void processLedSettingInput(String input) {
     ledG = constrain(values[1], 0, 255);
     ledB = constrain(values[2], 0, 255);
     ledBrightness = constrain(values[3], 0, 255);
+    ledEnabled = true;
 
     prefs.putUChar("ledR", ledR);
     prefs.putUChar("ledG", ledG);
     prefs.putUChar("ledB", ledB);
     prefs.putInt("ledBright", ledBrightness);
+    prefs.putBool("ledEnabled", ledEnabled);
 
     Serial.printf("\r\n✅ LED 설정 완료: R:%d G:%d B:%d 밝기:%d\r\n", ledR, ledG, ledB, ledBrightness);
     setLedColor(ledR, ledG, ledB); 
@@ -514,11 +515,16 @@ void enterWeatherMode(bool runNow) {
   }
 }
 
+static const float MIN_SPRAY_SCENT_PERCENT = 15.0f;
+static bool stopLowFluidActiveNozzles();
+
 void runSprayLogic() { 
   updateClockDisplay();
   // 💡 [업그레이드] 불필요한 for문 반복을 제거하는 Early Return(빠른 종료) 최적화
   // 시스템이 분사 중이 아닐 때는 연산을 즉시 건너뛰어 CPU 리소스를 절약합니다.
   if (!isRunning) return;
+
+  if (stopLowFluidActiveNozzles()) return;
 
   if (isSpraying) {
     if (millis() - prevMotorMillis >= sprayDuration) {
@@ -528,6 +534,7 @@ void runSprayLogic() {
     }
   } else {
     if (millis() - prevMotorMillis >= REST_TIME) {
+      if (stopLowFluidActiveNozzles()) return;
       forceAllOff(); 
       for (int i = 0; i < 4; i++) {
         if (activeNozzles[i]) {
@@ -674,6 +681,43 @@ void resetScaleZero() {
  * @brief 기존 코드와의 호환성을 위해 유지하는 노즐 파싱 함수
  * NetworkUI.cpp의 triggerSpray 등에서 사용합니다.
  */
+static bool stopLowFluidActiveNozzles() {
+    bool hasActiveNozzle = false;
+    bool blockedAnyNozzle = false;
+
+    for (int i = 0; i < 4; i++) {
+        if (!activeNozzles[i]) continue;
+
+        float percent = calculateScentPercent(weights[i]);
+        if (percent < MIN_SPRAY_SCENT_PERCENT) {
+            int pin = getPinFromCommand(i + 1);
+            if (pin != -1) digitalWrite(pin, HIGH);
+            activeNozzles[i] = false;
+            blockedAnyNozzle = true;
+            Serial.printf(C_RED "\r\n🚨 [안전 정지] %d번 카트리지 잔량 %.1f%% 미만! 분사를 중지합니다.\r\n" C_RESET, i + 1, MIN_SPRAY_SCENT_PERCENT);
+        } else {
+            hasActiveNozzle = true;
+        }
+    }
+
+    if (blockedAnyNozzle) {
+        updateScentProgressBars();
+    }
+
+    if (!hasActiveNozzle) {
+        forceAllOff();
+        myDFPlayer.stop();
+        isRunning = false;
+        isSpraying = false;
+        blendSelection = "";
+        blendSprayActive = false;
+        updateDisplay(0, "Low Fluid! Stopped");
+        return true;
+    }
+
+    return false;
+}
+
 int parseAndSetNozzles(String cmdStr) {
     int activeCount = 0;
     for (int i = 0; i < 4; i++) activeNozzles[i] = false;
@@ -681,8 +725,8 @@ int parseAndSetNozzles(String cmdStr) {
     for (int i = 0; i < (int)cmdStr.length(); i++) {
         int cmd = cmdStr.charAt(i) - '0';
         if (cmd >= 1 && cmd <= 4) {
-          if (calculateScentPercent(weights[cmd - 1]) < 9.0f) {
-                Serial.printf(C_RED "🚨 [안전 장치] %d번 카트리지 잔량 9%% 미만! 모터 보호를 위해 분사를 차단합니다.\r\n" C_RESET, cmd);
+          if (calculateScentPercent(weights[cmd - 1]) < MIN_SPRAY_SCENT_PERCENT) {
+                Serial.printf(C_RED "🚨 [안전 장치] %d번 카트리지 잔량 %.1f%% 미만! 모터 보호를 위해 분사를 차단합니다.\r\n" C_RESET, cmd, MIN_SPRAY_SCENT_PERCENT);
                 continue; 
             }
             if (!activeNozzles[cmd - 1]) {
