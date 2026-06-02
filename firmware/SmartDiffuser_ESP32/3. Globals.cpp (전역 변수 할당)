@@ -78,7 +78,7 @@ bool schedulerEnabled = true;
 int activeStartHour   = 8; 
 int activeEndHour     = 23;
 unsigned long lastPollTime = 0;
-const unsigned long POLL_INTERVAL = 10000;
+const unsigned long POLL_INTERVAL = 2000;
 
 // --- 오디오 및 앰비언트 모드 ---
 int soundThreshold = 75;
