@@ -846,9 +846,6 @@ static void processServerResponse(const String& response) {
 
     Serial.printf(C_GREEN "\r\n🎨 서버 명령으로 LED 변경: R:%d G:%d B:%d 밝기:%d\r\n" C_RESET, ledR, ledG, ledB, ledBrightness);
     
-    // 즉시 색상 반영 (Hardware.cpp의 함수 호출)
-    setLedColor(ledR, ledG, ledB); 
-
     if (currentMode != MODE_SLEEP && currentMode != MODE_VOICE && !isWaitingForTestDb) {
       showPrompt();
     }
