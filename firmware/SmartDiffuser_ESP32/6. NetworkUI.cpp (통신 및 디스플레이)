@@ -804,7 +804,7 @@ static void processServerResponse(const String& response) {
 
   // ★ [추가] 5. 스피커 볼륨 설정
   if (!doc["volume"].isNull() && !isRunning && !isSpraying) {
-    int vol = doc["volume"] | 20;
+    int vol = doc["volume"] | 15;
     int safeVol = constrain(vol, 0, 30);
     if (safeVol != currentVolume) {
       changeVolume(safeVol);
