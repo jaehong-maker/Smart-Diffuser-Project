@@ -1,0 +1,10 @@
+{
+  "appId": "com.diffuser.hoon.app",
+  "appName": "SmartDiffuser",
+  "webDir": "dist",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}
