@@ -136,23 +136,24 @@ void systemHeartbeat() {
 
     case LED_SPRAY: // ✨ 분사 중 (빠른 호흡 효과)
       {
-        int bright = (sin(currentTime / 150.0) * 127) + 128; 
-        setLedColor((ledR * bright) / 255, (ledG * bright) / 255, (ledB * bright) / 255);
+        int factor = (sin(currentTime / 150.0) * 40) + 215; // 215~255 범위로 조절 (너무 어두워지지 않게)
+        setLedColor((ledR * factor) / 255, (ledG * factor) / 255, (ledB * factor) / 255);
       }
       break;
 
     case LED_AMBIENT: // 🔮 앰비언트 모드 (보라색의 부드러운 호흡)
       {
-        int bright = (sin(currentTime / 300.0) * 127) + 128; 
-        setLedColor((150 * bright) / 255, 0, (255 * bright) / 255);
+        int factor = (sin(currentTime / 300.0) * 30) + 225; 
+        setLedColor((150 * factor) / 255, 0, (255 * factor) / 255);
       }
       break;
 
     case LED_IDLE: // 💤 대기 모드 (은은한 숨쉬기)
     default:
       {
-        int bright = (sin(currentTime / 1000.0) * 50) + 130; 
-        setLedColor((ledR * bright) / 255, (ledG * bright) / 255, (ledB * bright) / 255);
+        // 사용자가 설정한 색상을 최대한 유지하면서 아주 살짝만 박동하게 변경 (240~255)
+        int factor = (sin(currentTime / 1500.0) * 15) + 240; 
+        setLedColor((ledR * factor) / 255, (ledG * factor) / 255, (ledB * factor) / 255);
       }
       break;
   }
