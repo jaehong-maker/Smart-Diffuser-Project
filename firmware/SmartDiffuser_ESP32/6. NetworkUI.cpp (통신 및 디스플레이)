@@ -4,7 +4,6 @@ static WiFiClientSecure sharedClient;
 static bool isSessionInit = false;
 static bool hasWeatherSnapshot = false;
 static bool hasTempHumiSnapshot = false;
-static bool hasWeatherCapacityWarning = false;
 static float lastWeatherTempC = 0.0f;
 static float lastWeatherHumi = 0.0f;
 
@@ -73,7 +72,6 @@ static const uint8_t WEATHER_CLOUD[]   = {0xB1, 0xB8, 0xB8, 0xA7};
 static const uint8_t WEATHER_UNKNOWN[] = {0xB3, 0xAF, 0xBE, 0xBE, 0x20, 0xBE, 0xCB, 0x20, 0xBC, 0xF6, 0x20, 0xBE, 0xF8, 0xC0, 0xBD, 0x28, 0x41, 0x50, 0x49, 0x20, 0xC1, 0xF6, 0xBF, 0xAC, 0x29};
 static const uint8_t WEATHER_FAIL[]    = {0xB3, 0xAF, 0xBE, 0xBE, 0x20, 0xC5, 0xEB, 0xBD, 0xC5, 0x20, 0xBD, 0xC7, 0xC6, 0xD0};
 static const uint8_t WEATHER_ENV_ERR[] = {0xC8, 0xAF, 0xB0, 0xE6, 0x20, 0xBA, 0xAF, 0xBC, 0xF6, 0x20, 0xBF, 0xC0, 0xB7, 0xF9};
-static const uint8_t TEMP_CAPACITY_WARNING[] = {0xBF, 0xEB, 0xB7, 0xAE, 0x20, 0xB0, 0xE6, 0xB0, 0xED};
 
 static const EncodedRegionText ENCODED_REGIONS[] = {
   {"\xEC\x84\x9C\xEC\x9A\xB8", REGION_SEOUL, sizeof(REGION_SEOUL)},
@@ -161,13 +159,6 @@ static bool sendEncodedWeatherBytes(const uint8_t *encoded, size_t length) {
   return true;
 }
 
-static void sendEncodedTempText(const uint8_t *encoded, size_t length) {
-  nexSerial.print("t_temp.txt=\"");
-  nexSerial.write(encoded, length);
-  nexSerial.print("\"");
-  nexWriteTerminator();
-}
-
 static bool sendEncodedWeatherText(const String &weatherText) {
   for (size_t i = 0; i < sizeof(ENCODED_WEATHERS) / sizeof(ENCODED_WEATHERS[0]); i++) {
     if (weatherText == ENCODED_WEATHERS[i].utf8) {
@@ -206,12 +197,6 @@ static bool hasValidWeatherText(const String &weatherText) {
 }
 
 static void sendCachedTempHumi() {
-  if (hasWeatherCapacityWarning) {
-    sendEncodedTempText(TEMP_CAPACITY_WARNING, sizeof(TEMP_CAPACITY_WARNING));
-    nexSend("t_humi.txt=\"\"");
-    return;
-  }
-
   if (!hasTempHumiSnapshot) {
     nexSend("t_temp.txt=\"\"");
     nexSend("t_humi.txt=\"\"");
@@ -232,7 +217,6 @@ static void showWeatherLoadingFields() {
 static void beginWeatherRefresh() {
   hasWeatherSnapshot = false;
   hasTempHumiSnapshot = false;
-  hasWeatherCapacityWarning = false;
   lastWeatherLabel = "";
   lastWeatherIconId = 0;
   showWeatherLoadingFields();
@@ -318,6 +302,17 @@ static String attachDeviceIdIfMissing(const String &payload) {
   normalized.reserve(payload.length() + 32);
   serializeJson(doc, normalized);
   return normalized;
+}
+
+static bool readJsonFloatField(JsonDocument &doc, const char *fieldName, float &value) {
+  if (doc[fieldName].isNull()) return false;
+
+  String rawValue = doc[fieldName].as<String>();
+  rawValue.trim();
+  if (rawValue.length() == 0) return false;
+
+  value = rawValue.toFloat();
+  return true;
 }
 
 static String findNextionCmd(const String &buf) {
@@ -462,6 +457,8 @@ void handleNextionCmd(const String &cmd) {
   if (cmd == "M2" || cmd == "Y3") {
     beginWeatherRefresh();
     enterWeatherMode(true);
+    delay(150);
+    beginWeatherRefresh();
   } 
   else if (cmd == "M1" || cmd == "Y1") {
     setSystemMode(MODE_MANUAL, "Manual Mode");
@@ -486,9 +483,14 @@ void handleNextionCmd(const String &cmd) {
   } 
   else if (cmd == "RE") {
     Serial.println("Wi-Fi 설정 초기화 및 재부팅!");
+    prefs.putBool("force_config_portal", true);
+    prefs.putBool("force_offline", false);
     WiFiManager wifiManager;
     wifiManager.resetSettings(); // 플래시 메모리 와이파이 정보 삭제
-    ESP.restart(); // 재부팅
+    WiFi.disconnect(true, true);
+    WiFi.mode(WIFI_OFF);
+    delay(300);
+    ESP.restart();
   } 
   else if (cmd == "TZ") {
     resetScaleZero();
@@ -534,11 +536,6 @@ void updateTempHumi(float tempC, float humi) {
   lastWeatherTempC = tempC;
   lastWeatherHumi = humi;
   hasTempHumiSnapshot = true;
-  if (hasWeatherCapacityWarning) {
-    sendEncodedTempText(TEMP_CAPACITY_WARNING, sizeof(TEMP_CAPACITY_WARNING));
-    nexSend("t_humi.txt=\"\"");
-    return;
-  }
   nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\"");
   nexSend("t_humi.txt=\"" + String(humi, 0) + "%\"");
 }
@@ -569,16 +566,6 @@ float calculateScentPercent(float weightValue) {
   return constrain(percent, 0.0f, 100.0f);
 }
 
-static bool showCapacityWarningForSpray(int sprayCode) {
-  if (currentMode != MODE_WEATHER || sprayCode < 1 || sprayCode > 4) return false;
-  if (calculateScentPercent(weights[sprayCode - 1]) >= 9.0f) return false;
-
-  hasWeatherCapacityWarning = true;
-  sendEncodedTempText(TEMP_CAPACITY_WARNING, sizeof(TEMP_CAPACITY_WARNING));
-  nexSend("t_humi.txt=\"\"");
-  return true;
-}
-
 void updateScentProgressBars() {
   for (int i = 0; i < 4; i++) {
     int percent = constrain((int)round(calculateScentPercent(weights[i])), 0, 100);
@@ -597,13 +584,20 @@ void displayWatcherTask(void *pvParameters) {
       
       // 디스플레이에서 OF 신호가 들어온 것을 실시간으로 포착!
       if (cmd.length() > 0) {
-        Serial.println(C_GREEN "\r\n🔌 [Offline] 오프라인 버튼 터치 감지! 수동 모드로 즉시 전환합니다..." C_RESET);
-        
-        // 플래시 메모리에 오프라인 강제 진입 티켓 발급
-        prefs.putBool("force_offline", true); 
         if (cmd == "OF") {
+          Serial.println(C_GREEN "\r\n🔌 [Offline] 오프라인 버튼 터치 감지! 수동 모드로 즉시 전환합니다..." C_RESET);
+          prefs.putBool("force_offline", true);
           prefs.remove("pending_nextion_cmd");
+        } else if (cmd == "RE") {
+          Serial.println(C_GREEN "\r\n[WiFi] RE 버튼 터치 감지! Wi-Fi 설정 포털을 강제 시작합니다..." C_RESET);
+          prefs.putBool("force_config_portal", true);
+          prefs.putBool("force_offline", false);
+          prefs.remove("pending_nextion_cmd");
+          WiFiManager wifiManager;
+          wifiManager.resetSettings();
+          WiFi.disconnect(true, true);
         } else {
+          prefs.putBool("force_offline", true);
           prefs.putString("pending_nextion_cmd", cmd);
         }
         delay(100);
@@ -638,9 +632,15 @@ void connectWiFi() {
   }
 
   WiFiManager wifiManager;
+  bool forceConfigPortal = prefs.getBool("force_config_portal", false);
+  if (forceConfigPortal) {
+    prefs.putBool("force_config_portal", false);
+    WiFi.disconnect(true, true);
+    delay(200);
+  }
 
   // ★★★ [핵심 2] 사용자 요청대로 무한정 대기 (0으로 설정) ★★★
-  wifiManager.setConfigPortalTimeout(120); 
+  wifiManager.setConfigPortalTimeout(forceConfigPortal ? 0 : 120);
 
   wifiManager.setAPStaticIPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
   wifiManager.setCaptivePortalEnable(true); 
@@ -668,7 +668,16 @@ void connectWiFi() {
   xTaskCreatePinnedToCore(displayWatcherTask, "WatcherTask", 2048, NULL, 1, &watcherHandle, 0);
 
   // 여기서부터 코드가 멈추고 와이파이를 무한정 기다리지만, 백그라운드의 감시자는 계속 일합니다.
-  if (!wifiManager.autoConnect("SmartDiffuser_Setup")) {
+  bool wifiConnected = false;
+  if (forceConfigPortal) {
+    Serial.println("\r\n[WiFiManager] RE 버튼 요청으로 설정 포털을 강제 시작합니다.");
+    updateDisplay(0, "Setup WiFi");
+    wifiConnected = wifiManager.startConfigPortal("SmartDiffuser_Setup");
+  } else {
+    wifiConnected = wifiManager.autoConnect("SmartDiffuser_Setup");
+  }
+
+  if (!wifiConnected) {
     updateDisplay(0, "Offline Mode");
     Serial.println(C_YELLOW "\r\n[Warning] Wi-Fi 설정 실패." C_RESET);
   } else {
@@ -760,23 +769,18 @@ static void processServerResponse(const String& response) {
   }
 
   // 2. 온습도 업데이트
-  hasWeatherCapacityWarning = false;
-  bool hasTemp = !doc["temp"].isNull() || !doc["temperature"].isNull();
-  bool hasHumi = !doc["humidity"].isNull() || !doc["humid"].isNull() || !doc["humi"].isNull();
+  float tempC = lastWeatherTempC;
+  float humi = lastWeatherHumi;
+  bool hasTemp = readJsonFloatField(doc, "temp", tempC) || readJsonFloatField(doc, "temperature", tempC);
+  bool hasHumi = readJsonFloatField(doc, "humidity", humi) ||
+                 readJsonFloatField(doc, "humid", humi) ||
+                 readJsonFloatField(doc, "humi", humi);
   if (hasTemp || hasHumi) {
-    float tempC = !doc["temp"].isNull() ? (doc["temp"] | lastWeatherTempC) : (doc["temperature"] | lastWeatherTempC);
-    float humi = !doc["humidity"].isNull() ? (doc["humidity"] | lastWeatherHumi) :
-                 (!doc["humid"].isNull() ? (doc["humid"] | lastWeatherHumi) : (doc["humi"] | lastWeatherHumi));
-    bool looksLikePlaceholderWeather = currentMode == MODE_WEATHER && tempC == 0.0f && humi == 0.0f;
-    if (!looksLikePlaceholderWeather) {
-      updateTempHumi(tempC, humi);
-    }
+    updateTempHumi(tempC, humi);
   }
 
   // 3. 분사 제어 명령 처리
   int cmd = doc["spray"] | -1;
-  hasWeatherCapacityWarning = false;
-  showCapacityWarningForSpray(cmd);
   if (cmd > 0) {
     int dur = doc["duration"] | 3; 
     int music = doc["music"] | 0; 
