@@ -68,7 +68,7 @@ bool blendSprayActive = false;
 // --- 날씨 모드 ---
 unsigned long lastWeatherCallMillis = 0;
 const unsigned long WEATHER_INTERVAL = 3600000;
-String lastWeatherRegion = "서울";
+String lastWeatherRegion = "";
 int lastWeatherIconId = 0;
 String lastWeatherLabel = "Weather";
 

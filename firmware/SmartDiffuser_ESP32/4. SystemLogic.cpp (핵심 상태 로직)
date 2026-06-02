@@ -510,7 +510,7 @@ void enterWeatherMode(bool runNow) {
   }
   if (runNow) {
     lastWeatherCallMillis = millis();
-    sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
+    sendServerRequest(buildWeatherRequestPayload(""));
   }
 }
 

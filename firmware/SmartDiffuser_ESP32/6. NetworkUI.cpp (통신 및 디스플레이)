@@ -4,8 +4,13 @@ static WiFiClientSecure sharedClient;
 static bool isSessionInit = false;
 static bool hasWeatherSnapshot = false;
 static bool hasTempHumiSnapshot = false;
+static bool hasWeatherCapacityWarning = false;
 static float lastWeatherTempC = 0.0f;
 static float lastWeatherHumi = 0.0f;
+
+static const int VOLUME_PAGE_BASE = 58;
+static const int VOLUME_LEVEL_MIN = 0;
+static const int VOLUME_LEVEL_MAX = 10;
 
 struct EncodedRegionText {
   const char *utf8;
@@ -68,6 +73,7 @@ static const uint8_t WEATHER_CLOUD[]   = {0xB1, 0xB8, 0xB8, 0xA7};
 static const uint8_t WEATHER_UNKNOWN[] = {0xB3, 0xAF, 0xBE, 0xBE, 0x20, 0xBE, 0xCB, 0x20, 0xBC, 0xF6, 0x20, 0xBE, 0xF8, 0xC0, 0xBD, 0x28, 0x41, 0x50, 0x49, 0x20, 0xC1, 0xF6, 0xBF, 0xAC, 0x29};
 static const uint8_t WEATHER_FAIL[]    = {0xB3, 0xAF, 0xBE, 0xBE, 0x20, 0xC5, 0xEB, 0xBD, 0xC5, 0x20, 0xBD, 0xC7, 0xC6, 0xD0};
 static const uint8_t WEATHER_ENV_ERR[] = {0xC8, 0xAF, 0xB0, 0xE6, 0x20, 0xBA, 0xAF, 0xBC, 0xF6, 0x20, 0xBF, 0xC0, 0xB7, 0xF9};
+static const uint8_t TEMP_CAPACITY_WARNING[] = {0xBF, 0xEB, 0xB7, 0xAE, 0x20, 0xB0, 0xE6, 0xB0, 0xED};
 
 static const EncodedRegionText ENCODED_REGIONS[] = {
   {"\xEC\x84\x9C\xEC\x9A\xB8", REGION_SEOUL, sizeof(REGION_SEOUL)},
@@ -155,6 +161,13 @@ static bool sendEncodedWeatherBytes(const uint8_t *encoded, size_t length) {
   return true;
 }
 
+static void sendEncodedTempText(const uint8_t *encoded, size_t length) {
+  nexSerial.print("t_temp.txt=\"");
+  nexSerial.write(encoded, length);
+  nexSerial.print("\"");
+  nexWriteTerminator();
+}
+
 static bool sendEncodedWeatherText(const String &weatherText) {
   for (size_t i = 0; i < sizeof(ENCODED_WEATHERS) / sizeof(ENCODED_WEATHERS[0]); i++) {
     if (weatherText == ENCODED_WEATHERS[i].utf8) {
@@ -193,6 +206,12 @@ static bool hasValidWeatherText(const String &weatherText) {
 }
 
 static void sendCachedTempHumi() {
+  if (hasWeatherCapacityWarning) {
+    sendEncodedTempText(TEMP_CAPACITY_WARNING, sizeof(TEMP_CAPACITY_WARNING));
+    nexSend("t_humi.txt=\"\"");
+    return;
+  }
+
   if (!hasTempHumiSnapshot) {
     nexSend("t_temp.txt=\"\"");
     nexSend("t_humi.txt=\"\"");
@@ -203,6 +222,22 @@ static void sendCachedTempHumi() {
   nexSend("t_humi.txt=\"" + String(lastWeatherHumi, 0) + "%\"");
 }
 
+static void showWeatherLoadingFields() {
+  nexSend("t_region.txt=\"\"");
+  nexSend("t_weather.txt=\"\"");
+  nexSend("t_temp.txt=\"\"");
+  nexSend("t_humi.txt=\"\"");
+}
+
+static void beginWeatherRefresh() {
+  hasWeatherSnapshot = false;
+  hasTempHumiSnapshot = false;
+  hasWeatherCapacityWarning = false;
+  lastWeatherLabel = "";
+  lastWeatherIconId = 0;
+  showWeatherLoadingFields();
+}
+
 static void updateWeatherFields() {
   String regionText = lastWeatherRegion;
   regionText.trim();
@@ -211,9 +246,7 @@ static void updateWeatherFields() {
   weatherText.trim();
 
   if (!hasWeatherSnapshot || !hasValidWeatherText(weatherText)) {
-    nexSend("t_region.txt=\"\"");
-    nexSend("t_weather.txt=\"\"");
-    sendCachedTempHumi();
+    showWeatherLoadingFields();
     return;
   }
 
@@ -254,8 +287,10 @@ void rememberWeatherRegion(const String &region) {
 String buildWeatherRequestPayload(const String &region) {
   JsonDocument reqDoc;
   reqDoc["mode"] = "weather";
-  if (region.length() > 0) {
-    reqDoc["region"] = region;
+  String safeRegion = region;
+  safeRegion.trim();
+  if (safeRegion.length() > 0) {
+    reqDoc["region"] = safeRegion;
   }
 
   // 🔥 날씨 모드에서도 현재 무게 배열을 추가해서 서버로 같이 보냄!
@@ -397,10 +432,15 @@ static int getDisplayVolumeLevel() {
   return constrain((currentVolume + 1) / 3, 0, 10);
 }
 
+static void showDisplayVolumePage(int level) {
+  int displayLevel = constrain(level, VOLUME_LEVEL_MIN, VOLUME_LEVEL_MAX);
+  nexSend("page page" + String(VOLUME_PAGE_BASE + displayLevel));
+}
+
 static void setDisplayVolumeLevel(int level) {
   int displayLevel = constrain(level, 0, 10);
   changeVolume(displayLevel * 3);
-  updateDisplay(0, "Volume " + String(displayLevel));
+  showDisplayVolumePage(displayLevel);
   Serial.printf("\r\n[Display] Volume level: %d/10 (DFPlayer %d/30)\r\n", displayLevel, currentVolume);
 }
 
@@ -410,7 +450,7 @@ static void handleVolumeButton(const String &cmd) {
   } else if (cmd == "VD") {
     setDisplayVolumeLevel(getDisplayVolumeLevel() - 1);
   } else if (cmd == "VM") {
-    setDisplayVolumeLevel(5);
+    showDisplayVolumePage(getDisplayVolumeLevel());
   }
 }
 
@@ -420,6 +460,7 @@ void handleNextionCmd(const String &cmd) {
 
   // 2. 명령어 교통정리 분기점
   if (cmd == "M2" || cmd == "Y3") {
+    beginWeatherRefresh();
     enterWeatherMode(true);
   } 
   else if (cmd == "M1" || cmd == "Y1") {
@@ -493,6 +534,11 @@ void updateTempHumi(float tempC, float humi) {
   lastWeatherTempC = tempC;
   lastWeatherHumi = humi;
   hasTempHumiSnapshot = true;
+  if (hasWeatherCapacityWarning) {
+    sendEncodedTempText(TEMP_CAPACITY_WARNING, sizeof(TEMP_CAPACITY_WARNING));
+    nexSend("t_humi.txt=\"\"");
+    return;
+  }
   nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\"");
   nexSend("t_humi.txt=\"" + String(humi, 0) + "%\"");
 }
@@ -521,6 +567,16 @@ float calculateScentPercent(float weightValue) {
   // 퍼센트 계산 후 0~100 범위로 제한합니다. [cite: 1]
   float percent = ((clampedWeight - emptyWeight) / usableWeight) * 100.0f;
   return constrain(percent, 0.0f, 100.0f);
+}
+
+static bool showCapacityWarningForSpray(int sprayCode) {
+  if (currentMode != MODE_WEATHER || sprayCode < 1 || sprayCode > 4) return false;
+  if (calculateScentPercent(weights[sprayCode - 1]) >= 9.0f) return false;
+
+  hasWeatherCapacityWarning = true;
+  sendEncodedTempText(TEMP_CAPACITY_WARNING, sizeof(TEMP_CAPACITY_WARNING));
+  nexSend("t_humi.txt=\"\"");
+  return true;
 }
 
 void updateScentProgressBars() {
@@ -704,12 +760,23 @@ static void processServerResponse(const String& response) {
   }
 
   // 2. 온습도 업데이트
-  if (!doc["temp"].isNull() && !doc["humidity"].isNull()) {
-    updateTempHumi(doc["temp"] | 0.0f, doc["humidity"] | 0.0f);
+  hasWeatherCapacityWarning = false;
+  bool hasTemp = !doc["temp"].isNull() || !doc["temperature"].isNull();
+  bool hasHumi = !doc["humidity"].isNull() || !doc["humid"].isNull() || !doc["humi"].isNull();
+  if (hasTemp || hasHumi) {
+    float tempC = !doc["temp"].isNull() ? (doc["temp"] | lastWeatherTempC) : (doc["temperature"] | lastWeatherTempC);
+    float humi = !doc["humidity"].isNull() ? (doc["humidity"] | lastWeatherHumi) :
+                 (!doc["humid"].isNull() ? (doc["humid"] | lastWeatherHumi) : (doc["humi"] | lastWeatherHumi));
+    bool looksLikePlaceholderWeather = currentMode == MODE_WEATHER && tempC == 0.0f && humi == 0.0f;
+    if (!looksLikePlaceholderWeather) {
+      updateTempHumi(tempC, humi);
+    }
   }
 
   // 3. 분사 제어 명령 처리
   int cmd = doc["spray"] | -1;
+  hasWeatherCapacityWarning = false;
+  showCapacityWarningForSpray(cmd);
   if (cmd > 0) {
     int dur = doc["duration"] | 3; 
     int music = doc["music"] | 0; 
@@ -736,11 +803,11 @@ static void processServerResponse(const String& response) {
   }
 
   // ★ [추가] 5. 스피커 볼륨 설정
-  if (!doc["volume"].isNull()) {
+  if (!doc["volume"].isNull() && !isRunning && !isSpraying) {
     int vol = doc["volume"] | 20;
-    if (vol < 15) vol = 15;
-    if (vol != currentVolume) {
-      changeVolume(vol);
+    int safeVol = constrain(vol, 0, 30);
+    if (safeVol != currentVolume) {
+      changeVolume(safeVol);
     }
   }
 
@@ -761,17 +828,16 @@ static void processServerResponse(const String& response) {
     // 밝기 값이 오면 업데이트, 없으면 유지
     if (!doc["led_bright"].isNull()) {
       newBright = constrain(doc["led_bright"] | 150, 0, 255);
+    } else if (!doc["led_br"].isNull()) {
+      newBright = constrain(doc["led_br"] | 150, 0, 255);
     }
 
     // 플래시 메모리에 영구 저장 (기기를 껐다 켜도 유지되도록)
-    if (newR == ledR && newG == ledG && newB == ledB && newBright == ledBrightness) {
-      return;
-    }
-
     ledR = newR;
     ledG = newG;
     ledB = newB;
     ledBrightness = newBright;
+    ledEnabled = true;
 
     prefs.putInt("ledBright", ledBrightness);
     prefs.putUChar("ledR", ledR);
