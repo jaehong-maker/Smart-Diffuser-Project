@@ -70,7 +70,7 @@ unsigned long lastWeatherCallMillis = 0;
 const unsigned long WEATHER_INTERVAL = 3600000;
 String lastWeatherRegion = "";
 int lastWeatherIconId = 0;
-String lastWeatherLabel = "Weather";
+String lastWeatherLabel = "";
 
 // --- 타이머 및 스케줄러 ---
 unsigned long lastNozzleSprayTime[4] = {0, 0, 0, 0};
