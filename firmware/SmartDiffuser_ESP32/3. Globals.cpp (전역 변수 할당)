@@ -23,7 +23,7 @@ EventGroupHandle_t networkEventGroup = NULL;
 // ==========================================
 // --- 시스템 상태 ---
 SystemMode currentMode = MODE_READY; 
-String deviceId = "SmartDiffuser_01";
+String deviceId = "SS";
 bool isRunning = false;
 bool isCommunicate = false; 
 unsigned long lastActivityTime = 0;
