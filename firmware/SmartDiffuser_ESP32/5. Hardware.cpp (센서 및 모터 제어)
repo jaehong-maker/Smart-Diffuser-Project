@@ -120,10 +120,18 @@ void systemHeartbeat() {
       }
       break;
 
-    case LED_LOW_FLUID: // 🟡 용액 부족 (노란색 부드러운 숨쉬기)
+    case LED_LOW_FLUID: // 🟡 용액 부족 (경고만 살짝 덧씌움)
       {
-        int bright = (sin(currentTime / 500.0) * 127) + 128; 
-        setLedColor((255 * bright) / 255, (200 * bright) / 255, 0);
+        // [수정] 사용자가 설정한 색상을 기본으로 하되, 2초 주기로 노란색이 살짝 나타났다 사라지게 변경
+        int factor = (sin(currentTime / 500.0) * 30) + 225;
+        float warningFactor = (sin(currentTime / 2000.0) * 0.5) + 0.5; // 0~1 범위
+        
+        // 사용자 색상과 경고 노란색(255, 200, 0)을 부드럽게 믹스
+        uint8_t r = (ledR * (1.0 - (warningFactor * 0.3))) + (255 * warningFactor * 0.3);
+        uint8_t g = (ledG * (1.0 - (warningFactor * 0.3))) + (200 * warningFactor * 0.3);
+        uint8_t b = (ledB * (1.0 - (warningFactor * 0.3)));
+        
+        setLedColor((r * factor) / 255, (g * factor) / 255, (b * factor) / 255);
       }
       break;
 
@@ -136,23 +144,25 @@ void systemHeartbeat() {
 
     case LED_SPRAY: // ✨ 분사 중 (빠른 호흡 효과)
       {
-        int factor = (sin(currentTime / 150.0) * 40) + 215; // 215~255 범위로 조절 (너무 어두워지지 않게)
+        // [수정] 사용자가 설정한 색상을 사용하며, 165~255 범위에서 빠르게 박동
+        int factor = (sin(currentTime / 200.0) * 45) + 210; 
         setLedColor((ledR * factor) / 255, (ledG * factor) / 255, (ledB * factor) / 255);
       }
       break;
 
-    case LED_AMBIENT: // 🔮 앰비언트 모드 (보라색의 부드러운 호흡)
+    case LED_AMBIENT: // 🔮 앰비언트 모드 (부드러운 호흡)
       {
-        int factor = (sin(currentTime / 300.0) * 30) + 225; 
-        setLedColor((150 * factor) / 255, 0, (255 * factor) / 255);
+        // [수정] 기존 하드코딩된 보라색 대신, 사용자가 설정한 색상을 175~255 범위에서 부드럽게 박동
+        int factor = (sin(currentTime / 500.0) * 40) + 215; 
+        setLedColor((ledR * factor) / 255, (ledG * factor) / 255, (ledB * factor) / 255);
       }
       break;
 
     case LED_IDLE: // 💤 대기 모드 (은은한 숨쉬기)
     default:
       {
-        // 사용자가 설정한 색상을 최대한 유지하면서 아주 살짝만 박동하게 변경 (240~255)
-        int factor = (sin(currentTime / 1500.0) * 15) + 240; 
+        // [수정] 대기 모드에서는 색상 변경이 가장 뚜렷하게 보이도록 박동 범위를 좁히고 밝게 유지 (245~255)
+        int factor = (sin(currentTime / 2000.0) * 10) + 245; 
         setLedColor((ledR * factor) / 255, (ledG * factor) / 255, (ledB * factor) / 255);
       }
       break;
