@@ -663,10 +663,10 @@ def get_saved_region(device_id):
 def get_latest_voice_region(device_id="SS"):
     try:
         lookup_device_id = str(device_id or "SS")
-        resp = user_table.scan(
-            FilterExpression=Attr("deviceId").eq(lookup_device_id),
-            ProjectionExpression="#r",
-            ExpressionAttributeNames={"#r": "region"},
+        resp = log_table.query(
+                KeyConditionExpression=Key("deviceId").eq(lookup_device_id),
+                ScanIndexForward=False,
+                Limit=30,
         )
         for item in resp.get("Items") or []:
             region = str(item.get("region", "") or "").strip()
