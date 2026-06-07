@@ -88,13 +88,16 @@ def handle_core_modes(action, mode, body, device_id, normalized_weights, region)
                 spray_code, result_text, logic_name, duration = 4, "테스트 눈 실행", "Test_Weather", 3
                 context_key = "Weather_Snow"
             else:
-                voice_region = db_utils.get_latest_voice_region(device_id)
-                if voice_region in config.REGION_COORDS:
-                    region = voice_region
-                elif not body.get("region") and not body.get("data"):
-                    saved_region = db_utils.get_saved_region(device_id)
-                    if saved_region in config.REGION_COORDS:
-                        region = saved_region
+                # 앱에서 보낸 지역 정보를 최우선으로 신뢰합니다.
+                # 명시적인 지역 정보가 없을 경우에만 보조 수단(음성 기록, 저장된 위치)을 활용합니다.
+                if not body.get("region") or body.get("region") == "서울":
+                    voice_region = db_utils.get_latest_voice_region(device_id)
+                    if voice_region and voice_region in config.REGION_COORDS:
+                        region = voice_region
+                    else:
+                        saved_region = db_utils.get_saved_region(device_id)
+                        if saved_region and saved_region in config.REGION_COORDS:
+                            region = saved_region
 
                 if not region: region = "서울"
                 if region not in config.REGION_COORDS: region = "서울"
