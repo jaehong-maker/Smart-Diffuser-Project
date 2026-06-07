@@ -164,6 +164,12 @@ static void nexWriteTerminator() {
   nexSerial.write(0xFF);
 }
 
+void clearNextionInputBuffer() {
+  while (nexSerial.available()) {
+    nexSerial.read();
+  }
+}
+
 static void sendClockDisplayNow() {
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
@@ -206,6 +212,43 @@ static void syncLocalVolumeToServer(int displayLevel) {
   JsonDocument doc;
   doc["action"] = "SET_VOLUME";
   doc["volume"] = constrain(displayLevel, VOLUME_LEVEL_MIN, VOLUME_LEVEL_MAX);
+
+  String payload;
+  serializeJson(doc, payload);
+  sendServerRequest(payload);
+}
+
+static bool isLedColorOff(uint8_t r, uint8_t g, uint8_t b) {
+  return r == 0 && g == 0 && b == 0;
+}
+
+static void ensureVisibleLedColor() {
+  if (!isLedColorOff(ledR, ledG, ledB)) return;
+
+  ledR = 255;
+  ledG = 255;
+  ledB = 255;
+  prefs.putUChar("ledR", ledR);
+  prefs.putUChar("ledG", ledG);
+  prefs.putUChar("ledB", ledB);
+}
+
+static void persistLocalLedState() {
+  prefs.putBool("ledEnabled", ledEnabled);
+  prefs.putInt("ledBright", ledBrightness);
+  prefs.putUChar("ledR", ledR);
+  prefs.putUChar("ledG", ledG);
+  prefs.putUChar("ledB", ledB);
+}
+
+static void syncLocalLedToServer() {
+  JsonDocument doc;
+  doc["action"] = "SET_LED";
+  doc["led_r"] = ledEnabled ? ledR : 0;
+  doc["led_g"] = ledEnabled ? ledG : 0;
+  doc["led_b"] = ledEnabled ? ledB : 0;
+  doc["led_br"] = ledBrightness;
+  doc["led_bright"] = ledBrightness;
 
   String payload;
   serializeJson(doc, payload);
@@ -461,7 +504,10 @@ static bool readJsonFloatField(JsonDocument &doc, const char *fieldName, float &
   return true;
 }
 
-static String findNextionCmd(const String &buf) {
+static String findNextionCmd(String buf) {
+  buf.trim();
+  if (buf.length() != 2) return "";
+
   const char* tokens[] = {
     "MM", "MO", "MD", "DS", "IM", "WR",
     "LN", "LO", "L0", "LF", "L1", "L2", "L3",
@@ -482,6 +528,9 @@ static String findNextionCmd(const String &buf) {
 static String processNextionChar(char c, String &buf, bool executeCmd) {
   if (isalnum((unsigned char)c) || c == '_' || c == ' ') {
     buf += c;
+  } else {
+    buf = "";
+    return "";
   }
 
   String cmd = findNextionCmd(buf);
@@ -619,18 +668,25 @@ static void setDisplayLedEnabled(bool enabled) {
   if (ledEnabled && ledBrightness <= 0) {
     ledBrightness = 150;
   }
-  prefs.putBool("ledEnabled", ledEnabled);
-  prefs.putInt("ledBright", ledBrightness);
+  if (ledEnabled) {
+    ensureVisibleLedColor();
+  }
+  persistLocalLedState();
+  markLocalSettingsChanged();
+  syncLocalLedToServer();
   showPage(ledEnabled ? PAGE_LED_ON : PAGE_LED_OFF);
   setLedColor(ledEnabled ? ledR : 0, ledEnabled ? ledG : 0, ledEnabled ? ledB : 0);
-  Serial.printf("\r\n[Display] LED %s (brightness=%d)\r\n", ledEnabled ? "ON" : "OFF", ledBrightness);
+  Serial.printf("\r\n[Display] LED %s (R:%d G:%d B:%d brightness=%d)\r\n",
+                ledEnabled ? "ON" : "OFF", ledR, ledG, ledB, ledBrightness);
 }
 
 static void setDisplayLedBrightness(int brightness, int pageId) {
   ledEnabled = true;
   ledBrightness = constrain(brightness, 0, 255);
-  prefs.putBool("ledEnabled", ledEnabled);
-  prefs.putInt("ledBright", ledBrightness);
+  ensureVisibleLedColor();
+  persistLocalLedState();
+  markLocalSettingsChanged();
+  syncLocalLedToServer();
   showPage(pageId);
   setLedColor(ledR, ledG, ledB);
 }
@@ -670,9 +726,13 @@ void handleNextionCmd(const String &cmd) {
     showPage(PAGE_WIFI_RESET);
   }
   else if (cmd == "M2" || cmd == "Y3") {
-    showPage(PAGE_WEATHER);
-    beginWeatherRefresh();
-    enterWeatherMode(true);
+    if (currentMode == MODE_WEATHER) {
+      showWeatherPageByState();
+    } else {
+      showPage(PAGE_WEATHER);
+      beginWeatherRefresh();
+      enterWeatherMode(true);
+    }
   } 
   else if (cmd == "M1" || cmd == "Y1") {
     showManualPageByState();
@@ -681,7 +741,9 @@ void handleNextionCmd(const String &cmd) {
   else if (cmd == "M3" || cmd == "Y2") {
     showPage(PAGE_DEVICE_STATUS);
     updateScentProgressBars();
-    setSystemMode(MODE_SETTING, "Setting Mode");
+    if (currentMode != MODE_WEATHER) {
+      setSystemMode(MODE_SETTING, "Setting Mode");
+    }
   } 
   else if (cmd == "ST") {
     SystemMode modeBeforeStop = currentMode;
@@ -905,6 +967,7 @@ void connectWiFi() {
 
   // ★★★ [핵심 3] 와이파이매니저가 실행(블로킹)되기 직전에 감시자 태스크를 백그라운드에 투입! ★★★
   TaskHandle_t watcherHandle = NULL;
+  clearNextionInputBuffer();
   xTaskCreatePinnedToCore(displayWatcherTask, "WatcherTask", 2048, NULL, 1, &watcherHandle, 0);
 
   // 여기서부터 코드가 멈추고 와이파이를 무한정 기다리지만, 백그라운드의 감시자는 계속 일합니다.
@@ -1039,12 +1102,13 @@ static void processServerResponse(const String& response) {
 
   // 4. 분사 제어 명령 처리
   int cmd = doc["spray"] | -1;
+  String resultText = doc["result_text"] | "";
   if (cmd > 0) {
     int dur = doc["duration"] | 3; 
     int music = doc["music"] | 0; 
-    String txt = doc["result_text"] | "명령 수신";
+    String txt = resultText.length() > 0 ? resultText : "명령 수신";
     triggerSpray(cmd, dur, music, txt, (currentMode == MODE_WEATHER));
-  } else if (cmd == 0) {
+  } else if (cmd == 0 && resultText != "OK") {
     SystemMode modeBeforeStop = currentMode;
     setSystemMode(MODE_READY, "Stopped by Server");
     if (modeBeforeStop == MODE_WEATHER) {
@@ -1075,7 +1139,7 @@ static void processServerResponse(const String& response) {
   }
 
   // 6. 서버 명령으로 LED 색상 및 밝기 실시간 변경
-  if (!doc["led_r"].isNull() && !doc["led_g"].isNull() && !doc["led_b"].isNull()) {
+  if (canApplyServerSettings() && !doc["led_r"].isNull() && !doc["led_g"].isNull() && !doc["led_b"].isNull()) {
     uint8_t newR = constrain(doc["led_r"] | 255, 0, 255);
     uint8_t newG = constrain(doc["led_g"] | 255, 0, 255);
     uint8_t newB = constrain(doc["led_b"] | 255, 0, 255);
@@ -1091,16 +1155,17 @@ static void processServerResponse(const String& response) {
     ledG = newG;
     ledB = newB;
     ledBrightness = newBright;
-    ledEnabled = true;
+    ledEnabled = newBright > 0 && !isLedColorOff(ledR, ledG, ledB);
 
     prefs.putInt("ledBright", ledBrightness);
     prefs.putUChar("ledR", ledR);
     prefs.putUChar("ledG", ledG);
     prefs.putUChar("ledB", ledB);
     prefs.putBool("ledEnabled", ledEnabled);
-    setLedColor(ledR, ledG, ledB);
+    setLedColor(ledEnabled ? ledR : 0, ledEnabled ? ledG : 0, ledEnabled ? ledB : 0);
 
-    Serial.printf(C_GREEN "\r\n🎨 서버 명령으로 LED 변경: R:%d G:%d B:%d 밝기:%d\r\n" C_RESET, ledR, ledG, ledB, ledBrightness);
+    Serial.printf(C_GREEN "\r\n🎨 서버 명령으로 LED 변경: R:%d G:%d B:%d 밝기:%d ON:%d\r\n" C_RESET,
+                  ledR, ledG, ledB, ledBrightness, ledEnabled);
     
     if (currentMode != MODE_SLEEP && currentMode != MODE_VOICE && !isWaitingForTestDb) {
       showPrompt();
