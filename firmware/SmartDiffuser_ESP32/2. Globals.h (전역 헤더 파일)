@@ -253,6 +253,7 @@ void autoWeatherScheduler();
 void recordAndSendVoice();
 void checkNextionInput();
 void clearNextionInputBuffer();
+void clearNextionInputBuffer();
 void handleNextionCmd(const String &cmd);
 void nexSend(const String &cmd);
 void updateDisplay(int iconID, String text);
