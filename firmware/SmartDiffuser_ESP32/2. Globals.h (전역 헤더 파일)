@@ -252,7 +252,7 @@ void handleWebClient();
 void autoWeatherScheduler();
 void recordAndSendVoice();
 void checkNextionInput();
-void clearNextionInputBuffer();  // <--- ★ 이 줄을 추가해 주세요! ★
+void clearNextionInputBuffer();
 void handleNextionCmd(const String &cmd);
 void nexSend(const String &cmd);
 void updateDisplay(int iconID, String text);
