@@ -621,20 +621,10 @@ def remember_last_region(device_id, region):
 
 def get_saved_region(device_id):
     try:
-        res = state_table.get_item(Key={"deviceId": device_id})
-        item = res.get("Item") or {}
-        region = str(item.get("last_region", "") or "").strip()
-        if region:
-            return region
-    except Exception as e:
-        logger.error(f"State Region Load Error: {e}")
-
-    try:
         resp = user_table.scan(
             FilterExpression=Attr("deviceId").eq(str(device_id)),
             ProjectionExpression="#r",
             ExpressionAttributeNames={"#r": "region"},
-            Limit=1,
         )
         items = resp.get("Items") or []
         if items:
@@ -643,6 +633,15 @@ def get_saved_region(device_id):
                 return region
     except Exception as e:
         logger.error(f"User Region Load Error: {e}")
+
+    try:
+        res = state_table.get_item(Key={"deviceId": device_id})
+        item = res.get("Item") or {}
+        region = str(item.get("last_region", "") or "").strip()
+        if region:
+            return region
+    except Exception as e:
+        logger.error(f"State Region Load Error: {e}")
 
     try:
         resp = log_table.query(
@@ -664,10 +663,10 @@ def get_saved_region(device_id):
 def get_latest_voice_region(device_id="SS"):
     try:
         lookup_device_id = str(device_id or "SS")
-        resp = log_table.query(
-            KeyConditionExpression=Key("deviceId").eq(lookup_device_id),
-            ScanIndexForward=False,
-            Limit=30,
+        resp = user_table.scan(
+            FilterExpression=Attr("deviceId").eq(lookup_device_id),
+            ProjectionExpression="#r",
+            ExpressionAttributeNames={"#r": "region"},
         )
         for item in resp.get("Items") or []:
             region = str(item.get("region", "") or "").strip()
