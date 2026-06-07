@@ -97,7 +97,9 @@ void initSystem() {
   delay(300); 
   nexSend("sleep=0");  // ★ 추가: 부팅 시 디스플레이 수면 모드 강제 해제
   delay(100);
-  nexSend("bauds=9600"); delay(100); nexSend("dim=100");    
+  nexSend("bauds=9600"); delay(100); nexSend("dim=100");
+  delay(100);
+  clearNextionInputBuffer();
   
   esp_task_wdt_config_t wdt_config = {
       .timeout_ms = 60000, 
@@ -511,7 +513,7 @@ void enterWeatherMode(bool runNow) {
   }
   if (runNow) {
     lastWeatherCallMillis = millis();
-    sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
+    sendServerRequest(buildWeatherRequestPayload(""));
   }
 }
 
