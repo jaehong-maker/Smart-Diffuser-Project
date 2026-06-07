@@ -125,7 +125,7 @@ void initSystem() {
 
   initMicrophone();
   prefs.begin("diffuser", false);
-  
+
   ledR = prefs.getUChar("ledR", 255);
   ledG = prefs.getUChar("ledG", 255);
   ledB = prefs.getUChar("ledB", 255);
@@ -511,7 +511,7 @@ void enterWeatherMode(bool runNow) {
   }
   if (runNow) {
     lastWeatherCallMillis = millis();
-    sendServerRequest(buildWeatherRequestPayload(""));
+    sendServerRequest(buildWeatherRequestPayload(lastWeatherRegion));
   }
 }
 
