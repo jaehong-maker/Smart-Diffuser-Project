@@ -10,7 +10,10 @@ static float lastWeatherHumi = 0.0f;
 static const int VOLUME_PAGE_BASE = 58;
 static const int VOLUME_LEVEL_MIN = 0;
 static const int VOLUME_LEVEL_MAX = 10;
+static const int TEMP_FONT_NORMAL = 0;
+static const int TEMP_FONT_LOADING = 7;
 
+static const int PAGE_WEATHER_OFF = 0;
 static const int PAGE_MODE_SELECT = 1;
 static const int PAGE_WEATHER = 2;
 static const int PAGE_MANUAL = 3;
@@ -28,6 +31,11 @@ static const int PAGE_INTENSITY_HOME = 28;
 static const int PAGE_INTENSITY_LOW = 30;
 static const int PAGE_INTENSITY_MEDIUM = 31;
 static const int PAGE_INTENSITY_HIGH = 32;
+
+static int lastManualPage = PAGE_MANUAL;
+static int currentDisplayPage = PAGE_WEATHER_OFF;
+static unsigned long lastLocalSettingsMillis = 0;
+static const unsigned long LOCAL_SETTINGS_PROTECT_MS = 30000;
 
 struct EncodedRegionText {
   const char *utf8;
@@ -156,8 +164,52 @@ static void nexWriteTerminator() {
   nexSerial.write(0xFF);
 }
 
+static void sendClockDisplayNow() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    nexSend("t_time.txt=\"--:--\"");
+    return;
+  }
+
+  char timeText[6];
+  snprintf(timeText, sizeof(timeText), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+  nexSend("t_time.txt=\"" + String(timeText) + "\"");
+}
+
 static void showPage(int pageId) {
+  currentDisplayPage = pageId;
   nexSend("page page" + String(pageId));
+  delay(80);
+  sendClockDisplayNow();
+}
+
+static void markLocalSettingsChanged() {
+  lastLocalSettingsMillis = millis();
+}
+
+static bool canApplyServerSettings() {
+  return lastLocalSettingsMillis == 0 ||
+         (millis() - lastLocalSettingsMillis >= LOCAL_SETTINGS_PROTECT_MS);
+}
+
+static void syncLocalIntensityToServer() {
+  JsonDocument doc;
+  doc["action"] = "SET_INTENSITY";
+  doc["intensity"] = currentIntensity;
+
+  String payload;
+  serializeJson(doc, payload);
+  sendServerRequest(payload);
+}
+
+static void syncLocalVolumeToServer(int displayLevel) {
+  JsonDocument doc;
+  doc["action"] = "SET_VOLUME";
+  doc["volume"] = constrain(displayLevel, VOLUME_LEVEL_MIN, VOLUME_LEVEL_MAX);
+
+  String payload;
+  serializeJson(doc, payload);
+  sendServerRequest(payload);
 }
 
 static int blendSinglePage(int scent) {
@@ -178,6 +230,51 @@ static int blendPairPage(const String &selection) {
   if (selection.indexOf("2") >= 0 && selection.indexOf("4") >= 0) return 16;
   if (selection.indexOf("3") >= 0 && selection.indexOf("4") >= 0) return 18;
   return PAGE_BLEND_HOME;
+}
+
+static void showWeatherLoadingFields();
+static void updateWeatherFields();
+
+static bool isManualScentPage(int pageId) {
+  return pageId >= PAGE_MANUAL_SCENT_BASE + 1 && pageId <= PAGE_MANUAL_SCENT_BASE + 4;
+}
+
+static bool isBlendPage(int pageId) {
+  return pageId >= PAGE_BLEND_HOME && pageId <= 19;
+}
+
+static int currentManualPage() {
+  if (blendModeEnabled) {
+    return isBlendPage(lastManualPage) ? lastManualPage : PAGE_BLEND_HOME;
+  }
+  return isManualScentPage(lastManualPage) ? lastManualPage : PAGE_MANUAL;
+}
+
+static int currentIntensityPage() {
+  if (currentIntensity == 1) return PAGE_INTENSITY_LOW;
+  if (currentIntensity == 2) return PAGE_INTENSITY_MEDIUM;
+  if (currentIntensity == 3) return PAGE_INTENSITY_HIGH;
+  return PAGE_INTENSITY_HOME;
+}
+
+static int currentLedPage() {
+  if (!ledEnabled) return PAGE_LED_OFF;
+  if (ledBrightness <= 90) return PAGE_LED_DIM;
+  if (ledBrightness >= 220) return PAGE_LED_BRIGHT;
+  return PAGE_LED_NORMAL;
+}
+
+static void showManualPageByState() {
+  showPage(currentManualPage());
+}
+
+static void showWeatherPageByState() {
+  showPage(PAGE_WEATHER);
+  if (currentMode == MODE_WEATHER) {
+    updateWeatherFields();
+  } else {
+    showWeatherLoadingFields();
+  }
 }
 
 static bool sendEncodedRegionText(const String &regionText) {
@@ -238,7 +335,13 @@ static bool hasValidWeatherText(const String &weatherText) {
   return normalized.length() > 0 && normalized != "Loading" && normalized != "Weather";
 }
 
+static void setTempFont(int fontId) {
+  nexSend("t_temp.font=" + String(fontId));
+}
+
 static void sendCachedTempHumi() {
+  setTempFont(TEMP_FONT_NORMAL);
+
   if (!hasTempHumiSnapshot) {
     nexSend("t_temp.txt=\"\"");
     nexSend("t_humi.txt=\"\"");
@@ -252,7 +355,8 @@ static void sendCachedTempHumi() {
 static void showWeatherLoadingFields() {
   nexSend("t_region.txt=\"\"");
   nexSend("t_weather.txt=\"\"");
-  nexSend("t_temp.txt=\"\"");
+  setTempFont(TEMP_FONT_LOADING);
+  nexSend("t_temp.txt=\"Loading\"");
   nexSend("t_humi.txt=\"\"");
 }
 
@@ -359,11 +463,11 @@ static bool readJsonFloatField(JsonDocument &doc, const char *fieldName, float &
 
 static String findNextionCmd(const String &buf) {
   const char* tokens[] = {
-    "MM", "DS", "IM", "WR",
-    "LN", "LO", "LF", "L1", "L2", "L3",
+    "MM", "MO", "MD", "DS", "IM", "WR",
+    "LN", "LO", "L0", "LF", "L1", "L2", "L3",
     "M1", "M2", "M3",
     "Y1", "Y2", "Y3",
-    "I1", "I2", "I3",
+    "I1", "I2", "I3", "IH",
     "VU", "VD", "VM",
     "ST", "BM", "RE", "OF", "TZ",
     "S1", "S2", "S3", "S4"
@@ -413,13 +517,13 @@ static void toggleBlendMode() {
 
   if (blendModeEnabled) {
     nexSend("b_blend.txt=\"blendOFF\"");
+    lastManualPage = PAGE_BLEND_HOME;
     showPage(PAGE_BLEND_HOME);
-    updateDisplay(0, "Pick 2 scents");
     Serial.println("\r\n[BLEND] ON");
   } else {
     nexSend("b_blend.txt=\"blendON\"");
+    lastManualPage = PAGE_MANUAL;
     showPage(PAGE_MANUAL);
-    updateDisplay(0, "Manual Mode");
     Serial.println("\r\n[BLEND] OFF");
   }
 }
@@ -436,8 +540,10 @@ static void handleScentButton(const String &cmd) {
 
   // 일반 모드일 경우 즉시 분사
   if (!blendModeEnabled) {
-    showPage(PAGE_MANUAL_SCENT_BASE + scent);
+    lastManualPage = PAGE_MANUAL_SCENT_BASE + scent;
+    showPage(lastManualPage);
     runManualMode(String(scent));
+    showPage(lastManualPage);
     return;
   }
 
@@ -448,13 +554,14 @@ static void handleScentButton(const String &cmd) {
   }
 
   if (blendSelection.length() == 1) {
-    showPage(blendSinglePage(scent));
-    updateDisplay(0, "1st scent selected");
+    lastManualPage = blendSinglePage(scent);
+    showPage(lastManualPage);
   } else if (blendSelection.length() == 2) {
-    showPage(blendPairPage(blendSelection));
+    lastManualPage = blendPairPage(blendSelection);
+    showPage(lastManualPage);
     runManualMode(blendSelection);
+    showPage(lastManualPage);
     blendSelection = "";
-    updateDisplay(0, "Blending Mode");
   }
 }
 
@@ -462,13 +569,13 @@ static void handleScentButton(const String &cmd) {
 // 🖥️ [메인 라우터] 넥션 디스플레이 명령어 분배기
 // =================================================================
 static void handleIntensityButton(const String &cmd) {
-  int intensity = cmd.substring(1).toInt();
+  int intensity = (cmd == "IH") ? 3 : cmd.substring(1).toInt();
   if (intensity < 1 || intensity > 3) return;
 
   SprayIntensity(intensity);
-  if (currentIntensity == 1) showPage(PAGE_INTENSITY_LOW);
-  else if (currentIntensity == 2) showPage(PAGE_INTENSITY_MEDIUM);
-  else showPage(PAGE_INTENSITY_HIGH);
+  markLocalSettingsChanged();
+  syncLocalIntensityToServer();
+  showPage(currentIntensityPage());
 
   const char *label = (currentIntensity == 1) ? "Low" : (currentIntensity == 2) ? "Medium" : "High";
   updateDisplay(0, String("Intensity ") + label);
@@ -487,6 +594,8 @@ static void showDisplayVolumePage(int level) {
 static void setDisplayVolumeLevel(int level) {
   int displayLevel = constrain(level, 0, 10);
   changeVolume(displayLevel * 3);
+  markLocalSettingsChanged();
+  syncLocalVolumeToServer(displayLevel);
   showDisplayVolumePage(displayLevel);
   Serial.printf("\r\n[Display] Volume level: %d/10 (DFPlayer %d/30)\r\n", displayLevel, currentVolume);
 }
@@ -502,14 +611,19 @@ static void handleVolumeButton(const String &cmd) {
 }
 
 static void showCurrentLedPage() {
-  showPage(ledEnabled ? PAGE_LED_ON : PAGE_LED_OFF);
+  showPage(currentLedPage());
 }
 
 static void setDisplayLedEnabled(bool enabled) {
   ledEnabled = enabled;
+  if (ledEnabled && ledBrightness <= 0) {
+    ledBrightness = 150;
+  }
   prefs.putBool("ledEnabled", ledEnabled);
+  prefs.putInt("ledBright", ledBrightness);
   showPage(ledEnabled ? PAGE_LED_ON : PAGE_LED_OFF);
   setLedColor(ledEnabled ? ledR : 0, ledEnabled ? ledG : 0, ledEnabled ? ledB : 0);
+  Serial.printf("\r\n[Display] LED %s (brightness=%d)\r\n", ledEnabled ? "ON" : "OFF", ledBrightness);
 }
 
 static void setDisplayLedBrightness(int brightness, int pageId) {
@@ -522,7 +636,7 @@ static void setDisplayLedBrightness(int brightness, int pageId) {
 }
 
 static void handleLedButton(const String &cmd) {
-  if (cmd == "LO") {
+  if (cmd == "LO" || cmd == "L0") {
     setDisplayLedEnabled(true);
   } else if (cmd == "LF") {
     setDisplayLedEnabled(false);
@@ -539,7 +653,9 @@ void handleNextionCmd(const String &cmd) {
   // 1. 화면 터치 노이즈 및 UI 업데이트 응답(쓰레기값) 무시
   if (cmd.startsWith("p0") || cmd.startsWith("t_weather") || cmd.startsWith("j0")) return;
 
-  if (cmd == "MM") {
+  Serial.printf("\r\n[Nextion] CMD: %s\r\n", cmd.c_str());
+
+  if (cmd == "MM" || cmd == "MO" || cmd == "MD") {
     showPage(PAGE_MODE_SELECT);
   }
   else if (cmd == "DS") {
@@ -547,20 +663,19 @@ void handleNextionCmd(const String &cmd) {
     updateScentProgressBars();
   }
   else if (cmd == "IM") {
-    showPage(PAGE_INTENSITY_HOME);
+    showPage(currentIntensityPage());
   }
   else if (cmd == "WR") {
+    prefs.putInt("wifi_return_page", currentDisplayPage);
     showPage(PAGE_WIFI_RESET);
   }
   else if (cmd == "M2" || cmd == "Y3") {
     showPage(PAGE_WEATHER);
     beginWeatherRefresh();
     enterWeatherMode(true);
-    delay(150);
-    beginWeatherRefresh();
   } 
   else if (cmd == "M1" || cmd == "Y1") {
-    showPage(PAGE_MANUAL);
+    showManualPageByState();
     setSystemMode(MODE_MANUAL, "Manual Mode");
   } 
   else if (cmd == "M3" || cmd == "Y2") {
@@ -569,8 +684,21 @@ void handleNextionCmd(const String &cmd) {
     setSystemMode(MODE_SETTING, "Setting Mode");
   } 
   else if (cmd == "ST") {
-    showPage(PAGE_MODE_SELECT);
+    SystemMode modeBeforeStop = currentMode;
+    lastManualPage = PAGE_MANUAL;
     setSystemMode(MODE_READY, "Stopped");
+
+    if (modeBeforeStop == MODE_WEATHER) {
+      hasWeatherSnapshot = false;
+      hasTempHumiSnapshot = false;
+      lastWeatherLabel = "";
+      lastWeatherIconId = 0;
+      showPage(PAGE_WEATHER_OFF);
+    } else if (modeBeforeStop == MODE_MANUAL) {
+      showPage(PAGE_MANUAL);
+    } else {
+      showPage(PAGE_MODE_SELECT);
+    }
   } 
   else if (cmd == "BM") {
     toggleBlendMode(); // 👉 분리된 헬퍼 함수 호출
@@ -590,18 +718,27 @@ void handleNextionCmd(const String &cmd) {
   } 
   else if (cmd == "RE") {
     Serial.println("Wi-Fi 설정 초기화 및 재부팅!");
+    int returnPage = prefs.getInt("wifi_return_page", currentDisplayPage);
+    prefs.putInt("wifi_return_page", returnPage);
     prefs.putBool("force_config_portal", true);
     prefs.putBool("force_offline", false);
+    showPage(PAGE_WIFI_RESET);
     WiFiManager wifiManager;
     wifiManager.resetSettings(); // 플래시 메모리 와이파이 정보 삭제
     WiFi.disconnect(true, true);
     WiFi.mode(WIFI_OFF);
-    delay(300);
+    delay(700);
     ESP.restart();
   } 
   else if (cmd == "TZ") {
-    resetScaleZero();
+    int returnPage = currentDisplayPage;
     showPage(PAGE_TARE);
+    resetScaleZero();
+    delay(1000);
+    showPage(returnPage == PAGE_TARE ? PAGE_DEVICE_STATUS : returnPage);
+    if (returnPage == PAGE_DEVICE_STATUS) {
+      updateScentProgressBars();
+    }
   }
 }
 
@@ -628,21 +765,14 @@ void updateClockDisplay() {
   if (millis() - lastClockUpdate < 1000) return;
   lastClockUpdate = millis();
 
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    nexSend("t_time.txt=\"--:--\"");
-    return;
-  }
-
-  char timeText[6];
-  snprintf(timeText, sizeof(timeText), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
-  nexSend("t_time.txt=\"" + String(timeText) + "\"");
+  sendClockDisplayNow();
 }
 
 void updateTempHumi(float tempC, float humi) {
   lastWeatherTempC = tempC;
   lastWeatherHumi = humi;
   hasTempHumiSnapshot = true;
+  setTempFont(TEMP_FONT_NORMAL);
   nexSend("t_temp.txt=\"" + String(tempC, 1) + "C\"");
   nexSend("t_humi.txt=\"" + String(humi, 0) + "%\"");
 }
@@ -697,9 +827,11 @@ void displayWatcherTask(void *pvParameters) {
           prefs.remove("pending_nextion_cmd");
         } else if (cmd == "RE") {
           Serial.println(C_GREEN "\r\n[WiFi] RE 버튼 터치 감지! Wi-Fi 설정 포털을 강제 시작합니다..." C_RESET);
+          prefs.putInt("wifi_return_page", prefs.getInt("wifi_return_page", currentDisplayPage));
           prefs.putBool("force_config_portal", true);
           prefs.putBool("force_offline", false);
           prefs.remove("pending_nextion_cmd");
+          showPage(PAGE_WIFI_RESET);
           WiFiManager wifiManager;
           wifiManager.resetSettings();
           WiFi.disconnect(true, true);
@@ -707,7 +839,7 @@ void displayWatcherTask(void *pvParameters) {
           prefs.putBool("force_offline", true);
           prefs.putString("pending_nextion_cmd", cmd);
         }
-        delay(100);
+        delay(700);
         
         // 블로킹을 강제로 깨기 위해 시스템 즉시 재부팅 (0.5초 컷)
         ESP.restart(); 
@@ -742,6 +874,7 @@ void connectWiFi() {
   bool forceConfigPortal = prefs.getBool("force_config_portal", false);
   if (forceConfigPortal) {
     prefs.putBool("force_config_portal", false);
+    showPage(PAGE_WIFI_RESET);
     WiFi.disconnect(true, true);
     delay(200);
   }
@@ -789,11 +922,15 @@ void connectWiFi() {
     Serial.println(C_YELLOW "\r\n[Warning] Wi-Fi 설정 실패." C_RESET);
   } else {
     Serial.printf("\r\nConnected! IP: %s\r\n", WiFi.localIP().toString().c_str());
-    nexSend("page 0");
-    delay(100);
-    nexSend("t_wifi.txt=\"Connected\"");
-    delay(2000);
-    nexSend("page 0");
+    int returnPage = prefs.getInt("wifi_return_page", PAGE_WEATHER_OFF);
+    prefs.remove("wifi_return_page");
+    if (returnPage == PAGE_WIFI_RESET) returnPage = PAGE_WEATHER_OFF;
+    showPage(returnPage);
+    if (returnPage == PAGE_WEATHER_OFF) {
+      nexSend("t_wifi.txt=\"Connected\"");
+      delay(2000);
+      showPage(returnPage);
+    }
   }
 
   // 와이파이 연결이 무사히 끝났다면 감시자 태스크는 임무를 다했으므로 삭제해줍니다.
@@ -850,10 +987,24 @@ static void processServerResponse(const String& response) {
   JsonDocument doc;
   if (deserializeJson(doc, response)) return; 
 
-  // 1. 날씨 및 지역 정보 업데이트
+  // 1. 발향 강도 및 스피커 볼륨 설정 (명령 실행 전 우선 처리)
+  if (canApplyServerSettings() && !doc["intensity"].isNull()) {
+    SprayIntensity(doc["intensity"] | 2);
+  }
+
+  if (canApplyServerSettings() && !doc["volume"].isNull()) {
+    int vol = doc["volume"] | 5;
+    int scaledVol = (vol <= VOLUME_LEVEL_MAX) ? (vol * 3) : vol;
+    scaledVol = constrain(scaledVol, 0, 30);
+    if (scaledVol != currentVolume) {
+      changeVolume(scaledVol);
+    }
+  }
+
+  // 2. 날씨 및 지역 정보 업데이트
   String weatherText = doc["weather"] | "";
   String targetRegion = doc["target_region"] | "";
-  if (targetRegion.length() == 0 && weatherText.length() > 0) {
+  if (targetRegion.length() == 0 && lastWeatherRegion.length() == 0 && weatherText.length() > 0) {
     targetRegion = doc["region"] | "";
   }
   bool hadSavedRegion = lastWeatherRegion.length() > 0;
@@ -875,7 +1026,7 @@ static void processServerResponse(const String& response) {
     }
   }
 
-  // 2. 온습도 업데이트
+  // 3. 온습도 업데이트
   float tempC = lastWeatherTempC;
   float humi = lastWeatherHumi;
   bool hasTemp = readJsonFloatField(doc, "temp", tempC) || readJsonFloatField(doc, "temperature", tempC);
@@ -886,7 +1037,7 @@ static void processServerResponse(const String& response) {
     updateTempHumi(tempC, humi);
   }
 
-  // 3. 분사 제어 명령 처리
+  // 4. 분사 제어 명령 처리
   int cmd = doc["spray"] | -1;
   if (cmd > 0) {
     int dur = doc["duration"] | 3; 
@@ -894,56 +1045,48 @@ static void processServerResponse(const String& response) {
     String txt = doc["result_text"] | "명령 수신";
     triggerSpray(cmd, dur, music, txt, (currentMode == MODE_WEATHER));
   } else if (cmd == 0) {
-    stopSystem();
-    updateDisplay(0, "Stopped by Server");
+    SystemMode modeBeforeStop = currentMode;
+    setSystemMode(MODE_READY, "Stopped by Server");
+    if (modeBeforeStop == MODE_WEATHER) {
+      hasWeatherSnapshot = false;
+      hasTempHumiSnapshot = false;
+      lastWeatherLabel = "";
+      lastWeatherIconId = 0;
+      showPage(PAGE_WEATHER_OFF);
+    } else {
+      updateDisplay(0, "Stopped by Server");
+    }
     Serial.println(C_YELLOW "\r\n🛑 서버 명령으로 시스템 강제 정지\r\n" C_RESET);
   }
-  // ★ [추가] 분사(spray) 명령 없이 music 단독 명령이 온 경우 처리 ★
   else if (!doc["music"].isNull()) {
     int track = doc["music"] | 0;
     if (track > 0 && track <= 20) {
-      playSound(track); // 스피커로 해당 트랙 즉시 재생
+      playSound(track);
       updateDisplay(0, "Music Playing");
       Serial.printf(C_GREEN "\r\n🎵 서버 단독 명령으로 %d번 오디오 트랙을 재생합니다.\r\n" C_RESET, track);
     }
   }
 
-  // 4. 발향 강도 설정
-  if (!doc["intensity"].isNull()) {
-    SprayIntensity(doc["intensity"] | 2);
-  }
-
-  // ★ [추가] 5. 스피커 볼륨 설정
-  if (!doc["volume"].isNull() && !isRunning && !isSpraying) {
-    int vol = doc["volume"] | 15;
-    int safeVol = constrain(vol, 0, 30);
-    if (safeVol != currentVolume) {
-      changeVolume(safeVol);
-    }
-  }
-
-  // ★ [추가] 6. 타이머(스케줄러) 설정
+  // 5. 타이머(스케줄러) 설정
   if (!doc["timer_enabled"].isNull()) {
     schedulerEnabled = doc["timer_enabled"] | false;
     activeStartHour = doc["timer_start"] | 9;
     activeEndHour = doc["timer_end"] | 22;
   }
 
-  // ★ 7. [기존] 서버 명령으로 LED 색상 및 밝기 실시간 변경 ★
+  // 6. 서버 명령으로 LED 색상 및 밝기 실시간 변경
   if (!doc["led_r"].isNull() && !doc["led_g"].isNull() && !doc["led_b"].isNull()) {
     uint8_t newR = constrain(doc["led_r"] | 255, 0, 255);
     uint8_t newG = constrain(doc["led_g"] | 255, 0, 255);
     uint8_t newB = constrain(doc["led_b"] | 255, 0, 255);
     int newBright = ledBrightness;
     
-    // 밝기 값이 오면 업데이트, 없으면 유지
     if (!doc["led_bright"].isNull()) {
       newBright = constrain(doc["led_bright"] | 150, 0, 255);
     } else if (!doc["led_br"].isNull()) {
       newBright = constrain(doc["led_br"] | 150, 0, 255);
     }
 
-    // 플래시 메모리에 영구 저장 (기기를 껐다 켜도 유지되도록)
     ledR = newR;
     ledG = newG;
     ledB = newB;
