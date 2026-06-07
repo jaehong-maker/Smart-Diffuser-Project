@@ -88,7 +88,7 @@ def handle_core_modes(action, mode, body, device_id, normalized_weights, region)
                 spray_code, result_text, logic_name, duration = 4, "테스트 눈 실행", "Test_Weather", 3
                 context_key = "Weather_Snow"
             else:
-                voice_region = db_utils.get_latest_voice_region()
+                voice_region = db_utils.get_latest_voice_region(device_id)
                 if voice_region in config.REGION_COORDS:
                     region = voice_region
                 elif not body.get("region") and not body.get("data"):
