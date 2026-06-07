@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Link } from "react-router"; 
 import {
   CloudRain,
@@ -95,6 +95,10 @@ export function ModesScreen() {
     isDeviceActionLoading,
     refreshDeviceState,
     dbLevel,
+    dbAvg,
+    dbStdDev,
+    noiseType,
+    dbChange,
     currentScent,
     isDiffuserOn: isOn,
     setIsDiffuserOn: setIsOn,
@@ -123,6 +127,21 @@ export function ModesScreen() {
   const [voiceResult, setVoiceResult] = useState<string | null>(null);
 
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+
+  // 소음 분석 카운트다운 (펌웨어 주기 15초와 대략적 동기화)
+  const [analysisCountdown, setAnalysisCountdown] = useState(15);
+  
+  useEffect(() => {
+    let timer: any;
+    if (isOn && activeMode === "noise") {
+      timer = setInterval(() => {
+        setAnalysisCountdown(prev => (prev <= 1 ? 15 : prev - 1));
+      }, 1000);
+    } else {
+      setAnalysisCountdown(15);
+    }
+    return () => clearInterval(timer);
+  }, [isOn, activeMode]);
 
   // 현재 분사 중인 향기 이름 및 음악 정보 가져오기 (실시간 동기화)
   const { activeScentName, activeMusicName } = React.useMemo(() => {
@@ -483,13 +502,6 @@ export function ModesScreen() {
             <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">
               Smart Diffuser
             </h1>
-            <div className="flex items-center justify-center text-gray-500 dark:text-gray-400">
-              {wifiStrength === "disconnected" ? (
-                <WifiOff className="w-4 h-4 text-red-500" />
-              ) : (
-                <Wifi className={`w-4 h-4 ${wifiStrength === "strong" ? "text-green-500" : wifiStrength === "medium" ? "text-yellow-500" : "text-orange-500"}`} />
-              )}
-            </div>
           </div>
           <p className="text-sm font-medium text-gray-500 dark:text-gray-400 flex items-center gap-1.5 mt-1">
             <span
@@ -579,7 +591,7 @@ export function ModesScreen() {
                       {currentModeData.icon}
                     </div>
                     <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                      {activeMode === "noise" ? `소음 분석 중 (${dbLevel}dB)` : currentModeData.title}
+                      {activeMode === "noise" ? `${noiseType} (${dbLevel}dB)` : currentModeData.title}
                     </span>
                   </>
                 ) : isOn && !activeMode ? (
@@ -676,7 +688,43 @@ export function ModesScreen() {
                   </div>
                 )}
 
-                {isOn && activeMode && activeMode !== "voice" && (
+                {isOn && activeMode && activeMode === "noise" && (
+                  <div className="flex flex-col items-center w-full px-4 mt-2">
+                    <div className="bg-white/40 dark:bg-gray-900/40 backdrop-blur-sm rounded-2xl p-4 border border-white/20 dark:border-gray-800/20 w-full mb-4">
+                      <div className="flex justify-center items-center mb-3 relative">
+                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">실시간 분석 지표</span>
+                        {dbChange !== 0 && (
+                          <span className={`absolute right-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${dbChange > 0 ? "bg-rose-100 text-rose-600" : "bg-blue-100 text-blue-600"}`}>
+                            {dbChange > 0 ? "↑" : "↓"} {Math.abs(dbChange)}dB
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 text-center">
+                        <div className="flex flex-col items-center">
+                          <span className="text-xs text-gray-500 font-medium">평균 소음</span>
+                          <span className="text-2xl font-black text-gray-900 dark:text-white">{dbAvg.toFixed(1)} dB</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <motion.div 
+                      animate={{ opacity: [0.6, 1, 0.6] }}
+                      transition={{ duration: 3, repeat: Infinity }}
+                      className="text-center px-4"
+                    >
+                      <p className="text-sm font-bold text-rose-600 dark:text-rose-400 break-keep max-w-[260px] mx-auto leading-relaxed">
+                        {Math.abs(dbChange) > 5 
+                          ? `주변 소음이 ${dbChange > 0 ? '커졌습니다' : '작아졌습니다'}. 분석 후 ${analysisCountdown}초 내로 향기를 조절합니다.` 
+                          : <>{noiseType} 환경에 맞춘 최적의 향기를<br />유지 중입니다.</>}
+                      </p>
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        {Math.abs(dbChange) > 5 ? "소음 변화 분석 중..." : "안정적인 상태 유지 중"}
+                      </p>
+                    </motion.div>
+                  </div>
+                )}
+
+                {isOn && activeMode && activeMode !== "voice" && activeMode !== "noise" && (
                   <div className="flex flex-wrap justify-center items-center gap-2 sm:gap-3 bg-white/60 dark:bg-gray-900/60 backdrop-blur-md px-4 py-2 sm:px-5 sm:py-2.5 rounded-full border border-gray-200/50 dark:border-gray-700/50 shadow-sm">
                     <div className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200">
                       <Droplets className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-500" />

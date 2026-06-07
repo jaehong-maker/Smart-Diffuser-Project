@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router";
 import { BottomNav } from "./BottomNav";
-import { Home as HomeIcon, Droplets, SlidersHorizontal, Settings, BookHeart, Brain, Sparkles, Search, ChevronDown, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Home as HomeIcon, Droplets, SlidersHorizontal, Settings, BookHeart, Brain, Sparkles, Search, ChevronDown, Quote } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useDiary } from "../store/DiaryContext";
 import { useAuth } from "../store/AuthContext";
@@ -10,14 +10,68 @@ import { useDevice } from "../store/DeviceContext";
 export function DiaryScreen() {
   const { diaries, fetchDiaries } = useDiary();
   const { currentUser } = useAuth();
-  const { sendDeviceData } = useDevice();
+  const { sendDeviceData, scentSlots } = useDevice();
   const [diaryText, setDiaryText] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [result, setResult] = useState<{ emotion: string; scent: string; color: string; tagColor: string; spray?: number } | null>(null);
-  const [feedback, setFeedback] = useState<"like" | "dislike" | null>(null);
+  const [result, setResult] = useState<{ 
+    emotion: string; 
+    scent: string; 
+    color: string; 
+    tagColor: string; 
+    spray?: number; 
+    reason?: string;
+    scentName?: string;
+  } | null>(null);
   
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+
+  // 감정에 따른 시각적 테마 (색상, 그라디언트 등) 반환 함수
+  const getEmotionTheme = (emotion: string) => {
+    const e = (emotion || "편안함").toLowerCase();
+    
+    // 신남/활기 계열 (Orange/Yellow)
+    if (e.includes("신남") || e.includes("행복") || e.includes("즐거움") || e.includes("설렘") || e.includes("뿌듯") || e.includes("활기") || e.includes("기쁨")) {
+      return {
+        color: "from-orange-400/90 to-yellow-300/90 dark:from-orange-600/80 dark:to-yellow-500/80 text-white shadow-orange-200/50",
+        tagColor: "bg-white/20 text-white backdrop-blur-sm border-white/30"
+      };
+    }
+    // 화남/짜증 계열 (Blue/Slate - 차분하게 가라앉히는 컨셉)
+    if (e.includes("화남") || e.includes("짜증") || e.includes("답답") || e.includes("분노") || e.includes("스트레스")) {
+       return {
+        color: "from-blue-500/90 to-indigo-400/90 dark:from-blue-700/80 dark:to-indigo-600/80 text-white shadow-blue-200/50",
+        tagColor: "bg-white/20 text-white backdrop-blur-sm border-white/30"
+      };
+    }
+    // 슬픔/지침 계열 (Pink/Rose - 따뜻하게 감싸주는 컨셉)
+    if (e.includes("슬픔") || e.includes("우울") || e.includes("외로움") || e.includes("지침") || e.includes("힘듦") || e.includes("피곤") || e.includes("고단")) {
+      return {
+        color: "from-rose-400/90 to-pink-300/90 dark:from-rose-600/80 dark:to-pink-500/80 text-white shadow-rose-200/50",
+        tagColor: "bg-white/20 text-white backdrop-blur-sm border-white/30"
+      };
+    }
+    // 편안함/평온/기본 계열 (Violet/Indigo)
+    return {
+      color: "from-violet-500/90 to-purple-400/90 dark:from-violet-700/80 dark:to-purple-600/80 text-white shadow-purple-200/50",
+      tagColor: "bg-white/20 text-white backdrop-blur-sm border-white/30"
+    };
+  };
+
+  // 향기 번호에 따른 실제 이름 찾기
+  const getActualScentName = (sprayCode: number | undefined) => {
+    if (!sprayCode) return "";
+    // 블렌딩 코드인 경우 (예: 12)
+    if (sprayCode > 10 && sprayCode < 90) {
+      const first = Math.floor(sprayCode / 10);
+      const second = sprayCode % 10;
+      const name1 = scentSlots.find(s => s.id === first)?.name || "향기1";
+      const name2 = scentSlots.find(s => s.id === second)?.name || "향기2";
+      return `${name1} & ${name2}`;
+    }
+    const slot = scentSlots.find(s => s.id === sprayCode);
+    return slot ? slot.name : "";
+  };
 
   // 화면 진입 시 서버에서 일기 내역 가져오기
   useEffect(() => {
@@ -29,24 +83,6 @@ export function DiaryScreen() {
   const history = currentUser && diaries[currentUser.email] ? diaries[currentUser.email] : [];
   const uniqueDates = Array.from(new Set(history.map(item => item.date)));
 
-  const handleFeedback = async (type: "like" | "dislike") => {
-    if (!result || !currentUser) return;
-    setFeedback(type);
-    
-    // 백엔드 FEEDBACK 액션 형식에 맞게 데이터 준비
-    // value: 1 (좋아요), -1 (별로예요)
-    const val = type === "like" ? 1 : -1;
-    const context = `Emotion_${result.emotion}`;
-    const sprayNo = result.spray || 1;
-    
-    try {
-      await sendDeviceData("FEEDBACK", val, `${sprayNo}_${context}`);
-      alert("피드백이 반영되었습니다. 감사합니다!");
-    } catch (err) {
-      console.error("Feedback failed", err);
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!diaryText.trim() || !currentUser) return;
@@ -56,36 +92,27 @@ export function DiaryScreen() {
 
     try {
       // 인자: action, value, region(emotion tag), diaryText
-      // 태그는 AI가 서버에서 직접 생성하므로 placeholder 전달
       const res = await sendDeviceData("AI_EMOTION", 0, "분석중", diaryText);
 
       if (res.success) {
-        // AI 분석 결과 설정 (서버 응답 활용)
-        const mockResults: Record<string, any> = {
-          "신남": { emotion: "신남", scent: "상쾌한 시트러스", color: "from-orange-100 to-yellow-50 dark:from-orange-900/40 dark:to-yellow-900/20 text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-800", tagColor: "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400" },
-          "편안함": { emotion: "편안함", scent: "라벤더 & 센달우드", color: "from-violet-100 to-fuchsia-50 dark:from-violet-900/40 dark:to-fuchsia-900/20 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800", tagColor: "bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400" },
-          "화남": { emotion: "화남", scent: "차분한 우디", color: "from-blue-100 to-slate-50 dark:from-blue-900/40 dark:to-slate-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800", tagColor: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400" },
-          "슬픔": { emotion: "슬픔", scent: "따뜻한 머스크", color: "from-pink-100 to-rose-50 dark:from-pink-900/40 dark:to-rose-900/20 text-pink-700 dark:text-pink-300 border-pink-200 dark:border-pink-800", tagColor: "bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-400" },
-        };
-
-        // 서버에서 반환한 context(Emotion_태그) 또는 별도의 emotion_summary 등에서 태그 추출
-        // res.context 형태: "Emotion_신남"
-        let detectedEmotion = (res.context || "").replace("Emotion_", "").trim() || "편안함";
-        
-        // 만약 서버에서 "분석중"이라는 태그를 잘못 반환했다면 기본값으로 대체
+        // 서버에서 반환한 emotion_tag를 최우선으로 사용, 없으면 context에서 추출
+        let detectedEmotion = res.emotion_tag || (res.context || "").replace("Emotion_", "").trim() || "편안함";
         if (detectedEmotion === "분석중") detectedEmotion = "편안함";
         
-        const resultData = mockResults[detectedEmotion] || mockResults["편안함"];
+        // 동적 테마 적용
+        const theme = getEmotionTheme(detectedEmotion);
+        const actualScentName = getActualScentName(res.spray);
 
         setResult({
-          ...resultData,
-          scentName: resultData.scent, // 원래 향기 이름 보존
-          reason: res.message || `${resultData.emotion} 감정에 어울리는 특별한 향기를 준비했어요.`, // 분석 이유
-          spray: res.spray
+          emotion: detectedEmotion,
+          scent: res.emotion_summary || "당신만을 위한 추천 향기", // 요약 메시지 활용
+          reason: res.result_text || res.message || `${detectedEmotion} 감정에 어울리는 특별한 향기를 준비했어요.`,
+          spray: res.spray,
+          scentName: actualScentName,
+          ...theme
         });
-        setFeedback(null); // 새로운 결과가 나오면 피드백 초기화
 
-        // ★ 핵심: 서버에 저장된 최신 내역을 즉시 다시 불러오기 (DB 동기화)
+        // 서버에 저장된 최신 내역을 즉시 다시 불러오기
         if (currentUser?.email) {
           await fetchDiaries(currentUser.email);
         }
@@ -102,14 +129,18 @@ export function DiaryScreen() {
     }
   };
 
-  const getEmotionColor = (emotion: string) => {
-    const colors: Record<string, string> = {
-      "신남": "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400",
-      "편안함": "bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400",
-      "화남": "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400",
-      "슬픔": "bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-400",
-    };
-    return colors[emotion] || "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400";
+  const getHistoryEmotionColor = (emotion: string) => {
+    const e = (emotion || "편안함").toLowerCase();
+    if (e.includes("신남") || e.includes("행복") || e.includes("즐거움") || e.includes("설렘") || e.includes("뿌듯") || e.includes("활기") || e.includes("기쁨")) {
+      return "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400";
+    }
+    if (e.includes("화남") || e.includes("짜증") || e.includes("답답") || e.includes("분노") || e.includes("스트레스")) {
+      return "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400";
+    }
+    if (e.includes("슬픔") || e.includes("우울") || e.includes("외로움") || e.includes("지침") || e.includes("힘듦") || e.includes("피곤") || e.includes("고단")) {
+      return "bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-400";
+    }
+    return "bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400";
   };
 
   return (
@@ -167,50 +198,66 @@ export function DiaryScreen() {
         <AnimatePresence>
           {result && (
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: -10 }}
-              className={`bg-gradient-to-br ${result.color} rounded-[2.5rem] p-8 shadow-xl border-none relative overflow-hidden transition-colors duration-300`}
+              exit={{ opacity: 0, scale: 0.95, y: -15 }}
+              className={`bg-gradient-to-br ${result.color} rounded-[2.5rem] p-8 shadow-2xl border-none relative overflow-hidden transition-all duration-500`}
             >
-              <div className="absolute right-[-10%] top-[-10%] w-48 h-48 bg-white/20 dark:bg-black/10 rounded-full blur-3xl -z-10" />
+              {/* 장식용 배경 요소 */}
+              <div className="absolute right-[-5%] top-[-10%] w-56 h-56 bg-white/20 rounded-full blur-3xl -z-10" />
+              <div className="absolute left-[-5%] bottom-[-10%] w-40 h-40 bg-black/5 rounded-full blur-2xl -z-10" />
               
-              <div className="flex flex-col gap-6 relative z-10">
+              <div className="flex flex-col gap-8 relative z-10">
                 <div className="flex justify-between items-start">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">AI Emotion Analysis</span>
-                    <h3 className="text-3xl font-black tracking-tighter">
-                      {result.emotion}
-                    </h3>
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="w-1 h-1 bg-white rounded-full animate-pulse" />
+                      <span className="text-[10px] font-black uppercase tracking-[0.25em] opacity-80">AI HEART REPORT</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <h3 className="text-4xl font-black tracking-tighter text-white">
+                        {result.emotion}
+                      </h3>
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-black border ${result.tagColor}`}>
+                        분석 완료
+                      </span>
+                    </div>
                   </div>
-                  <div className="bg-white/30 dark:bg-black/20 backdrop-blur-md p-3 rounded-2xl">
-                    <Brain className="w-6 h-6" />
+                  <div className="bg-white/20 backdrop-blur-xl p-4 rounded-[1.5rem] border border-white/30 shadow-lg">
+                    <Sparkles className="w-7 h-7 text-white" />
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60 italic">Recommended Scent</span>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-xl font-bold tracking-tight">{result.scent}</span>
+                <div className="bg-white/10 backdrop-blur-md rounded-3xl p-6 border border-white/20">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Quote className="w-4 h-4 text-white opacity-60 fill-current" />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-white opacity-80">Insight</span>
                   </div>
+                  <p className="text-sm font-semibold leading-relaxed text-white opacity-95">
+                    {result.reason}
+                  </p>
                 </div>
 
-                <div className="flex items-center gap-3 pt-2 border-t border-white/20 dark:border-black/10">
-                  <button
-                    onClick={() => handleFeedback("like")}
-                    disabled={feedback !== null}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl text-[11px] font-black transition-all ${feedback === "like" ? "bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-lg scale-[1.02]" : "bg-white/20 hover:bg-white/30 text-white backdrop-blur-sm"}`}
-                  >
-                    <ThumbsUp className={`w-3.5 h-3.5 ${feedback === "like" ? "fill-current" : ""}`} />
-                    <span className="whitespace-nowrap">좋아요</span>
-                  </button>
-                  <button
-                    onClick={() => handleFeedback("dislike")}
-                    disabled={feedback !== null}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl text-[11px] font-black transition-all ${feedback === "dislike" ? "bg-black/40 dark:bg-gray-800 text-white shadow-lg scale-[1.02]" : "bg-black/10 hover:bg-black/20 text-white backdrop-blur-sm"}`}
-                  >
-                    <ThumbsDown className={`w-3.5 h-3.5 ${feedback === "dislike" ? "fill-current" : ""}`} />
-                    <span className="whitespace-nowrap">별로예요</span>
-                  </button>
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-0.5 bg-white opacity-40 rounded-full" />
+                      <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white opacity-70">Recommend Scent</span>
+                    </div>
+                    <div className="flex items-center justify-between mt-1">
+                      <div className="flex flex-col">
+                        <span className="text-2xl font-black tracking-tight text-white drop-shadow-sm">
+                          {result.scentName || "맞춤 향기"}
+                        </span>
+                        <span className="text-[10px] font-bold text-white opacity-60 mt-0.5">
+                          {result.scent}
+                        </span>
+                      </div>
+                      <div className="w-12 h-12 rounded-full bg-white/30 flex items-center justify-center border border-white/40 shadow-inner">
+                        <Droplets className="w-6 h-6 text-white" />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -288,8 +335,10 @@ export function DiaryScreen() {
             {history
               .filter((item) => !selectedDate || item.date === selectedDate)
               .map((item) => {
-                // 만약 emotion이 "분석중"이라면 "편안함" 등으로 표시하거나 보정
-                const displayEmotion = item.emotion === "분석중" ? "분석 완료" : item.emotion;
+                let displayEmotion = item.emotion;
+                if (!displayEmotion || displayEmotion === "분석중" || displayEmotion === "분석 완료") {
+                  displayEmotion = "편안함";
+                }
                 
                 return (
                   <div 
@@ -302,7 +351,7 @@ export function DiaryScreen() {
                           {item.date}
                         </span>
                         <div className="flex items-center gap-2 mt-1">
-                          <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold shadow-sm ${item.color || getEmotionColor(displayEmotion)}`}>
+                          <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold shadow-sm ${getHistoryEmotionColor(displayEmotion)}`}>
                             {displayEmotion}
                           </span>
                         </div>

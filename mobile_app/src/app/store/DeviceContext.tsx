@@ -29,18 +29,19 @@ interface DeviceContextType {
   currentScent: string;
   isDiffuserOn: boolean;
   setIsDiffuserOn: (val: boolean) => void;
+  ledColor: string;
+  ledBrightness: number;
+  isLedOn: boolean;
   activeMode: "manual" | "weather" | "voice" | "ai" | "noise" | null;
   setActiveMode: (mode: "manual" | "weather" | "voice" | "ai" | "noise" | null) => void;
   isDeviceActionLoading: boolean;
-  sendDeviceData: (action: string, value: number, region?: string, diaryText?: string) => Promise<{ 
-    success: boolean; 
-    message: string; 
-    spray?: number;
-    temp?: string;
-    weather?: string;
-  }>;
+  sendDeviceData: (action: string, value: number, region?: string, diaryText?: string, ledData?: { r: number, g: number, b: number, br: number }) => Promise<any>;
   calibrateWeight: () => Promise<boolean>;
   dbLevel: number;
+  dbAvg: number;
+  dbStdDev: number;
+  noiseType: string;
+  dbChange: number;
 }
 
 const DeviceContext = createContext<DeviceContextType | undefined>(undefined);
@@ -53,7 +54,7 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     { id: 3, name: "오션 브리즈", color: "bg-blue-500", remaining: 0, weightGrams: 0 },
     { id: 4, name: "화이트 머스크", color: "bg-gray-400", remaining: 0, weightGrams: 0 },
   ]);
-  const [wifiStrength, setWifiStrength] = useState<"strong" | "medium" | "weak" | "disconnected">("strong");
+  const [wifiStrength, setWifiStrength] = useState<"strong" | "medium" | "weak" | "disconnected">("disconnected");
   const [volume, setVolume] = useState<number>(5);
   const [intensity, setIntensity] = useState<number>(2);
   const [activeTimerMinutes, setActiveTimerMinutes] = useState<number | null>(null);
@@ -64,25 +65,31 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   
   const [currentScent, setCurrentScent] = useState<string>("1");
   const [isDiffuserOn, setIsDiffuserOn] = useState<boolean>(false);
+  const [ledColor, setLedColor] = useState<string>("#FBBF24");
+  const [ledBrightness, setLedBrightness] = useState<number>(80);
+  const [isLedOn, setIsLedOn] = useState<boolean>(false);
   const [activeMode, setActiveMode] = useState<"manual" | "weather" | "voice" | "ai" | "noise" | null>(null);
 
   const [isDeviceActionLoading, setIsDeviceActionLoading] = useState(false);
   const [dbLevel, setDbLevel] = useState<number>(0);
+  const [dbAvg, setDbAvg] = useState<number>(0);
+  const [dbStdDev, setDbStdDev] = useState<number>(0);
+  const [noiseType, setNoiseType] = useState<string>("분석 전");
+  const [dbChange, setDbChange] = useState<number>(0);
   
-  const lastSentVolumeRef = useRef<number>(5);
-  const volumeDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const lastIntensityUpdateTimeRef = useRef<number>(0);
+  const lastVolumeUpdateTimeRef = useRef<number>(0);
+  const lastLedUpdateTimeRef = useRef<number>(0);
+  const lastDbLevelRef = useRef<number>(0);
 
-  // 볼륨 변경 시 서버 전송 (하드웨어 제어: 앱은 0~10 사용, 서버 및 펌웨어에서 스케일링)
-  const syncVolumeWithHardware = (newVol: number) => {
+  const handleVolumeChange = (newVol: number) => {
     const rounded = Math.max(0, Math.min(10, Math.round(newVol)));
     setVolume(rounded);
+    lastVolumeUpdateTimeRef.current = Date.now();
 
-    if (volumeDebounceRef.current) clearTimeout(volumeDebounceRef.current);
-    volumeDebounceRef.current = setTimeout(() => {
-      if (currentUser && lastSentVolumeRef.current !== rounded) {
+    // 디바운스 로직은 컴포넌트나 여기서 직접 처리 (여기서는 즉시 UI 반영 후 서버 전송)
+    if (currentUser) {
         const dId = currentUser.deviceId || "ESP32_Test";
-        console.log(`[Volume] Syncing with Hardware: ${rounded}/10`);
         apiSendData({
           email: currentUser.email,
           action: "SET_VOLUME",
@@ -90,13 +97,7 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           region: currentUser.region || "서울",
           deviceId: dId
         });
-        lastSentVolumeRef.current = rounded;
-      }
-    }, 200);
-  };
-
-  const handleVolumeChange = (newVol: number) => {
-    syncVolumeWithHardware(newVol);
+    }
   };
 
   const handleIntensityChange = async (newLevel: number) => {
@@ -106,17 +107,13 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsDeviceActionLoading(true);
       try {
         const dId = currentUser.deviceId || "ESP32_Test";
-        const res = await apiSendData({
+        await apiSendData({
           email: currentUser.email,
           action: "SET_INTENSITY",
           value: newLevel, 
           region: currentUser.region || "서울",
           deviceId: dId
         });
-
-        if (res.result === "SUCCESS" || res.result_text === "OK") {
-           // 성공 시 별도 처리 불필요 (UI는 이미 반영됨)
-        }
       } finally {
         setIsDeviceActionLoading(false);
       }
@@ -132,7 +129,6 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsDeviceActionLoading(true);
       try {
         const dId = currentUser.deviceId || "ESP32_Test";
-        // 서버의 SET_INTENSITY 핸들러가 타이머 설정도 같이 처리하도록 구현됨
         await apiSendData({
           email: currentUser.email,
           action: "SET_INTENSITY",
@@ -175,7 +171,24 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const dId = currentUser.deviceId || "ESP32_Test";
       const response = await apiPollDeviceState(currentUser.email, dId) as any;
       
-      console.log("[refreshDeviceState] API Response:", response);
+      // Wi-Fi 상태 업데이트 (마지막 접속 시간 기준)
+      if (response.last_seen) {
+        const lastSeen = new Date(response.last_seen);
+        const now = new Date();
+        const diffInSeconds = (now.getTime() - lastSeen.getTime()) / 1000;
+        
+        if (diffInSeconds < 20) {
+          setWifiStrength("strong");
+        } else if (diffInSeconds < 60) {
+          setWifiStrength("medium");
+        } else if (diffInSeconds < 180) {
+          setWifiStrength("weak");
+        } else {
+          setWifiStrength("disconnected");
+        }
+      } else {
+        setWifiStrength("disconnected");
+      }
 
       // 무게 업데이트
       if (response.weights && Array.isArray(response.weights)) {
@@ -192,15 +205,14 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }));
       }
 
-      // 강도 업데이트
+      // 강도 업데이트 (사용자가 조작 중이 아닐 때만)
       if (response.intensity !== undefined && (Date.now() - lastIntensityUpdateTimeRef.current > 5000)) {
         setIntensity(response.intensity);
       }
 
-      // 볼륨 업데이트
-      if (response.volume !== undefined) {
+      // 볼륨 업데이트 (기기 본체에서 조작한 값이 있으면 반영, 앱 조작 중에는 대기)
+      if (response.volume !== undefined && (Date.now() - lastVolumeUpdateTimeRef.current > 5000)) {
         setVolume(response.volume);
-        lastSentVolumeRef.current = response.volume;
       }
 
       // 타이머 설정 업데이트
@@ -209,53 +221,77 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (response.timer_end !== undefined) setTimerEnd(response.timer_end);
 
       // 소음 레벨 업데이트
-      if (response.db_level !== undefined) setDbLevel(response.db_level);
+      if (response.db_level !== undefined) {
+        setDbChange(response.db_level - lastDbLevelRef.current);
+        setDbLevel(response.db_level);
+        lastDbLevelRef.current = response.db_level;
+      }
+      if (response.db_avg !== undefined) setDbAvg(response.db_avg);
+      if (response.db_stddev !== undefined) setDbStdDev(response.db_stddev);
+      if (response.noise_type !== undefined) setNoiseType(response.noise_type);
+      else if (response.db_stddev !== undefined) {
+        setNoiseType(response.db_stddev > 8.0 ? "불규칙적(대화/활동)" : "안정적(음악/정적)");
+      }
 
-      // 현재 향기 정보 및 자동 켜짐 상태 동기화
+      // LED 상태 업데이트 (RGB 및 밝기) - 앱 조작 중에는 대기
+      if (response.led_br !== undefined && (Date.now() - lastLedUpdateTimeRef.current > 5000)) {
+        const brValueRaw = response.led_br;
+        const brPercent = Math.round((brValueRaw / 255) * 100);
+        
+        // 밝기가 0이면 OFF, 그 이상이면 ON으로 정확히 판별
+        setIsLedOn(brValueRaw > 0);
+        
+        // 조명이 켜져 있을 때만 밝기와 색상을 업데이트하여 '꺼졌을 때 검정색으로 변하는 현상' 방지
+        if (brValueRaw > 0) {
+            setLedBrightness(brPercent);
+            
+            if (response.led_r !== undefined && response.led_g !== undefined && response.led_b !== undefined) {
+              const hex = `#${response.led_r.toString(16).padStart(2, '0')}${response.led_g.toString(16).padStart(2, '0')}${response.led_b.toString(16).padStart(2, '0')}`;
+              // 검정색(0,0,0)이 아닐 때만 색상 업데이트 (꺼진 상태의 더미 데이터 무시)
+              if (hex !== "#000000") {
+                setLedColor(hex.toUpperCase());
+              }
+            }
+        }
+      }
+
+      // 현재 향기 정보 및 자동켜짐 상태 동기화
       if (response.spray !== undefined && response.spray > 0 && response.spray !== 90) {
         setCurrentScent(String(response.spray));
-        setIsDiffuserOn(true); // 서버에서 동작 중이면 앱에서도 켜짐으로 표시
+        setIsDiffuserOn(true);
       }
     } catch (err) {
       console.error("Failed to refresh device state", err);
     }
   }, [currentUser]);
 
-  const sendDeviceData = React.useCallback(async (action: string, value: number, region?: string, diaryText?: string) => {
+  const sendDeviceData = React.useCallback(async (action: string, value: number, region?: string, diaryText?: string, ledData?: { r: number, g: number, b: number, br: number }) => {
     if (!currentUser) return { success: false, message: "로그인이 필요합니다." };
     
-    const isFeedback = action === "FEEDBACK";
-    const targetRegion = isFeedback ? (currentUser.region || "서울") : (region || currentUser.region || "서울");
-    const dataPayload = isFeedback ? region : undefined;
-    
+    // 조작 시간 기록
+    if (action === "SET_LED") lastLedUpdateTimeRef.current = Date.now();
+    if (action === "SET_VOLUME") lastVolumeUpdateTimeRef.current = Date.now();
+
     const dId = currentUser.deviceId || "ESP32_Test";
-    
     const response = await apiSendData({
       email: currentUser.email,
       action,
       value,
-      region: targetRegion,
+      region: region || currentUser.region || "서울",
       deviceId: dId,
       diaryText,
-      dataPayload: dataPayload
+      ledData
     });
 
     if (response.result === "SUCCESS" || response.result_text || response.spray !== undefined) {
-      if (response.spray !== undefined && response.spray > 0 && response.spray !== 90) {
-        setCurrentScent(String(response.spray));
-      } else if (action === "MANUAL") {
-        setCurrentScent(String(value));
-      }
       setTimeout(() => refreshDeviceState(), 500);
       return { 
+        ...response,
         success: true, 
         message: response.result_text || response.message || "명령 전송 완료",
-        spray: response.spray,
-        temp: response.temp,
-        weather: response.weather
       };
     }
-    return { success: false, message: response.message || "명령 전송 실패" };
+    return { ...response, success: false, message: response.message || "명령 전송 실패" };
   }, [currentUser, refreshDeviceState]);
 
   const updateScentSlot = (id: number, slot: Partial<ScentSlot>) => {
@@ -265,7 +301,7 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     if (currentUser) {
       refreshDeviceState();
-      const interval = setInterval(refreshDeviceState, 3000);
+      const interval = setInterval(refreshDeviceState, 15000);
       return () => clearInterval(interval);
     }
   }, [currentUser?.email]);
@@ -280,11 +316,17 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       intensity, handleIntensityChange,
       activeTimerMinutes, handleTimerChange,
       timerEnabled, timerStart, timerEnd, updateTimerSettings,
-      currentScent, isDiffuserOn, setIsDiffuserOn, activeMode, setActiveMode,
+      currentScent, isDiffuserOn, setIsDiffuserOn, 
+      ledColor, ledBrightness, isLedOn,
+      activeMode, setActiveMode,
       isDeviceActionLoading,
       sendDeviceData,
       calibrateWeight,
-      dbLevel
+      dbLevel,
+      dbAvg,
+      dbStdDev,
+      noiseType,
+      dbChange
     }}>
       {children}
     </DeviceContext.Provider>

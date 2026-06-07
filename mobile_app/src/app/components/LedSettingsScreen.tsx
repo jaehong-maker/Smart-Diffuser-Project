@@ -4,7 +4,6 @@ import { Lightbulb, Power, SlidersHorizontal, RefreshCw } from "lucide-react";
 import { BottomNav } from "./BottomNav";
 import { useDevice } from "../store/DeviceContext";
 import { useAuth } from "../store/AuthContext";
-import { apiSendData } from "../utils/api";
 
 // Hex to RGB 변환 유틸리티
 function hexToRgb(hex: string) {
@@ -18,6 +17,9 @@ function hexToRgb(hex: string) {
 
 // HSL to Hex 변환 유틸리티 함수
 function hslToHex(h: number, s: number, l: number) {
+  h = Math.round(h);
+  s = Math.round(s);
+  l = Math.round(l);
   l /= 100;
   const a = s * Math.min(l, 1 - l) / 100;
   const f = (n: number) => {
@@ -34,9 +36,10 @@ interface ColorWheelProps {
   setThumbPos: (pos: { x: number, y: number }) => void;
   onChange: (hex: string) => void;
   disabled: boolean;
+  onInteractionStart: () => void;
 }
 
-function ColorWheel({ color, thumbPos, setThumbPos, onChange, disabled }: ColorWheelProps) {
+function ColorWheel({ color, thumbPos, setThumbPos, onChange, disabled, onInteractionStart }: ColorWheelProps) {
   const wheelRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -100,6 +103,7 @@ function ColorWheel({ color, thumbPos, setThumbPos, onChange, disabled }: ColorW
       }}
       onPointerDown={(e) => {
         if (!disabled) {
+          onInteractionStart();
           setIsDragging(true);
           (e.target as HTMLElement).setPointerCapture(e.pointerId);
           updateColor(e);
@@ -128,11 +132,25 @@ function ColorWheel({ color, thumbPos, setThumbPos, onChange, disabled }: ColorW
 
 export function LedSettingsScreen() {
   const { currentUser } = useAuth();
-  const [isOn, setIsOn] = useState(true);
+  const { isLedOn, ledColor, ledBrightness, sendDeviceData } = useDevice();
+  
+  const [isOn, setIsOn] = useState(false);
   const [color, setColor] = useState("#FBBF24");
   const [brightness, setBrightness] = useState(80);
   const [thumbPos, setThumbPos] = useState({ x: 75, y: 25 });
+  
   const [isSyncing, setIsSyncing] = useState(false);
+  const isInteractingRef = useRef(false);
+  const lastInteractionTimeRef = useRef(0);
+
+  // 서버 상태가 변경되면 로컬 UI에 반영 (사용자가 조작 중이 아닐 때만)
+  useEffect(() => {
+    if (Date.now() - lastInteractionTimeRef.current > 5000) {
+      if (isLedOn !== isOn) setIsOn(isLedOn);
+      if (ledColor && ledColor !== color) setColor(ledColor);
+      if (ledBrightness !== undefined && ledBrightness !== brightness) setBrightness(ledBrightness);
+    }
+  }, [isLedOn, ledColor, ledBrightness]);
 
   const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -142,25 +160,25 @@ export function LedSettingsScreen() {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     
     syncTimerRef.current = setTimeout(async () => {
-      setIsSyncing(true);
-      try {
-        const dId = currentUser.deviceId || "ESP32_Test";
-        const targetBr = powerOn ? Math.round((br / 100) * 255) : 0;
-        
-        await apiSendData({
-          email: currentUser.email,
-          action: "SET_LED",
-          value: 0,
-          region: currentUser.region || "서울",
-          deviceId: dId,
-          ledData: { r, g, b, br: targetBr }
-        });
-      } catch (err) {
-        console.error("LED Sync Error:", err);
-      } finally {
-        setIsSyncing(false);
+      // 사용자가 조작했을 때만 서버로 전송
+      if (isInteractingRef.current) {
+        setIsSyncing(true);
+        try {
+          const targetBr = powerOn ? Math.round((br / 100) * 255) : 0;
+          await sendDeviceData("SET_LED", 0, undefined, undefined, { r, g, b, br: targetBr });
+        } catch (err) {
+          console.error("LED Sync Error:", err);
+        } finally {
+          setIsSyncing(false);
+          isInteractingRef.current = false;
+        }
       }
     }, 300);
+  };
+
+  const markInteraction = () => {
+    isInteractingRef.current = true;
+    lastInteractionTimeRef.current = Date.now();
   };
 
   useEffect(() => {
@@ -170,10 +188,6 @@ export function LedSettingsScreen() {
 
   return (
     <div key="led-screen" className="flex-1 flex flex-col bg-white dark:bg-gray-950 overflow-x-hidden relative pb-24 min-h-screen transition-colors duration-500">
-      {/* 
-          [개선] 조명이 꺼졌을 때 어두운 회색/검정 대신 
-          투명하고 깨끗한 무색 배경을 사용하여 훨씬 깔끔해 보입니다.
-      */}
       <div className="absolute top-0 left-0 right-0 h-[45vh] pointer-events-none overflow-hidden">
         <motion.div 
           animate={{ 
@@ -193,7 +207,7 @@ export function LedSettingsScreen() {
         <div className="flex items-center gap-3">
           {isSyncing && <RefreshCw className="w-3 h-3 animate-spin text-gray-400" />}
           <button
-            onClick={() => setIsOn(!isOn)}
+            onClick={() => { markInteraction(); setIsOn(!isOn); }}
             className={`w-11 h-11 rounded-full flex items-center justify-center transition-all shadow-lg border ${
               isOn 
                 ? "bg-white text-gray-900 border-white" 
@@ -227,7 +241,7 @@ export function LedSettingsScreen() {
           <motion.div 
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            onClick={() => setIsOn(!isOn)}
+            onClick={() => { markInteraction(); setIsOn(!isOn); }}
             className={`relative z-10 w-28 h-28 rounded-full flex items-center justify-center cursor-pointer transition-all duration-700 shadow-2xl ${
               isOn 
                 ? "border-[0.5px] border-white/40" 
@@ -245,7 +259,7 @@ export function LedSettingsScreen() {
 
           <div className="mt-12 flex bg-gray-100/80 dark:bg-gray-900/80 backdrop-blur-md p-1 rounded-2xl w-40 shadow-inner z-10 relative border border-gray-200/50 dark:border-gray-800/50">
             <button
-              onClick={() => setIsOn(true)}
+              onClick={() => { markInteraction(); setIsOn(true); }}
               className={`flex-1 py-2.5 rounded-xl text-[10px] font-black tracking-widest transition-all duration-300 ${
                 isOn 
                   ? "bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-md" 
@@ -255,7 +269,7 @@ export function LedSettingsScreen() {
               ON
             </button>
             <button
-              onClick={() => setIsOn(false)}
+              onClick={() => { markInteraction(); setIsOn(false); }}
               className={`flex-1 py-2.5 rounded-xl text-[10px] font-black tracking-widest transition-all duration-300 ${
                 !isOn 
                   ? "bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-md" 
@@ -285,8 +299,9 @@ export function LedSettingsScreen() {
               color={color}
               thumbPos={thumbPos}
               setThumbPos={setThumbPos}
-              onChange={setColor}
+              onChange={(newColor) => { markInteraction(); setColor(newColor); }}
               disabled={!isOn}
+              onInteractionStart={markInteraction}
             />
           </div>
 
@@ -311,7 +326,8 @@ export function LedSettingsScreen() {
                   min="0"
                   max="100"
                   value={brightness}
-                  onChange={(e) => setBrightness(Number(e.target.value))}
+                  onPointerDown={markInteraction}
+                  onChange={(e) => { markInteraction(); setBrightness(Number(e.target.value)); }}
                   disabled={!isOn}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed z-10"
                 />

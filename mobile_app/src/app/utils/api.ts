@@ -21,6 +21,9 @@ export interface ApiResponse {
   timer_enabled?: boolean;
   timer_start?: number;
   timer_end?: number;
+  last_seen?: string;
+  emotion_tag?: string;
+  context?: string;
 }
 
 /**

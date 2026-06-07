@@ -23,7 +23,7 @@ import { useAuth } from "../store/AuthContext";
 export function DeviceManagementScreen() {
   const navigate = useNavigate();
   const { currentUser, updateUser } = useAuth();
-  const { wifiStrength } = useDevice();
+  const { wifiStrength, sendDeviceData } = useDevice();
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateSuccess, setUpdateSuccess] = useState(false);
   
@@ -34,10 +34,26 @@ export function DeviceManagementScreen() {
     strong: "강함",
     medium: "양호",
     weak: "약함",
-    disconnected: "연결 없음"
+    disconnected: "연결 끊김"
   };
 
   const wifiSignal = wifiSignalMap[wifiStrength];
+
+  const handleWifiReset = async () => {
+    if (!window.confirm("기기의 Wi-Fi 설정을 초기화하고 재부팅하시겠습니까?")) return;
+    
+    try {
+      const res = await sendDeviceData("WIFI_RESET", 0);
+      if (res.success) {
+        alert("기기에 Wi-Fi 초기화 명령을 보냈습니다. 기기가 재부팅되면 Wi-Fi 설정 모드로 진입합니다.");
+      } else {
+        alert("명령 전송 실패: " + res.message);
+      }
+    } catch (err) {
+      console.error("WiFi Reset Error:", err);
+      alert("통신 중 오류가 발생했습니다.");
+    }
+  };
 
   const handleUpdate = () => {
     setIsUpdating(true);
@@ -91,7 +107,7 @@ export function DeviceManagementScreen() {
               <motion.div 
                 animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0, 0.5] }} 
                 transition={{ repeat: Infinity, duration: 2 }}
-                className="absolute inset-0 bg-blue-400 rounded-full z-0" 
+                className="absolute inset-0 bg-green-400 rounded-full z-0" 
               />
             )}
             <div className={`absolute -bottom-1 -right-1 w-8 h-8 ${wifiStrength === "disconnected" ? "bg-red-500" : "bg-green-500"} rounded-full border-4 border-white dark:border-gray-900 flex items-center justify-center z-20`}>
@@ -125,13 +141,13 @@ export function DeviceManagementScreen() {
           </div>
 
           <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mt-3">
-            {wifiStrength === "disconnected" ? "네트워크 연결 끊김" : "네트워크 연결됨 (홈 Wi-Fi)"}
+            {wifiStrength === "disconnected" ? "네트워크 연결 끊김" : "네트워크 연결됨 (클라우드)"}
           </p>
           
           <div className="flex items-center gap-6 mt-6 w-full justify-center">
             <div className="flex flex-col items-center gap-1 group transition-transform hover:scale-105 active:scale-95">
               <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                wifiStrength === "strong" ? "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400" :
+                wifiStrength === "strong" ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400" :
                 wifiStrength === "medium" ? "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400" :
                 wifiStrength === "weak" ? "bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400" :
                 "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400"
@@ -139,7 +155,7 @@ export function DeviceManagementScreen() {
                 <Wifi className={`w-5 h-5 ${wifiStrength === "disconnected" ? "opacity-50" : ""}`} />
               </div>
               <span className={`text-xs font-bold ${
-                wifiStrength === "strong" ? "text-blue-600 dark:text-blue-400" :
+                wifiStrength === "strong" ? "text-green-600 dark:text-green-400" :
                 wifiStrength === "medium" ? "text-yellow-600 dark:text-yellow-400" :
                 wifiStrength === "weak" ? "text-orange-600 dark:text-orange-400" :
                 "text-red-600 dark:text-red-400"
@@ -185,6 +201,17 @@ export function DeviceManagementScreen() {
                   {isUpdating ? "업데이트 중..." : "최신 펌웨어로 업데이트"}
                 </button>
               )}
+            </div>
+
+            <div className="px-5 pb-5">
+              <button 
+                onClick={handleWifiReset}
+                className="w-full py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750 text-gray-900 dark:text-white font-bold text-sm rounded-xl transition-colors flex items-center justify-center gap-2"
+              >
+                <Wifi className="w-4 h-4 text-blue-500" />
+                Wi-Fi 초기화
+              </button>
+              <p className="text-[10px] text-gray-400 mt-2 text-center px-4 break-keep leading-relaxed">기기의 Wi-Fi 정보가 삭제되며 설정 모드로 진입합니다. 설정 시 스마트폰을 기기 근처로 가져가세요.</p>
             </div>
           </motion.div>
         </div>
