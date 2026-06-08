@@ -24,6 +24,7 @@ export interface ApiResponse {
   last_seen?: string;
   emotion_tag?: string;
   context?: string;
+  mapping?: Record<string, number>;
 }
 
 /**
@@ -165,6 +166,7 @@ export interface SendDataOptions {
   timer_enabled?: boolean;
   timer_start?: number;
   timer_end?: number;
+  mapping?: Record<string, number>;
 }
 
 /**
@@ -220,6 +222,10 @@ export async function apiSendData(options: SendDataOptions): Promise<ApiResponse
     data.mode = "manual";
     data.action = "SAVE_MUSIC";
     data.music = region; // 곡 목록 (1_6_11_16 형식)
+  } else if (action === "SET_MAPPING") {
+    data.mode = "manual";
+    data.action = "SET_MAPPING";
+    data.mapping = options.mapping;
   } else if (action === "SET_LED") {
     data.mode = "manual";
     data.action = "SET_LED";
