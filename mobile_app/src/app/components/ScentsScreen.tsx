@@ -4,8 +4,11 @@ import { BottomNav } from "./BottomNav";
 import { motion, AnimatePresence } from "motion/react";
 import { Home, Droplets, SlidersHorizontal, RefreshCw, X, CheckCircle2, Settings, BookHeart, Loader2 } from "lucide-react";
 import { useDevice } from "../store/DeviceContext";
+import { useAuth } from "../store/AuthContext";
+import { apiSendData } from "../utils/api";
 
 export function ScentsScreen() {
+  const { currentUser } = useAuth();
   const { scentSlots, updateScentSlot, refreshDeviceState } = useDevice();
   const [replacingId, setReplacingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -16,7 +19,8 @@ export function ScentsScreen() {
     { name: "패츌리", color: "bg-green-700" },
     { name: "페퍼민트", color: "bg-teal-500" },
     { name: "라벤더", color: "bg-violet-500" },
-    { name: "아쿠아", color: "bg-cyan-500" },
+    { name: "바닐라", color: "bg-orange-300" },
+    { name: "무향(물)", color: "bg-cyan-500" },
   ];
 
   // 화면 진입 시 데이터 새로고침
@@ -30,9 +34,33 @@ export function ScentsScreen() {
     setLoading(false);
   };
 
-  const handleReplace = (newName: string, newColor: string) => {
+  const handleReplace = async (newName: string, newColor: string) => {
     if (replacingId === null) return;
     updateScentSlot(replacingId, { name: newName, color: newColor, remaining: 100 });
+    
+    const newSlots = scentSlots.map(s => s.id === replacingId ? { ...s, name: newName } : s);
+    const kindMap: Record<string, number> = {
+      "시트러스": 1, "시트러스 가든": 1,
+      "센달우드": 2, "패츌리": 3, "페퍼민트": 4,
+      "라벤더": 5, "라벤더 포레스트": 5,
+      "바닐라": 6, "화이트 머스크": 6,
+      "무향(물)": 7, "아쿠아": 7, "오션 브리즈": 7
+    };
+    
+    const mappingDict: Record<string, number> = {};
+    newSlots.forEach(slot => { mappingDict[slot.id.toString()] = kindMap[slot.name] || slot.id; });
+    
+    if (currentUser) {
+      setLoading(true);
+      await apiSendData({
+        email: currentUser.email,
+        action: "SET_MAPPING",
+        mapping: mappingDict as any,
+        deviceId: currentUser.deviceId || "ESP32_Test"
+      });
+      setLoading(false);
+    }
+    
     setReplacingId(null);
   };
 
