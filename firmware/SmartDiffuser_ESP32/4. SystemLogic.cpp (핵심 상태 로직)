@@ -5,6 +5,9 @@
 void processSettingModeInput();
 void processStandardInput();
 
+static const int NEXTION_DIM_NORMAL = 100;
+static const int NEXTION_DIM_SLEEP = 8;
+
 // --- 로드셀 데이터 준비 완료 인터럽트 (ISR) ---
 // IRAM_ATTR을 붙여 인터럽트가 플래시 메모리가 아닌 RAM에서 최고 속도로 실행되게 합니다.
 void IRAM_ATTR isr_hx0() { hxReady[0] = true; }
@@ -18,6 +21,7 @@ void wakeUpSystem() {
   lastActivityTime = millis();
   nexSend("sleep=0"); 
   delay(100);
+  nexSend("dim=" + String(NEXTION_DIM_NORMAL));
   Serial.println(C_GREEN "\r\n☀️ 시스템 기상! Wi-Fi 재연결 중...\r\n" C_RESET);
   WiFi.mode(WIFI_STA);
   connectWiFi();
@@ -48,8 +52,8 @@ void manageSleepState() {
     setSystemMode(MODE_SLEEP, "");
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
-    nexSend("sleep=1"); 
-    Serial.println(C_YELLOW "\r\n🌙 스마트 절전 모드 진입 (Wi-Fi, 디스플레이 OFF)\r\n" C_RESET);
+    nexSend("dim=" + String(NEXTION_DIM_SLEEP)); 
+    Serial.println(C_YELLOW "\r\n🌙 스마트 절전 모드 진입 (Wi-Fi OFF, 디스플레이 밝기 낮춤)\r\n" C_RESET);
   }
 }
 
@@ -97,7 +101,7 @@ void initSystem() {
   delay(300); 
   nexSend("sleep=0");  // ★ 추가: 부팅 시 디스플레이 수면 모드 강제 해제
   delay(100);
-  nexSend("bauds=9600"); delay(100); nexSend("dim=100");
+  nexSend("bauds=9600"); delay(100); nexSend("dim=" + String(NEXTION_DIM_NORMAL));
   delay(100);
   clearNextionInputBuffer();
   
@@ -630,7 +634,7 @@ void runScheduler() {
             setSystemMode(MODE_SLEEP, "Night Sleep");
             WiFi.disconnect(true);
             WiFi.mode(WIFI_OFF);
-            nexSend("sleep=1");
+            nexSend("dim=" + String(NEXTION_DIM_SLEEP));
         }
     } 
     // 2. 운영 시간 시작 시 자동 기상 로직
