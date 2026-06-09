@@ -36,7 +36,7 @@ const int PIN_RAIN   = 14;
 const int PIN_SNOW   = 27;
 
 // 로드셀 (무게 센서) 1~4
-const int LOADCELL_DT[4]  = {34, 36, 39, 32};
+const int LOADCELL_DT[4]  = {32, 39, 36, 34};
 const int LOADCELL_SCK[4] = {33, 33, 33, 33};
 
 // DFPlayer (오디오 스피커)
@@ -65,7 +65,7 @@ const int NEXTION_RX_PIN = 16;
 #define CLEANING_INTERVAL 86400000 // <--- ★ 여기에 딱 한 줄 추가!
 
 namespace Config {
-    const int SPRAY_PINS[4] = {4, 13, 14, 27}; 
+    const int SPRAY_PINS[4] = {27, 14, 13, 4}; 
     const int PIN_LED = 2;
     const int PIN_DF_BUSY = 21;
     const float EMPTY_WEIGHT = 19.8f;
