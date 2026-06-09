@@ -610,6 +610,7 @@ static void handleScentButton(const String &cmd) {
     showPage(lastManualPage);
     runManualMode(blendSelection);
     showPage(lastManualPage);
+    
     blendSelection = "";
   }
 }
@@ -1019,15 +1020,38 @@ void pollServer() {
   if (currentMode == MODE_DEMO || isCommunicate) return; // 통신 중복 방지 
   
   unsigned long now = millis();
+
+  // [최적화] 3초마다 소음 샘플링 (15초 주기의 1/5)
+  static unsigned long lastSampleTime = 0;
+  static int dbSamples[5] = {0, 0, 0, 0, 0};
+  static int sampleIdx = 0;
+
+  if (now - lastSampleTime >= 3000) {
+    lastSampleTime = now;
+    // ⚠️ 파트너님이 실수로 여길 바꾸셨었어요! 다시 currentDbLevel 로 복구합니다.
+    dbSamples[sampleIdx] = currentDbLevel; 
+    sampleIdx = (sampleIdx + 1) % 5;
+  }
+
   if (now - lastPollTime >= POLL_INTERVAL) {
     lastPollTime = now;
     
+    // 5회 측정 평균 계산
+    int dbSum = 0;
+    for(int i = 0; i < 5; i++) dbSum += dbSamples[i];
+    int avgDb = dbSum / 5;
+    
     if (WiFi.status() == WL_CONNECTED) {
-      // ★ [최종 디테일] 최신 ArduinoJson 7 버전에 맞게 객체와 배열 생성 문법 통일
       JsonDocument doc; 
       doc["action"] = "POLL";
       doc["deviceId"] = deviceId;
-      doc["db_level"] = currentDbLevel;
+      
+      // ✅ 우리가 진짜로 바꿔야 했던 곳은 여기입니다! (lastWebMessage 로 변경 완료)
+      doc["status"] = lastWebMessage; 
+      
+      doc["db_level"] = avgDb; // 15초 평균값 보고
+      doc["volume"] = currentVolume / 3; // 앱 규격(0~10)으로 변환하여 보고
+      doc["led_br"] = ledEnabled ? ledBrightness : 0;
       
       JsonArray wArray = doc["weights"].to<JsonArray>(); 
       for (int i = 0; i < 4; i++) {
@@ -1061,6 +1085,8 @@ static void processServerResponse(const String& response) {
     scaledVol = constrain(scaledVol, 0, 30);
     if (scaledVol != currentVolume) {
       changeVolume(scaledVol);
+      // 서버 명령으로 변경된 경우, 디스플레이 화면도 해당 음량 페이지로 즉시 전환
+      showPage(VOLUME_PAGE_BASE + (scaledVol / 3));
     }
   }
 
