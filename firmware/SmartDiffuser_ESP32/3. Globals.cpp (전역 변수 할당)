@@ -52,6 +52,8 @@ uint8_t ledB = 255;
 int ledBrightness = 150;
 bool ledEnabled = true;
 
+LedMode ledEffect = LED_SOLID; // <--- ★ 이 줄을 추가해 주세요! ★
+
 // --- 향수 및 무게 데이터 ---
 float weights[4] = {0.0, 0.0, 0.0, 0.0};
 float maxWeight = 95.4; 
