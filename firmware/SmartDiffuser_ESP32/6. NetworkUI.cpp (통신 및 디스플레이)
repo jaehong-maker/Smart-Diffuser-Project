@@ -320,6 +320,14 @@ static void showWeatherPageByState() {
   }
 }
 
+static void showHomePageByWeatherState() {
+  if (currentMode == MODE_WEATHER) {
+    showWeatherPageByState();
+  } else {
+    showPage(PAGE_WEATHER_OFF);
+  }
+}
+
 static bool sendEncodedRegionText(const String &regionText) {
   for (size_t i = 0; i < sizeof(ENCODED_REGIONS) / sizeof(ENCODED_REGIONS[0]); i++) {
     if (regionText == ENCODED_REGIONS[i].utf8) {
@@ -515,7 +523,7 @@ static String findNextionCmd(String buf) {
     "Y1", "Y2", "Y3",
     "I1", "I2", "I3", "IH",
     "VU", "VD", "VM",
-    "ST", "BM", "RE", "OF", "TZ",
+    "ST", "BM", "RE", "OF", "TZ", "WK",
     "S1", "S2", "S3", "S4"
   };
 
@@ -546,13 +554,23 @@ static String processNextionChar(char c, String &buf, bool executeCmd) {
 
 void checkNextionInput() {
   static String buf = ""; 
+
   while (nexSerial.available()) {
     char c = (char)nexSerial.read();
-    
-    lastActivityTime = millis(); // 화면 터치 시 타이머 리셋
-    if (currentMode == MODE_SLEEP) wakeUpSystem(); 
+    if ((c >= 'A' && c <= 'Z') || c == 0x65 || c == 0x67 || c == 0x68) {
+      lastActivityTime = millis(); // 터치/버튼 입력이 들어온 순간 절전 타이머 리셋
+    }
 
-    processNextionChar(c, buf, true);
+    String cmd = processNextionChar(c, buf, false);
+    if (cmd.length() == 0) continue;
+
+    if (cmd == "WK") {
+      wakeUpSystem();
+      continue;
+    }
+
+    handleNextionCmd(cmd);
+    wakeUpSystem();
   }
 }
 
@@ -726,7 +744,14 @@ void handleNextionCmd(const String &cmd) {
     prefs.putInt("wifi_return_page", currentDisplayPage);
     showPage(PAGE_WIFI_RESET);
   }
-  else if (cmd == "M2" || cmd == "Y3") {
+  else if (cmd == "M2") {
+    if (currentMode == MODE_WEATHER) {
+      showWeatherPageByState();
+    } else {
+      showPage(PAGE_WEATHER_OFF);
+    }
+  }
+  else if (cmd == "Y3") {
     if (currentMode == MODE_WEATHER) {
       showWeatherPageByState();
     } else {
