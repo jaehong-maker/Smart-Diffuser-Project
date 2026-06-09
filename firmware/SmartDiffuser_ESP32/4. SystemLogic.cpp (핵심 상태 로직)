@@ -6,7 +6,7 @@ void processSettingModeInput();
 void processStandardInput();
 
 static const int NEXTION_DIM_NORMAL = 100;
-static const int NEXTION_DIM_SLEEP = 8;
+static bool isDisplayDimmed = false;
 
 // --- 로드셀 데이터 준비 완료 인터럽트 (ISR) ---
 // IRAM_ATTR을 붙여 인터럽트가 플래시 메모리가 아닌 RAM에서 최고 속도로 실행되게 합니다.
@@ -17,17 +17,15 @@ void IRAM_ATTR isr_hx3() { hxReady[3] = true; }
 
 // --- 서브 루틴: 시스템 기상 ---
 void wakeUpSystem() {
-  if (currentMode != MODE_SLEEP) return;
+  if (!isDisplayDimmed && currentMode != MODE_SLEEP) return;
   lastActivityTime = millis();
-  nexSend("sleep=0"); 
-  delay(100);
   nexSend("dim=" + String(NEXTION_DIM_NORMAL));
-  Serial.println(C_GREEN "\r\n☀️ 시스템 기상! Wi-Fi 재연결 중...\r\n" C_RESET);
-  WiFi.mode(WIFI_STA);
-  connectWiFi();
-  
-  // 상태 변경과 동시에 내부에서 printMainMenu()가 1회 실행됨
-  setSystemMode(MODE_READY, "System Ready");
+  isDisplayDimmed = false;
+  Serial.println(C_GREEN "\r\n☀️ 시스템 기상! 디스플레이 밝기 복구\r\n" C_RESET);
+
+  if (currentMode == MODE_SLEEP) {
+    setSystemMode(MODE_READY, "System Ready");
+  }
 }
 
 // --- 서브 루틴: 오디오 큐 이벤트 처리 ---
@@ -48,13 +46,7 @@ void processAudioEvents() {
 
 // --- 서브 루틴: 스마트 절전 관리 ---
 void manageSleepState() {
-  if (currentMode != MODE_SLEEP && (millis() - lastActivityTime > SLEEP_TIMEOUT)) {
-    setSystemMode(MODE_SLEEP, "");
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-    nexSend("dim=" + String(NEXTION_DIM_SLEEP)); 
-    Serial.println(C_YELLOW "\r\n🌙 스마트 절전 모드 진입 (Wi-Fi OFF, 디스플레이 밝기 낮춤)\r\n" C_RESET);
-  }
+  // 절전모드 비활성화: 디스플레이 밝기와 페이지를 자동으로 변경하지 않습니다.
 }
 
 // --- 서브 루틴: 향수 잔여량 경고 ---
@@ -627,21 +619,7 @@ void runScheduler() {
     getCurrentTime(h, m);
     if (h == -1) return; // 시간 획득 실패 시 종료
 
-    // 1. 운영 시간 외 자동 절전 로직
-    if (h < activeStartHour || h >= activeEndHour) {
-        if (currentMode != MODE_SLEEP) {
-            Serial.printf(C_YELLOW "\r\n[Scheduler] 운영 시간 종료 (%02d:%02d). 절전 모드로 진입합니다.\r\n" C_RESET, h, m);
-            setSystemMode(MODE_SLEEP, "Night Sleep");
-            WiFi.disconnect(true);
-            WiFi.mode(WIFI_OFF);
-            nexSend("dim=" + String(NEXTION_DIM_SLEEP));
-        }
-    } 
-    // 2. 운영 시간 시작 시 자동 기상 로직
-    else if (h == activeStartHour && m == 0 && currentMode == MODE_SLEEP) {
-        Serial.printf(C_GREEN "\r\n[Scheduler] 운영 시간 시작 (%02d:%02d). 시스템을 깨웁니다.\r\n" C_RESET, h, m);
-        wakeUpSystem();
-    }
+    // 절전모드 비활성화: 운영 시간 밖이어도 디스플레이를 자동으로 어둡게 하지 않습니다.
 
     // 3. 특정 시간 '모닝 향기' 이벤트 (예: 아침 8시 5분)
     if (h == 8 && m == 5) {
