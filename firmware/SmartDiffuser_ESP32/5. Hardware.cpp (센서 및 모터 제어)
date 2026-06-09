@@ -4,7 +4,6 @@
 // [1] 유틸리티 (수학 계산 및 정렬 알고리즘)
 // ===================================================================================
 
-// ✅ [수정 후] double 대신 ESP32에 최적화된 float 사용
 static int calculateDecibels(int32_t* samples, int numSamples) {
   if (numSamples <= 0) return 0;
   
