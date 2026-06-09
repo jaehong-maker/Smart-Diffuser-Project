@@ -116,11 +116,6 @@ void SprayIntensity(int intensityVal) {
 }
 
 int getPinFromCommand(int cmd) {
-  switch(cmd) {
-    case 1: return PIN_SUNNY;
-    case 2: return PIN_CLOUDY;
-    case 3: return PIN_RAIN;
-    case 4: return PIN_SNOW;
-    default: return -1;
-  }
+    if (cmd >= 1 && cmd <= 4) return Config::SPRAY_PINS[cmd - 1];
+    return -1;
 }
