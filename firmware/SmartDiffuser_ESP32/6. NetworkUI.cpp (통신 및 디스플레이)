@@ -31,6 +31,7 @@ static const int PAGE_INTENSITY_HOME = 28;
 static const int PAGE_INTENSITY_LOW = 30;
 static const int PAGE_INTENSITY_MEDIUM = 31;
 static const int PAGE_INTENSITY_HIGH = 32;
+static const int PAGE_LOW_FLUID = 80;
 
 static int lastManualPage = PAGE_MANUAL;
 static int currentDisplayPage = PAGE_WEATHER_OFF;
@@ -326,6 +327,15 @@ static void showHomePageByWeatherState() {
   } else {
     showPage(PAGE_WEATHER_OFF);
   }
+}
+
+void showStartupReadyPage() {
+  showPage(PAGE_WEATHER_OFF);
+}
+
+void showLowFluidPage() {
+  showPage(PAGE_LOW_FLUID);
+  delay(3000);
 }
 
 static bool sendEncodedRegionText(const String &regionText) {
@@ -1007,17 +1017,13 @@ void connectWiFi() {
   }
 
   if (!wifiConnected) {
-    updateDisplay(0, "Offline Mode");
     Serial.println(C_YELLOW "\r\n[Warning] Wi-Fi 설정 실패." C_RESET);
   } else {
     Serial.printf("\r\nConnected! IP: %s\r\n", WiFi.localIP().toString().c_str());
-    int returnPage = prefs.getInt("wifi_return_page", PAGE_WEATHER_OFF);
-    prefs.remove("wifi_return_page");
-    if (returnPage == PAGE_WIFI_RESET) returnPage = PAGE_WEATHER_OFF;
-    showPage(returnPage);
-    if (returnPage == PAGE_WEATHER_OFF) {
-      nexSend("t_wifi.txt=\"Connected\"");
-      delay(2000);
+    if (prefs.isKey("wifi_return_page")) {
+      int returnPage = prefs.getInt("wifi_return_page", PAGE_WEATHER_OFF);
+      prefs.remove("wifi_return_page");
+      if (returnPage == PAGE_WIFI_RESET) returnPage = PAGE_WEATHER_OFF;
       showPage(returnPage);
     }
   }
