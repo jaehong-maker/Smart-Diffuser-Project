@@ -4,43 +4,20 @@
 // [1] 유틸리티 (수학 계산 및 정렬 알고리즘)
 // ===================================================================================
 
+// ✅ [수정 후] double 대신 ESP32에 최적화된 float 사용
 static int calculateDecibels(int32_t* samples, int numSamples) {
   if (numSamples <= 0) return 0;
   
-  double sumSquares = 0.0;
+  float sumSquares = 0.0f;
   for (int i = 0; i < numSamples; i++) {
     int16_t wave = (samples[i] >> 14);
-    sumSquares += (double)wave * wave;
+    sumSquares += (float)wave * wave;
   }
   
-  double rms = sqrt(sumSquares / numSamples);
-  if (rms < 1.0) rms = 1.0; 
+  float rms = sqrt(sumSquares / numSamples);
+  if (rms < 1.0f) rms = 1.0f; 
   
-  return (int)(20.0 * log10(rms));
-}
-
-void sortArray(float* arr, int size) {
-  for (int i = 0; i < size - 1; i++) {
-    for (int j = 0; j < size - i - 1; j++) {
-      if (arr[j] > arr[j + 1]) {
-        float temp = arr[j];
-        arr[j] = arr[j + 1];
-        arr[j + 1] = temp;
-      }
-    }
-  }
-}
-
-void sortArray(int* arr, int size) {
-  for (int i = 0; i < size - 1; i++) {
-    for (int j = 0; j < size - i - 1; j++) {
-      if (arr[j] > arr[j + 1]) {
-        int temp = arr[j];
-        arr[j] = arr[j + 1];
-        arr[j + 1] = temp;
-      }
-    }
-  }
+  return (int)(20.0f * log10(rms));
 }
 
 float calculateStdDev(int* samples, int count, float average) {
@@ -90,6 +67,7 @@ void systemHeartbeat() {
   unsigned long currentTime = millis();
   static unsigned long lastUpdate = 0;
   static int effectStep = 0;
+  static uint16_t hue = 0;
 
   // 1. 상태 체크: 센서 고장 및 잔량 부족 확인
   bool isAnySensorBroken = !isAudioOk; 
@@ -100,72 +78,68 @@ void systemHeartbeat() {
     if (weights[i] > 0.5f && weights[i] < (Config::EMPTY_WEIGHT + 2.0f)) isFluidLow = true;
   }
 
-  // 2. 현재 시스템 상태에 따라 LED 상태 결정 (우선순위 순)
-  enum LedState { LED_SENSOR_ERR, LED_LOW_FLUID, LED_WIFI_ERR, LED_SPRAY, LED_AMBIENT, LED_IDLE };
-  LedState currentLedState;
+  // 2. 현재 시스템 상태에 따라 LED 상태 결정 (특수 상태 우선)
+  if (isAnySensorBroken) {
+    if (currentTime - lastUpdate >= 300) { 
+      lastUpdate = currentTime; effectStep = !effectStep;
+      setLedColor(effectStep ? 255 : 0, 0, 0); 
+    }
+    return;
+  }
+  
+  if (WiFi.status() != WL_CONNECTED) {
+    if (currentTime - lastUpdate >= 600) {
+      lastUpdate = currentTime; effectStep = !effectStep;
+      setLedColor(0, 0, effectStep ? 255 : 0); 
+    }
+    return;
+  }
 
-  if (isAnySensorBroken) currentLedState = LED_SENSOR_ERR;
-  else if (isFluidLow) currentLedState = LED_LOW_FLUID;
-  else if (WiFi.status() != WL_CONNECTED) currentLedState = LED_WIFI_ERR;
-  else if (isSpraying || isRunning) currentLedState = LED_SPRAY;
-  else if (currentMode == MODE_AMBIENT) currentLedState = LED_AMBIENT;
-  else currentLedState = LED_IDLE;
-
-  // 3. 상태별 애니메이션 (Non-blocking 방식)
-  switch (currentLedState) {
-    case LED_SENSOR_ERR: // 🔴 센서 고장 (빠른 빨간색 점멸)
-      if (currentTime - lastUpdate >= 300) { 
-        lastUpdate = currentTime; effectStep = !effectStep;
-        setLedColor(effectStep ? 255 : 0, 0, 0); 
-      }
-      break;
-
-    case LED_LOW_FLUID: // 🟡 용액 부족 (경고만 살짝 덧씌움)
+  // 3. 앱에서 설정한 LED 효과 모드 실행
+  switch (ledEffect) {
+    case LED_BREATHE: // 〰 호흡 효과
       {
-        // [수정] 사용자가 설정한 색상을 기본으로 하되, 2초 주기로 노란색이 살짝 나타났다 사라지게 변경
-        int factor = (sin(currentTime / 500.0) * 30) + 225;
-        float warningFactor = (sin(currentTime / 2000.0) * 0.5) + 0.5; // 0~1 범위
-        
-        // 사용자 색상과 경고 노란색(255, 200, 0)을 부드럽게 믹스
-        uint8_t r = (ledR * (1.0 - (warningFactor * 0.3))) + (255 * warningFactor * 0.3);
-        uint8_t g = (ledG * (1.0 - (warningFactor * 0.3))) + (200 * warningFactor * 0.3);
-        uint8_t b = (ledB * (1.0 - (warningFactor * 0.3)));
-        
-        setLedColor((r * factor) / 255, (g * factor) / 255, (b * factor) / 255);
-      }
-      break;
-
-    case LED_WIFI_ERR: // 🔵 와이파이 에러 (파란색 깜빡임)
-      if (currentTime - lastUpdate >= 600) {
-        lastUpdate = currentTime; effectStep = !effectStep;
-        setLedColor(0, 0, effectStep ? 255 : 0); 
-      }
-      break;
-
-    case LED_SPRAY: // ✨ 분사 중 (빠른 호흡 효과)
-      {
-        // [수정] 사용자가 설정한 색상을 사용하며, 165~255 범위에서 빠르게 박동
-        int factor = (sin(currentTime / 200.0) * 45) + 210; 
+        int factor = (sin(currentTime / 1000.0) * 45) + 210; 
         setLedColor((ledR * factor) / 255, (ledG * factor) / 255, (ledB * factor) / 255);
       }
       break;
 
-    case LED_AMBIENT: // 🔮 앰비언트 모드 (부드러운 호흡)
+    case LED_RAINBOW: // 🌈 무지개 효과
       {
-        // [수정] 기존 하드코딩된 보라색 대신, 사용자가 설정한 색상을 175~255 범위에서 부드럽게 박동
-        int factor = (sin(currentTime / 500.0) * 40) + 215; 
+        if (currentTime - lastUpdate >= 20) {
+          lastUpdate = currentTime;
+          hue += 256;
+          for(int i=0; i<NUM_LEDS; i++) {
+            if (i >= 4) {
+              strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(hue + (i * 65536 / NUM_LEDS))));
+            } else {
+              strip.setPixelColor(i, 0);
+            }
+          }
+          strip.setBrightness(ledBrightness);
+          strip.show();
+        }
+      }
+      break;
+
+    case LED_MUSIC: // 🎵 음악 반응 효과
+      {
+        int vol = currentDbLevel; 
+        int sensitivity = 70; // 소음 기준값
+        int factor = map(constrain(vol, sensitivity, 100), sensitivity, 100, 50, 255);
         setLedColor((ledR * factor) / 255, (ledG * factor) / 255, (ledB * factor) / 255);
       }
       break;
 
-    case LED_IDLE: // 💤 대기 모드 (은은한 숨쉬기)
+    case LED_SOLID: // ● 단색 유지
     default:
-      {
-        // [수정] 대기 모드에서는 색상 변경이 가장 뚜렷하게 보이도록 박동 범위를 좁히고 밝게 유지 (245~255)
-        int factor = (sin(currentTime / 2000.0) * 10) + 245; 
-        setLedColor((ledR * factor) / 255, (ledG * factor) / 255, (ledB * factor) / 255);
-      }
+      setLedColor(ledR, ledG, ledB);
       break;
+  }
+
+  // 4. 동작 중(분사 등)일 때 추가 시각 효과 (필요 시)
+  if (isSpraying || isRunning) {
+    // 분사 중에는 색상을 조금 더 밝게 하거나 살짝 떨리는 효과를 줄 수 있음
   }
 }
 
