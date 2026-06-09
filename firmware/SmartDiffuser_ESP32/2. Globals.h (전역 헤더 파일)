@@ -61,7 +61,6 @@ const int NEXTION_RX_PIN = 16;
 #define I2S_READ_TIMEOUT (100 / portTICK_PERIOD_MS)
 #define SAMPLE_RATE 16000
 #define RECORD_TIME 2
-#define SLEEP_TIMEOUT 3600000  // <--- ★ 여기에 딱 한 줄 추가!
 #define CLEANING_INTERVAL 86400000 // <--- ★ 여기에 딱 한 줄 추가!
 
 namespace Config {
