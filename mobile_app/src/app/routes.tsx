@@ -7,7 +7,6 @@ import { ScentsScreen } from "./components/ScentsScreen";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { DiaryScreen } from "./components/DiaryScreen";
 import { PrivacyScreen } from "./components/PrivacyScreen";
-import { WeightCalibrationScreen } from "./components/WeightCalibrationScreen";
 import { DeviceManagementScreen } from "./components/DeviceManagementScreen";
 import { LedSettingsScreen } from "./components/LedSettingsScreen";
 import { MusicSettingsScreen } from "./components/MusicSettingsScreen";
@@ -72,10 +71,6 @@ export const router = createBrowserRouter([
       {
         path: "ai-report",
         Component: AiTasteReportScreen,
-      },
-      {
-        path: "calibration",
-        Component: WeightCalibrationScreen,
       },
       {
         path: "device",

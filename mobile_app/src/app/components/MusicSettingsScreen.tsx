@@ -30,8 +30,6 @@ export function MusicSettingsScreen() {
     return scentSlots.map((s, i) => ({
       id: s.id,
       scentName: s.name,
-      lightBg: `${s.color.replace('bg-', 'bg-').replace('500', '100').replace('400', '100')} dark:bg-opacity-20`,
-      text: s.color.replace('bg-', 'text-'),
       selectedTrackId: initialTrackIds[i] === "0" || !initialTrackIds[i] ? "none" : `song_${initialTrackIds[i]}`
     }));
   });
@@ -126,7 +124,7 @@ export function MusicSettingsScreen() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg ${slot.lightBg} ${slot.text}`}>
+                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300">
                       {slot.id}
                     </div>
                     <div>

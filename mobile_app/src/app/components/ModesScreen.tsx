@@ -99,6 +99,7 @@ export function ModesScreen() {
     dbStdDev,
     noiseType,
     dbChange,
+    deviceStatus,
     currentScent,
     isDiffuserOn: isOn,
     setIsDiffuserOn: setIsOn,
@@ -113,6 +114,18 @@ export function ModesScreen() {
   const [isTimerModalOpen, setIsTimerModalOpen] = useState(false);
   const [selectedHours, setSelectedHours] = useState(0);
   const [selectedMinutes, setSelectedMinutes] = useState(30);
+
+  const hourScrollRef = React.useRef<HTMLDivElement>(null);
+  const minScrollRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (isTimerModalOpen) {
+      setTimeout(() => {
+        if (hourScrollRef.current) hourScrollRef.current.scrollTop = selectedHours * 48;
+        if (minScrollRef.current) minScrollRef.current.scrollTop = selectedMinutes * 48;
+      }, 50);
+    }
+  }, [isTimerModalOpen, selectedHours, selectedMinutes]);
 
   const [manualScents, setManualScents] = useState<string[]>([]);
   const [appliedManualScents, setAppliedManualScents] = useState<string[]>([]);
@@ -688,56 +701,60 @@ export function ModesScreen() {
                   </div>
                 )}
 
-                {isOn && activeMode && activeMode === "noise" && (
-                  <div className="flex flex-col items-center w-full px-4 mt-2">
-                    <div className="bg-white/40 dark:bg-gray-900/40 backdrop-blur-sm rounded-2xl p-4 border border-white/20 dark:border-gray-800/20 w-full mb-4">
-                      <div className="flex justify-center items-center mb-3 relative">
-                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">실시간 분석 지표</span>
-                        {dbChange !== 0 && (
-                          <span className={`absolute right-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${dbChange > 0 ? "bg-rose-100 text-rose-600" : "bg-blue-100 text-blue-600"}`}>
-                            {dbChange > 0 ? "↑" : "↓"} {Math.abs(dbChange)}dB
-                          </span>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-1 text-center">
-                        <div className="flex flex-col items-center">
-                          <span className="text-xs text-gray-500 font-medium">평균 소음</span>
-                          <span className="text-2xl font-black text-gray-900 dark:text-white">{dbAvg.toFixed(1)} dB</span>
+                {isOn && activeMode && activeMode !== "voice" && (
+                  <div className="flex flex-col gap-3 w-full max-w-xs mx-auto">
+                    {activeMode === "noise" && (
+                      <div className="flex flex-col items-center w-full mb-2">
+                        <div className="bg-white/40 dark:bg-gray-900/40 backdrop-blur-sm rounded-2xl p-4 border border-white/20 dark:border-gray-800/20 w-full mb-3">
+                          <div className="flex justify-center items-center mb-3 relative">
+                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">실시간 분석 지표</span>
+                            {dbChange !== 0 && (
+                              <span className={`absolute right-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${dbChange > 0 ? "bg-rose-100 text-rose-600" : "bg-blue-100 text-blue-600"}`}>
+                                {dbChange > 0 ? "↑" : "↓"} {Math.abs(dbChange)}dB
+                              </span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-1 text-center">
+                            <div className="flex flex-col items-center">
+                              <span className="text-xs text-gray-500 font-medium">평균 소음</span>
+                              <span className="text-2xl font-black text-gray-900 dark:text-white">{dbAvg.toFixed(1)} dB</span>
+                            </div>
+                          </div>
                         </div>
+
+                        <motion.div 
+                          animate={{ opacity: [0.6, 1, 0.6] }}
+                          transition={{ duration: 3, repeat: Infinity }}
+                          className="text-center px-2 mb-4"
+                        >
+                          <p className="text-[13px] font-bold text-rose-600 dark:text-rose-400 break-keep leading-relaxed">
+                            {deviceStatus === "소음 분석 중..." 
+                              ? "현재 주변 소음을 정밀 분석 중입니다. 잠시만 기다려주세요." 
+                              : Math.abs(dbChange) > 5 
+                                ? `주변 소음이 ${dbChange > 0 ? '커졌습니다' : '작아졌습니다'}. 분석 후 곧 향기를 조절합니다.` 
+                                : <>{noiseType} 환경에 맞춘 최적의 향기를 유지 중입니다.</>}
+                          </p>
+                          <p className="text-[9px] text-gray-400 mt-1 uppercase tracking-tighter">
+                            기기 상태: {deviceStatus}
+                          </p>
+                        </motion.div>
                       </div>
-                    </div>
+                    )}
 
-                    <motion.div 
-                      animate={{ opacity: [0.6, 1, 0.6] }}
-                      transition={{ duration: 3, repeat: Infinity }}
-                      className="text-center px-4"
-                    >
-                      <p className="text-sm font-bold text-rose-600 dark:text-rose-400 break-keep max-w-[260px] mx-auto leading-relaxed">
-                        {Math.abs(dbChange) > 5 
-                          ? `주변 소음이 ${dbChange > 0 ? '커졌습니다' : '작아졌습니다'}. 분석 후 ${analysisCountdown}초 내로 향기를 조절합니다.` 
-                          : <>{noiseType} 환경에 맞춘 최적의 향기를<br />유지 중입니다.</>}
-                      </p>
-                      <p className="text-[10px] text-gray-400 mt-1">
-                        {Math.abs(dbChange) > 5 ? "소음 변화 분석 중..." : "안정적인 상태 유지 중"}
-                      </p>
-                    </motion.div>
-                  </div>
-                )}
-
-                {isOn && activeMode && activeMode !== "voice" && activeMode !== "noise" && (
-                  <div className="flex flex-wrap justify-center items-center gap-2 sm:gap-3 bg-white/60 dark:bg-gray-900/60 backdrop-blur-md px-4 py-2 sm:px-5 sm:py-2.5 rounded-full border border-gray-200/50 dark:border-gray-700/50 shadow-sm">
-                    <div className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200">
-                      <Droplets className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-500" />
-                      <span>
-                        {activeScentName} 향
-                      </span>
-                    </div>
-                    <div className="hidden sm:block w-1 h-1 rounded-full bg-gray-300 dark:bg-gray-600"></div>
-                    <div className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200">
-                      <Music className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-500" />
-                      <span>
-                        {activeMusicName}
-                      </span>
+                    <div className="flex flex-wrap justify-center items-center gap-2 sm:gap-3 bg-white/60 dark:bg-gray-900/60 backdrop-blur-md px-4 py-2 sm:px-5 sm:py-2.5 rounded-full border border-gray-200/50 dark:border-gray-700/50 shadow-sm">
+                      <div className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200">
+                        <Droplets className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-500" />
+                        <span>
+                          {activeScentName} 향
+                        </span>
+                      </div>
+                      <div className="hidden sm:block w-1 h-1 rounded-full bg-gray-300 dark:bg-gray-600"></div>
+                      <div className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200">
+                        <Music className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-500" />
+                        <span>
+                          {activeMusicName}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1000,6 +1017,7 @@ export function ModesScreen() {
               onClick={() => setIsTimerModalOpen(false)} 
               className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" 
             />
+            
             <motion.div 
               initial={{ y: "100%" }} 
               animate={{ y: 0 }} 
@@ -1012,45 +1030,35 @@ export function ModesScreen() {
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 text-center">타이머 설정</h2>
               <p className="text-sm text-gray-500 dark:text-gray-400 mb-8 text-center">원하시는 작동 시간을 선택해주세요.</p>
 
-              <div className="flex items-center justify-center gap-6 mb-10">
-                <div className="flex flex-col items-center gap-2">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Hours</span>
-                  <div className="flex items-center gap-4">
-                    <button 
-                      onClick={() => setSelectedHours(h => Math.max(0, h - 1))}
-                      className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center"
-                    >
-                      <Minus className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                    </button>
-                    <span className="text-4xl font-black text-gray-900 dark:text-white w-12 text-center">{selectedHours}</span>
-                    <button 
-                      onClick={() => setSelectedHours(h => Math.min(12, h + 1))}
-                      className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center"
-                    >
-                      <Plus className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                    </button>
-                  </div>
+              <div className="flex items-center justify-center gap-4 mb-10">
+                <div className="flex flex-col items-center">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">시간 (Hours)</span>
+                  <select 
+                    value={selectedHours}
+                    onChange={(e) => setSelectedHours(Number(e.target.value))}
+                    className="w-24 sm:w-32 h-20 text-4xl sm:text-5xl font-black text-center text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl appearance-none cursor-pointer outline-none focus:ring-2 focus:ring-blue-500"
+                    style={{ textAlignLast: 'center' }}
+                  >
+                    {[...Array(13)].map((_, i) => (
+                      <option key={`opt-h-${i}`} value={i}>{i}</option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="text-4xl font-black text-gray-300 dark:text-gray-700 mt-6">:</div>
 
-                <div className="flex flex-col items-center gap-2">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Minutes</span>
-                  <div className="flex items-center gap-4">
-                    <button 
-                      onClick={() => setSelectedMinutes(m => m === 0 ? 50 : m - 10)}
-                      className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center"
-                    >
-                      <Minus className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                    </button>
-                    <span className="text-4xl font-black text-gray-900 dark:text-white w-12 text-center">{selectedMinutes}</span>
-                    <button 
-                      onClick={() => setSelectedMinutes(m => (m + 10) % 60)}
-                      className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center"
-                    >
-                      <Plus className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                    </button>
-                  </div>
+                <div className="flex flex-col items-center">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">분 (Minutes)</span>
+                  <select 
+                    value={selectedMinutes}
+                    onChange={(e) => setSelectedMinutes(Number(e.target.value))}
+                    className="w-24 sm:w-32 h-20 text-4xl sm:text-5xl font-black text-center text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl appearance-none cursor-pointer outline-none focus:ring-2 focus:ring-blue-500"
+                    style={{ textAlignLast: 'center' }}
+                  >
+                    {[...Array(60)].map((_, i) => (
+                      <option key={`opt-m-${i}`} value={i}>{i.toString().padStart(2, '0')}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -1080,6 +1088,7 @@ export function ModesScreen() {
                 </button>
               </div>
             </motion.div>
+
           </>
         )}
       </AnimatePresence>

@@ -1,182 +1,352 @@
-import React, { useState, useEffect } from "react";
-import { Link } from "react-router";
-import { BottomNav } from "./BottomNav";
-import { motion, AnimatePresence } from "motion/react";
-import { Home, Droplets, SlidersHorizontal, RefreshCw, X, CheckCircle2, Settings, BookHeart, Loader2 } from "lucide-react";
-import { useDevice } from "../store/DeviceContext";
-import { useAuth } from "../store/AuthContext";
-import { apiSendData } from "../utils/api";
+import React, { createContext, useContext, useState, useEffect, useRef } from "react";
+import { apiPollDeviceState, apiSendData } from "../utils/api";
+import { useAuth } from "./AuthContext";
 
-export function ScentsScreen() {
+export interface ScentSlot {
+  id: number;
+  name: string;
+  color: string;
+  remaining: number;
+  weightGrams: number;
+}
+
+interface DeviceContextType {
+  scentSlots: ScentSlot[];
+  updateScentSlot: (id: number, slot: Partial<ScentSlot>) => void;
+  refreshDeviceState: () => Promise<void>;
+  wifiStrength: "strong" | "medium" | "weak" | "disconnected";
+  setWifiStrength: (val: "strong" | "medium" | "weak" | "disconnected") => void;
+  volume: number;
+  handleVolumeChange: (newVolume: number) => void;
+  intensity: number;
+  handleIntensityChange: (newLevel: number) => void;
+  activeTimerMinutes: number | null;
+  handleTimerChange: (minutes: number | null) => void;
+  timerEnabled: boolean;
+  timerStart: number;
+  timerEnd: number;
+  updateTimerSettings: (enabled: boolean, start: number, end: number) => Promise<void>;
+  currentScent: string;
+  isDiffuserOn: boolean;
+  setIsDiffuserOn: (val: boolean) => void;
+  ledColor: string;
+  ledBrightness: number;
+  isLedOn: boolean;
+  activeMode: "manual" | "weather" | "voice" | "ai" | "noise" | null;
+  setActiveMode: (mode: "manual" | "weather" | "voice" | "ai" | "noise" | null) => void;
+  isDeviceActionLoading: boolean;
+  sendDeviceData: (action: string, value: number, region?: string, diaryText?: string, ledData?: { r: number, g: number, b: number, br: number }) => Promise<any>;
+  calibrateWeight: () => Promise<boolean>;
+  dbLevel: number;
+  dbAvg: number;
+  dbStdDev: number;
+  noiseType: string;
+  dbChange: number;
+  deviceStatus: string;
+}
+
+const DeviceContext = createContext<DeviceContextType | undefined>(undefined);
+
+export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useAuth();
-  const { scentSlots, updateScentSlot, refreshDeviceState } = useDevice();
-  const [replacingId, setReplacingId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(false);
   
-  const availableScents = [
-    { name: "시트러스", color: "bg-orange-500" },
-    { name: "센달우드", color: "bg-amber-700" },
-    { name: "패츌리", color: "bg-green-700" },
-    { name: "페퍼민트", color: "bg-teal-500" },
-    { name: "라벤더", color: "bg-violet-500" },
-    { name: "바닐라", color: "bg-orange-300" },
-    { name: "무향(물)", color: "bg-cyan-500" },
-  ];
+  const [scentSlots, setScentSlots] = useState<ScentSlot[]>([
+    { id: 1, name: "시트러스", color: "bg-orange-500", remaining: 0, weightGrams: 0 },
+    { id: 2, name: "센달우드", color: "bg-amber-700", remaining: 0, weightGrams: 0 },
+    { id: 3, name: "패츌리", color: "bg-green-700", remaining: 0, weightGrams: 0 },
+    { id: 4, name: "페퍼민트", color: "bg-teal-500", remaining: 0, weightGrams: 0 },
+  ]);
 
-  // 화면 진입 시 데이터 새로고침
-  useEffect(() => {
-    handleRefresh();
-  }, []);
+  const [wifiStrength, setWifiStrength] = useState<"strong" | "medium" | "weak" | "disconnected">("disconnected");
+  const [volume, setVolume] = useState<number>(5);
+  const [intensity, setIntensity] = useState<number>(50);
+  const [activeTimerMinutes, setActiveTimerMinutes] = useState<number | null>(null);
+  
+  const [timerEnabled, setTimerEnabled] = useState<boolean>(false);
+  const [timerStart, setTimerStart] = useState<number>(9);
+  const [timerEnd, setTimerEnd] = useState<number>(22);
+  
+  const [currentScent, setCurrentScent] = useState<string>("1");
+  const [isDiffuserOn, setIsDiffuserOn] = useState<boolean>(false);
+  const [ledColor, setLedColor] = useState<string>("#FBBF24");
+  const [ledBrightness, setLedBrightness] = useState<number>(80);
+  const [isLedOn, setIsLedOn] = useState<boolean>(false);
+  const [activeMode, setActiveMode] = useState<"manual" | "weather" | "voice" | "ai" | "noise" | null>(null);
 
-  const handleRefresh = async () => {
-    setLoading(true);
-    await refreshDeviceState();
-    setLoading(false);
+  const [isDeviceActionLoading, setIsDeviceActionLoading] = useState(false);
+  const [dbLevel, setDbLevel] = useState<number>(0);
+  const [dbAvg, setDbAvg] = useState<number>(0);
+  const [dbStdDev, setDbStdDev] = useState<number>(0);
+  const [noiseType, setNoiseType] = useState<string>("분석 전");
+  const [dbChange, setDbChange] = useState<number>(0);
+  const [deviceStatus, setDeviceStatus] = useState<string>("대기 중");
+  
+  const lastIntensityUpdateTimeRef = useRef<number>(0);
+  const lastVolumeUpdateTimeRef = useRef<number>(0);
+  const lastLedUpdateTimeRef = useRef<number>(0);
+  const lastDbLevelRef = useRef<number>(0);
+
+  const handleVolumeChange = (newVol: number) => {
+    const rounded = Math.max(0, Math.min(10, Math.round(newVol)));
+    setVolume(rounded);
+    lastVolumeUpdateTimeRef.current = Date.now();
+
+    if (currentUser) {
+        const dId = currentUser.deviceId || "ESP32_Test";
+        apiSendData({
+          email: currentUser.email,
+          action: "SET_VOLUME",
+          value: rounded,
+          region: currentUser.region || "서울",
+          deviceId: dId
+        });
+    }
   };
 
-  const handleReplace = async (newName: string, newColor: string) => {
-    if (replacingId === null) return;
-    updateScentSlot(replacingId, { name: newName, color: newColor, remaining: 100 });
-    
-    const newSlots = scentSlots.map(s => s.id === replacingId ? { ...s, name: newName } : s);
-    const kindMap: Record<string, number> = {
-      "시트러스": 1, "시트러스 가든": 1,
-      "센달우드": 2, "패츌리": 3, "페퍼민트": 4,
-      "라벤더": 5, "라벤더 포레스트": 5,
-      "바닐라": 6, "화이트 머스크": 6,
-      "무향(물)": 7, "아쿠아": 7, "오션 브리즈": 7
-    };
-    
-    const mappingDict: Record<string, number> = {};
-    newSlots.forEach(slot => { mappingDict[slot.id.toString()] = kindMap[slot.name] || slot.id; });
+  const handleIntensityChange = async (newLevel: number) => {
+    setIntensity(newLevel);
+    lastIntensityUpdateTimeRef.current = Date.now();
+    if (currentUser) {
+      setIsDeviceActionLoading(true);
+      try {
+        const dId = currentUser.deviceId || "ESP32_Test";
+        await apiSendData({
+          email: currentUser.email,
+          action: "SET_INTENSITY",
+          value: newLevel, 
+          region: currentUser.region || "서울",
+          deviceId: dId
+        });
+      } finally {
+        setIsDeviceActionLoading(false);
+      }
+    }
+  };
+
+  const updateTimerSettings = async (enabled: boolean, start: number, end: number) => {
+    setTimerEnabled(enabled);
+    setTimerStart(start);
+    setTimerEnd(end);
     
     if (currentUser) {
-      setLoading(true);
-      await apiSendData({
-        email: currentUser.email,
-        action: "SET_MAPPING",
-        mapping: mappingDict as any,
-        deviceId: currentUser.deviceId || "ESP32_Test"
-      });
-      setLoading(false);
+      setIsDeviceActionLoading(true);
+      try {
+        const dId = currentUser.deviceId || "ESP32_Test";
+        await apiSendData({
+          email: currentUser.email,
+          action: "SET_INTENSITY",
+          value: intensity,
+          region: currentUser.region || "서울",
+          deviceId: dId,
+          timer_enabled: enabled,
+          timer_start: start,
+          timer_end: end
+        });
+      } finally {
+        setIsDeviceActionLoading(false);
+        refreshDeviceState();
+      }
     }
-    
-    setReplacingId(null);
   };
 
+  const handleTimerChange = async (minutes: number | null) => {
+    setActiveTimerMinutes(minutes);
+
+    if (currentUser) {
+      setIsDeviceActionLoading(true);
+      try {
+        const dId = currentUser.deviceId || "ESP32_Test";
+        if (minutes === null) {
+          await apiSendData({ email: currentUser.email, action: "MENU_STOP", value: 0, region: "STOP", deviceId: dId });
+        } else {
+          await apiSendData({ email: currentUser.email, action: "TIMER_START", value: minutes, region: currentScent, deviceId: dId });
+        }
+      } finally {
+        setIsDeviceActionLoading(false);
+        refreshDeviceState();
+      }
+    }
+  };
+
+  const refreshDeviceState = React.useCallback(async () => {
+    if (!currentUser) return;
+    try {
+      const dId = currentUser.deviceId || "ESP32_Test";
+      const response = await apiPollDeviceState(currentUser.email, dId) as any;
+      
+      if (response.last_seen) {
+        const lastSeen = new Date(response.last_seen);
+        const now = new Date();
+        const diffInSeconds = (now.getTime() - lastSeen.getTime()) / 1000;
+        
+        if (diffInSeconds < 20) {
+          setWifiStrength("strong");
+        } else if (diffInSeconds < 60) {
+          setWifiStrength("medium");
+        } else if (diffInSeconds < 180) {
+          setWifiStrength("weak");
+        } else {
+          setWifiStrength("disconnected");
+        }
+      } else {
+        setWifiStrength("disconnected");
+      }
+
+      if (response.weights && Array.isArray(response.weights)) {
+        const rawWeights = response.weights_raw || [];
+        setScentSlots(prev => prev.map((slot, index) => {
+          const weightPercent = response.weights![index];
+          let estimatedGrams = (weightPercent / 100) * 75.6 + 19.8;
+          const weightGrams = rawWeights[index] !== undefined ? rawWeights[index] : estimatedGrams;
+          return { 
+            ...slot, 
+            remaining: weightPercent !== undefined ? Math.min(100, Math.max(0, Math.round(weightPercent))) : slot.remaining,
+            weightGrams: weightGrams
+          };
+        }));
+      }
+
+      if (response.intensity !== undefined && (Date.now() - lastIntensityUpdateTimeRef.current > 5000)) {
+        setIntensity(response.intensity);
+      }
+
+      if (response.volume !== undefined && (Date.now() - lastVolumeUpdateTimeRef.current > 5000)) {
+        setVolume(response.volume);
+      }
+
+      if (response.timer_enabled !== undefined) setTimerEnabled(response.timer_enabled);
+      if (response.timer_start !== undefined) setTimerStart(response.timer_start);
+      if (response.timer_end !== undefined) setTimerEnd(response.timer_end);
+
+      if (response.db_level !== undefined) {
+        setDbChange(response.db_level - lastDbLevelRef.current);
+        setDbLevel(response.db_level);
+        lastDbLevelRef.current = response.db_level;
+      }
+      if (response.db_avg !== undefined) setDbAvg(response.db_avg);
+      if (response.db_stddev !== undefined) setDbStdDev(response.db_stddev);
+      if (response.noise_type !== undefined) setNoiseType(response.noise_type);
+      else if (response.db_stddev !== undefined) {
+        setNoiseType(response.db_stddev > 8.0 ? "불규칙적(대화/활동)" : "안정적(음악/정적)");
+      }
+
+      if (response.status !== undefined) {
+        setDeviceStatus(response.status);
+      }
+
+      if (response.led_br !== undefined && (Date.now() - lastLedUpdateTimeRef.current > 5000)) {
+        const brValueRaw = response.led_br;
+        const brPercent = Math.round((brValueRaw / 255) * 100);
+        
+        setIsLedOn(brValueRaw > 0);
+        
+        if (brValueRaw > 0) {
+            setLedBrightness(brPercent);
+            
+            if (response.led_r !== undefined && response.led_g !== undefined && response.led_b !== undefined) {
+              const hex = `#${response.led_r.toString(16).padStart(2, '0')}${response.led_g.toString(16).padStart(2, '0')}${response.led_b.toString(16).padStart(2, '0')}`;
+              if (hex !== "#000000") {
+                setLedColor(hex.toUpperCase());
+              }
+            }
+        }
+      }
+
+      if (response.spray !== undefined && response.spray > 0 && response.spray !== 90) {
+        setCurrentScent(String(response.spray));
+        setIsDiffuserOn(true);
+      }
+    } catch (err) {
+      console.error("Failed to refresh device state", err);
+    }
+  }, [currentUser]);
+
+  const sendDeviceData = React.useCallback(async (action: string, value: number, region?: string, diaryText?: string, ledData?: { r: number, g: number, b: number, br: number }) => {
+    if (!currentUser) return { success: false, message: "로그인이 필요합니다." };
+    
+    if (action === "SET_LED") lastLedUpdateTimeRef.current = Date.now();
+    if (action === "SET_VOLUME") lastVolumeUpdateTimeRef.current = Date.now();
+
+    const dId = currentUser.deviceId || "ESP32_Test";
+    const response = await apiSendData({
+      email: currentUser.email,
+      action,
+      value,
+      region: region || currentUser.region || "서울",
+      deviceId: dId,
+      diaryText,
+      ledData
+    });
+
+    if (response.result === "SUCCESS" || response.result_text || response.spray !== undefined) {
+      setTimeout(() => refreshDeviceState(), 500);
+      return { 
+        ...response,
+        success: true, 
+        message: response.result_text || response.message || "명령 전송 완료",
+      };
+    }
+    return { ...response, success: false, message: response.message || "명령 전송 실패" };
+  }, [currentUser, refreshDeviceState]);
+
+  const updateScentSlot = (id: number, slot: Partial<ScentSlot>) => {
+    setScentSlots(prev => prev.map(s => s.id === id ? { ...s, ...slot } : s));
+  };
+
+  const calibrateWeight = async () => {
+    if (!currentUser) return false;
+    try {
+      const response = await apiSendData({
+        email: currentUser.email,
+        action: "CALIBRATE",
+        value: 0,
+        region: "CALIBRATE",
+        deviceId: currentUser.deviceId || "ESP32_Test"
+      });
+      return response.result === "SUCCESS";
+    } catch (e) {
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    if (currentUser) {
+      refreshDeviceState();
+      const interval = setInterval(refreshDeviceState, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [currentUser, refreshDeviceState]);
+
   return (
-    <div key="scents-screen" className="flex-1 flex flex-col bg-gray-50 dark:bg-gray-950 overflow-y-auto relative pb-24 min-h-screen transition-colors duration-300">
-      <header className="px-6 pt-12 pb-4 flex justify-between items-center z-10 sticky top-0 bg-gray-50/90 dark:bg-gray-950/90 backdrop-blur-md transition-colors duration-300">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">향기 관리</h1>
-          <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mt-1">디퓨저 카트리지 상태 및 교체</p>
-        </div>
-        <button 
-          onClick={handleRefresh}
-          disabled={loading}
-          className={`w-10 h-10 bg-white dark:bg-gray-900 shadow-sm border border-gray-200 dark:border-gray-800 rounded-full flex items-center justify-center text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all ${loading ? 'opacity-50' : ''}`}
-        >
-          <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-        </button>
-      </header>
-
-      <div className="px-6 py-4 flex flex-col gap-4">
-        {scentSlots.map((cart) => (
-          <motion.div 
-            key={cart.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-            className="bg-white dark:bg-gray-900 rounded-3xl p-5 shadow-sm border border-gray-200 dark:border-gray-800 flex flex-col gap-4 transition-colors duration-300"
-          >
-            <div className="flex justify-between items-start">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold ${cart.color} dark:bg-opacity-90`}>
-                  {cart.id}
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">{cart.name}</h3>
-                  <p className="text-sm font-semibold text-gray-400 dark:text-gray-500">슬롯 {cart.id}</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setReplacingId(cart.id)}
-                className="w-10 h-10 bg-gray-50 dark:bg-gray-800 rounded-full flex items-center justify-center text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-              >
-                <RefreshCw className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center text-sm mb-2.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-tight text-[10px]">Remaining</span>
-                  {cart.remaining < 20 && (
-                    <span className="bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-[9px] font-black px-1.5 py-0.5 rounded-md animate-pulse">LOW</span>
-                  )}
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500">
-                    {cart.weightGrams?.toFixed(1) || "0.0"}g
-                  </span>
-                  <span className={`text-base font-black tracking-tighter ${cart.remaining < 20 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
-                    {cart.remaining}<span className="text-[10px] ml-0.5 opacity-60">%</span>
-                  </span>
-                </div>
-              </div>
-              <div className="h-3 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden p-0.5 border border-gray-100 dark:border-gray-700 shadow-inner">
-                <motion.div 
-                  initial={{ width: 0 }} 
-                  animate={{ width: `${cart.remaining}%` }} 
-                  transition={{ type: "spring", stiffness: 100, damping: 20 }}
-                  className={`h-full rounded-full ${cart.remaining < 20 ? 'bg-gradient-to-r from-red-500 to-rose-400' : cart.color} shadow-sm`} 
-                />
-              </div>
-            </div>
-          </motion.div>
-        ))}
-      </div>
-
-      <AnimatePresence>
-        {replacingId !== null && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center">
-            <motion.div 
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setReplacingId(null)}
-              className="absolute inset-0 bg-gray-900/40 dark:bg-gray-950/60 backdrop-blur-sm transition-colors duration-300"
-            />
-            <motion.div 
-              initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="relative w-full bg-white dark:bg-gray-900 rounded-t-[2.5rem] p-6 pb-12 shadow-2xl transition-colors duration-300 border-t border-gray-200 dark:border-gray-800"
-            >
-              <div className="flex justify-between items-center mb-6">
-                <div>
-                  <h2 className="text-xl font-bold text-gray-900 dark:text-white">새 향기 등록</h2>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">슬롯 {replacingId}에 장착할 카트리지를 선택하세요</p>
-                </div>
-                <button onClick={() => setReplacingId(null)} className="w-8 h-8 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-2">
-                {availableScents.map((scent) => (
-                  <button
-                    key={scent.name}
-                    onClick={() => handleReplace(scent.name, scent.color)}
-                    className="flex items-center gap-3 p-4 border border-gray-200 dark:border-gray-800 shadow-sm rounded-2xl hover:bg-gray-50 dark:hover:bg-gray-800 hover:shadow-md transition-all"
-                  >
-                    <div className={`w-8 h-8 rounded-full ${scent.color} dark:bg-opacity-90 flex items-center justify-center`}>
-                      <CheckCircle2 className="w-4 h-4 text-white opacity-0" />
-                    </div>
-                    <span className="font-bold text-gray-700 dark:text-gray-200">{scent.name}</span>
-                  </button>
-                ))}
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      <BottomNav />
-    </div>
+    <DeviceContext.Provider value={{
+      scentSlots, updateScentSlot, refreshDeviceState,
+      wifiStrength, setWifiStrength,
+      volume, handleVolumeChange,
+      intensity, handleIntensityChange,
+      activeTimerMinutes, handleTimerChange,
+      timerEnabled, timerStart, timerEnd, updateTimerSettings,
+      currentScent, isDiffuserOn, setIsDiffuserOn, 
+      ledColor, ledBrightness, isLedOn,
+      activeMode, setActiveMode,
+      isDeviceActionLoading,
+      sendDeviceData,
+      calibrateWeight,
+      dbLevel,
+      dbAvg,
+      dbStdDev,
+      noiseType,
+      dbChange,
+      deviceStatus
+    }}>
+      {children}
+    </DeviceContext.Provider>
   );
-}
+};
+
+export const useDevice = () => {
+  const context = useContext(DeviceContext);
+  if (context === undefined) {
+    throw new Error("useDevice must be used within a DeviceProvider");
+  }
+  return context;
+};

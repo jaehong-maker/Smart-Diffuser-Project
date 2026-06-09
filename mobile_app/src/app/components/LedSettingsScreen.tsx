@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Lightbulb, Power, SlidersHorizontal, RefreshCw } from "lucide-react";
+import { Lightbulb, Power, SlidersHorizontal, RefreshCw, Sparkles } from "lucide-react";
 import { BottomNav } from "./BottomNav";
 import { useDevice } from "../store/DeviceContext";
 import { useAuth } from "../store/AuthContext";
@@ -137,6 +137,7 @@ export function LedSettingsScreen() {
   const [isOn, setIsOn] = useState(false);
   const [color, setColor] = useState("#FBBF24");
   const [brightness, setBrightness] = useState(80);
+  const [effect, setEffect] = useState(0); // 0: Solid, 1: Breathe, 2: Rainbow, 3: Sync
   const [thumbPos, setThumbPos] = useState({ x: 75, y: 25 });
   
   const [isSyncing, setIsSyncing] = useState(false);
@@ -154,7 +155,7 @@ export function LedSettingsScreen() {
 
   const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const syncWithHardware = (r: number, g: number, b: number, br: number, powerOn: boolean) => {
+  const syncWithHardware = (r: number, g: number, b: number, br: number, powerOn: boolean, eff: number) => {
     if (!currentUser) return;
     
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
@@ -165,7 +166,7 @@ export function LedSettingsScreen() {
         setIsSyncing(true);
         try {
           const targetBr = powerOn ? Math.round((br / 100) * 255) : 0;
-          await sendDeviceData("SET_LED", 0, undefined, undefined, { r, g, b, br: targetBr });
+          await sendDeviceData("SET_LED", 0, undefined, undefined, { r, g, b, br: targetBr, effect: eff } as any);
         } catch (err) {
           console.error("LED Sync Error:", err);
         } finally {
@@ -183,8 +184,8 @@ export function LedSettingsScreen() {
 
   useEffect(() => {
     const rgb = hexToRgb(color);
-    syncWithHardware(rgb.r, rgb.g, rgb.b, brightness, isOn);
-  }, [color, brightness, isOn]);
+    syncWithHardware(rgb.r, rgb.g, rgb.b, brightness, isOn, effect);
+  }, [color, brightness, isOn, effect]);
 
   return (
     <div key="led-screen" className="flex-1 flex flex-col bg-white dark:bg-gray-950 overflow-x-hidden relative pb-24 min-h-screen transition-colors duration-500">
@@ -203,19 +204,6 @@ export function LedSettingsScreen() {
       <header className="px-6 pt-12 pb-2 flex justify-between items-center z-20 relative">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white uppercase tracking-tighter">LED Control</h1>
-        </div>
-        <div className="flex items-center gap-3">
-          {isSyncing && <RefreshCw className="w-3 h-3 animate-spin text-gray-400" />}
-          <button
-            onClick={() => { markInteraction(); setIsOn(!isOn); }}
-            className={`w-11 h-11 rounded-full flex items-center justify-center transition-all shadow-lg border ${
-              isOn 
-                ? "bg-white text-gray-900 border-white" 
-                : "bg-gray-50 text-gray-400 border-gray-200 dark:bg-gray-800 dark:border-gray-700"
-            }`}
-          >
-            <Power className="w-5 h-5" />
-          </button>
         </div>
       </header>
 
@@ -300,7 +288,7 @@ export function LedSettingsScreen() {
               thumbPos={thumbPos}
               setThumbPos={setThumbPos}
               onChange={(newColor) => { markInteraction(); setColor(newColor); }}
-              disabled={!isOn}
+              disabled={!isOn || effect === 2} // 무지개 모드일 때는 컬러휠 비활성화
               onInteractionStart={markInteraction}
             />
           </div>
@@ -334,6 +322,36 @@ export function LedSettingsScreen() {
               </div>
             </div>
           </div>
+
+          {/* Effects Section */}
+          <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-xl rounded-[2rem] p-6 shadow-lg border border-white/40 dark:border-gray-800/40">
+            <h3 className="text-xs font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2 uppercase tracking-wider">
+              <Sparkles className="w-4 h-4 text-yellow-500" />
+              Lighting Effects
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { id: 0, name: "단색", icon: "●" },
+                { id: 1, name: "호흡 (Breathe)", icon: "〰" },
+                { id: 2, name: "무지개 (Rainbow)", icon: "🌈" },
+                { id: 3, name: "음악 반응", icon: "🎵" }
+              ].map(eff => (
+                <button
+                  key={eff.id}
+                  onClick={() => { markInteraction(); setEffect(eff.id); }}
+                  disabled={!isOn}
+                  className={`flex flex-col items-center justify-center py-4 rounded-[1.5rem] transition-all duration-300 border ${
+                    effect === eff.id && isOn
+                      ? "bg-gray-900 dark:bg-white text-white dark:text-gray-900 border-gray-900 dark:border-white shadow-md scale-[1.02]" 
+                      : "bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-750 disabled:opacity-40"
+                  }`}
+                >
+                  <span className="text-xl mb-1.5">{eff.icon}</span>
+                  <span className="text-[11px] font-bold">{eff.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -341,3 +359,4 @@ export function LedSettingsScreen() {
     </div>
   );
 }
+

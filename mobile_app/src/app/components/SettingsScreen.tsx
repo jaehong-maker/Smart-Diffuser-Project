@@ -34,7 +34,7 @@ export function SettingsScreen() {
     timerEnd,
     updateTimerSettings
   } = useDevice();
-  
+
   const [darkMode, setDarkMode] = useState(() => document.documentElement.classList.contains("dark"));
   const isConnected = wifiStrength !== "disconnected";
 
@@ -97,7 +97,7 @@ export function SettingsScreen() {
               <motion.div layout className="w-4 h-4 bg-white rounded-full shadow-sm" />
             </button>
           </div>
-          
+
           <div className={`flex items-center gap-4 transition-opacity ${timerEnabled ? "opacity-100" : "opacity-40 pointer-events-none"}`}>
             <div className="flex-1 flex flex-col gap-1">
               <span className="text-[10px] font-bold text-gray-400 uppercase">시작 시간</span>
@@ -191,16 +191,19 @@ export function SettingsScreen() {
         <div>
           <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 mb-3 px-1">고객 지원</h3>
           <div className="bg-white dark:bg-gray-900 rounded-3xl border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden transition-colors duration-300">
-            <button className="w-full flex items-center justify-between p-4 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left">
+            <button 
+              onClick={() => window.open("http://pf.kakao.com/_fhxhxjX/chat", "_blank")}
+              className="w-full flex items-center justify-between p-4 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left"
+            >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gray-50 dark:bg-gray-800 rounded-xl flex items-center justify-center text-gray-600 dark:text-gray-300 transition-colors duration-300">
+                <div className="w-10 h-10 bg-yellow-50 dark:bg-yellow-900/20 rounded-xl flex items-center justify-center text-yellow-600 dark:text-yellow-400 transition-colors duration-300">
                   <CircleHelp className="w-5 h-5" />
                 </div>
-                <span className="font-bold text-gray-800 dark:text-gray-200">도움말 및 지원</span>
+                <span className="font-bold text-gray-800 dark:text-gray-200">카카오톡 챗봇 문의</span>
               </div>
               <ChevronRight className="w-5 h-5 text-gray-400 dark:text-gray-500" />
             </button>
-            
+
             <button 
               onClick={handleLogout}
               className="w-full flex items-center justify-between p-4 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors text-left"
