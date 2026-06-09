@@ -7,6 +7,7 @@ void processStandardInput();
 
 static const int NEXTION_DIM_NORMAL = 100;
 static bool isDisplayDimmed = false;
+static bool shouldShowStartupReadyPage = false;
 
 // --- 로드셀 데이터 준비 완료 인터럽트 (ISR) ---
 // IRAM_ATTR을 붙여 인터럽트가 플래시 메모리가 아닌 RAM에서 최고 속도로 실행되게 합니다.
@@ -194,6 +195,8 @@ void initSystem() {
   if (pendingNextionCmd.length() > 0) {
     prefs.remove("pending_nextion_cmd");
     handleNextionCmd(pendingNextionCmd);
+  } else {
+    shouldShowStartupReadyPage = true;
   }
 
   xTaskCreatePinnedToCore(networkTaskLoop, "NetworkTask", 8192, NULL, 1, &NetworkTaskHandle, 1);
@@ -205,6 +208,11 @@ void runSystem() {
   esp_task_wdt_reset(); 
   handleOTA(); 
   checkNextionInput(); 
+  if (shouldShowStartupReadyPage) {
+    shouldShowStartupReadyPage = false;
+    clearNextionInputBuffer();
+    showStartupReadyPage();
+  }
   updateClockDisplay();
 
   // --- 스케줄러 추가 ---
@@ -696,6 +704,7 @@ static bool stopLowFluidActiveNozzles() {
         blendSelection = "";
         blendSprayActive = false;
         updateDisplay(0, "Low Fluid! Stopped");
+        showLowFluidPage();
         return true;
     }
 
@@ -737,6 +746,7 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   if (activeCount == 0) {
       Serial.println(C_YELLOW "⚠️ 작동 가능한 카트리지가 없어 분사가 취소되었습니다." C_RESET);
       updateDisplay(0, "Low Fluid! Blocked"); 
+      showLowFluidPage();
       return; 
   }
 
