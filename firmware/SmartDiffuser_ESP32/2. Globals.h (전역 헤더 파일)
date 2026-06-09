@@ -61,7 +61,7 @@ const int NEXTION_RX_PIN = 16;
 #define I2S_READ_TIMEOUT (100 / portTICK_PERIOD_MS)
 #define SAMPLE_RATE 16000
 #define RECORD_TIME 2
-#define SLEEP_TIMEOUT 300000  // <--- ★ 여기에 딱 한 줄 추가!
+#define SLEEP_TIMEOUT 60000  // <--- ★ 여기에 딱 한 줄 추가!
 #define CLEANING_INTERVAL 86400000 // <--- ★ 여기에 딱 한 줄 추가!
 
 namespace Config {
@@ -105,6 +105,13 @@ struct WavHeader {
   char fmt_chunk_marker[4]; uint32_t length_of_fmt; uint16_t format_type; uint16_t channels;
   uint32_t sample_rate; uint32_t byterate; uint16_t block_align; uint16_t bits_per_sample;
   char data_chunk_header[4]; uint32_t data_size;
+};
+
+enum LedMode {
+  LED_SOLID = 0,
+  LED_BREATHE,
+  LED_RAINBOW,
+  LED_MUSIC
 };
 
 // ==========================================
@@ -155,6 +162,7 @@ extern int currentVolume;
 extern uint8_t ledR, ledG, ledB; 
 extern int ledBrightness;
 extern bool ledEnabled;
+extern LedMode ledEffect;
 
 // 향수 및 무게 데이터
 extern float weights[4];
