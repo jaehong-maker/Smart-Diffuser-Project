@@ -9,13 +9,9 @@ import { apiSendData } from "../utils/api";
 
 export function ScentsScreen() {
   const { currentUser } = useAuth();
-  const { scentSlots, updateScentSlot, refreshDeviceState, calibrateWeight } = useDevice();
+  const { scentSlots, updateScentSlot, refreshDeviceState } = useDevice();
   const [replacingId, setReplacingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
-  
-  // 커스텀 모달 상태
-  const [confirmDialog, setConfirmDialog] = useState<{isOpen: boolean, title: string, message: string, onConfirm: () => void, onCancel: () => void} | null>(null);
-  const [alertDialog, setAlertDialog] = useState<{isOpen: boolean, title: string, message: string, isError?: boolean} | null>(null);
   
   const availableScents = [
     { name: "시트러스", color: "bg-orange-500" },
@@ -32,54 +28,6 @@ export function ScentsScreen() {
     refreshDeviceState().finally(() => setLoading(false));
   }, []);
 
-  const handleRefreshClick = () => {
-    if (loading) return;
-    
-    setConfirmDialog({
-      isOpen: true,
-      title: "영점 조절 시작",
-      message: "무게 센서 영점 조절(Calibration)을 시작할까요?\n기기 위에 물건이 없는 상태여야 정확합니다.",
-      onConfirm: async () => {
-        setConfirmDialog(null);
-        await performCalibration();
-      },
-      onCancel: async () => {
-        setConfirmDialog(null);
-        setLoading(true);
-        await refreshDeviceState();
-        setLoading(false);
-      }
-    });
-  };
-
-  const performCalibration = async () => {
-    setLoading(true);
-    try {
-      const success = await calibrateWeight();
-      if (success) {
-        setAlertDialog({
-          isOpen: true,
-          title: "명령 전송 완료",
-          message: "영점 조절 명령이 기기로 전달되었습니다.\n잠시 후 무게가 0g으로 재설정됩니다.",
-          isError: false
-        });
-      } else {
-        setAlertDialog({
-          isOpen: true,
-          title: "명령 전송 실패",
-          message: "영점 조절 요청에 실패했습니다.\n기기 연결 상태를 확인해주세요.",
-          isError: true
-        });
-      }
-      setTimeout(async () => {
-        await refreshDeviceState();
-        setLoading(false);
-      }, 1500);
-    } catch (err) {
-      console.error(err);
-      setLoading(false);
-    }
-  };
 
   const handleReplace = async (newName: string, newColor: string) => {
     if (replacingId === null) return;
@@ -112,20 +60,12 @@ export function ScentsScreen() {
   };
 
   return (
-    <div key="scents-screen" className="flex-1 flex flex-col bg-gray-50 dark:bg-gray-950 overflow-y-auto relative pb-24 min-h-screen transition-colors duration-300">
+    <div key="scents-screen" className="flex-1 flex flex-col bg-gray-50 dark:bg-gray-950 overflow-y-auto relative pb-32 min-h-screen transition-colors duration-300">
       <header className="px-6 pt-12 pb-4 flex justify-between items-center z-10 sticky top-0 bg-gray-50/90 dark:bg-gray-950/90 backdrop-blur-md transition-colors duration-300">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">향기 관리</h1>
           <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mt-1">디퓨저 카트리지 상태 및 교체</p>
         </div>
-        <button 
-          onClick={handleRefreshClick}
-          disabled={loading}
-          className={`px-4 py-2 bg-white dark:bg-gray-900 shadow-sm border border-gray-200 dark:border-gray-800 rounded-2xl flex items-center gap-2 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all active:scale-95 ${loading ? 'opacity-50' : ''}`}
-        >
-          {loading ? <RefreshCw className="w-4 h-4 animate-spin text-blue-500" /> : <div className="w-2 h-2 rounded-full bg-blue-500" />}
-          <span className="text-xs font-bold">영점 조절</span>
-        </button>
       </header>
 
       <div className="px-6 py-4 flex flex-col gap-4">
@@ -224,81 +164,6 @@ export function ScentsScreen() {
         )}
       </AnimatePresence>
 
-      {/* 커스텀 확인 다이얼로그 (Confirm) */}
-      <AnimatePresence>
-        {confirmDialog && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-6">
-            <motion.div 
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={confirmDialog.onCancel}
-              className="absolute inset-0 bg-gray-900/60 dark:bg-gray-950/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 10 }} 
-              animate={{ opacity: 1, scale: 1, y: 0 }} 
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="relative w-full max-w-sm bg-white dark:bg-gray-900 rounded-3xl p-6 shadow-2xl border border-gray-200 dark:border-gray-800"
-            >
-              <div className="flex flex-col items-center text-center mb-6">
-                <div className="w-12 h-12 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mb-4">
-                  <RefreshCw className="w-6 h-6" />
-                </div>
-                <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-2">{confirmDialog.title}</h2>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400 whitespace-pre-line leading-relaxed">
-                  {confirmDialog.message}
-                </p>
-              </div>
-              <div className="flex gap-3">
-                <button 
-                  onClick={confirmDialog.onCancel}
-                  className="flex-1 py-3.5 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-bold rounded-xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                >
-                  취소
-                </button>
-                <button 
-                  onClick={confirmDialog.onConfirm}
-                  className="flex-1 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md transition-colors"
-                >
-                  시작하기
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* 커스텀 알림 다이얼로그 (Alert) */}
-      <AnimatePresence>
-        {alertDialog && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center px-6">
-            <motion.div 
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setAlertDialog(null)}
-              className="absolute inset-0 bg-gray-900/40 dark:bg-gray-950/60 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9, y: 20 }} 
-              animate={{ opacity: 1, scale: 1, y: 0 }} 
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-sm bg-white dark:bg-gray-900 rounded-3xl p-6 shadow-2xl border border-gray-200 dark:border-gray-800 flex flex-col items-center text-center"
-            >
-              <div className={`w-14 h-14 rounded-full flex items-center justify-center mb-4 ${alertDialog.isError ? 'bg-red-50 dark:bg-red-900/20 text-red-500' : 'bg-green-50 dark:bg-green-900/20 text-green-500'}`}>
-                {alertDialog.isError ? <AlertTriangle className="w-7 h-7" /> : <Check className="w-7 h-7" />}
-              </div>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">{alertDialog.title}</h2>
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400 whitespace-pre-line leading-relaxed mb-6">
-                {alertDialog.message}
-              </p>
-              <button 
-                onClick={() => setAlertDialog(null)}
-                className="w-full py-3.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-bold rounded-xl shadow-md active:scale-95 transition-all"
-              >
-                확인
-              </button>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       <BottomNav />
     </div>

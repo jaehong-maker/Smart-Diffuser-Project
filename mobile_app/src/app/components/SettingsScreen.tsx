@@ -52,7 +52,7 @@ export function SettingsScreen() {
   };
 
   return (
-    <div key="settings-screen" className="flex-1 flex flex-col bg-gray-50 dark:bg-gray-950 overflow-y-auto relative pb-24 min-h-screen transition-colors duration-300">
+    <div key="settings-screen" className="flex-1 flex flex-col bg-gray-50 dark:bg-gray-950 overflow-y-auto relative pb-32 min-h-screen transition-colors duration-300">
       <header className="px-6 pt-12 pb-4 flex justify-between items-center z-10 sticky top-0 bg-gray-50/90 dark:bg-gray-950/90 backdrop-blur-md transition-colors duration-300">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">설정</h1>

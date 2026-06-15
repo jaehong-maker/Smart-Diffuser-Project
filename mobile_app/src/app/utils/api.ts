@@ -193,6 +193,8 @@ export async function apiSendData(options: SendDataOptions): Promise<ApiResponse
   } else if (action === "AI_EMOTION") {
     data.mode = "emotion";
     data.user_emotion = region; 
+  } else if (action === "AI_REPLAY") {
+    data.mode = "ai_replay";
   } else if (action === "noise") {
     data.mode = "ambient";
   } else if (action === "MENU_STOP") {

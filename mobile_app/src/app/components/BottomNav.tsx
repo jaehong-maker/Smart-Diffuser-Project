@@ -15,14 +15,17 @@ export function BottomNav() {
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white/90 dark:bg-gray-950/90 backdrop-blur-md border-t border-gray-100 dark:border-gray-800 px-4 sm:px-6 pb-6 pt-3 flex justify-around items-center z-20 transition-colors duration-300">
+    <nav 
+      className="fixed bottom-0 left-0 right-0 bg-white/90 dark:bg-gray-950/90 backdrop-blur-md border-t border-gray-100 dark:border-gray-800 px-4 sm:px-6 pt-3 flex justify-around items-center z-20 transition-colors duration-300"
+      style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
+    >
       {navItems.map(({ path: itemPath, label, icon: Icon }) => {
         const isActive = path.startsWith(itemPath);
         return (
           <Link
             key={itemPath}
             to={itemPath}
-            className={`flex flex-col items-center gap-1 transition-colors ${
+            className={`flex flex-col items-center gap-1 transition-colors outline-none focus:outline-none [-webkit-tap-highlight-color:transparent] ${
               isActive 
                 ? "text-gray-900 dark:text-white" 
                 : "text-gray-400 dark:text-gray-500 hover:text-gray-900 dark:hover:text-gray-200"

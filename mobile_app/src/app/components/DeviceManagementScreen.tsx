@@ -24,7 +24,7 @@ import { useAuth } from "../store/AuthContext";
 export function DeviceManagementScreen() {
   const navigate = useNavigate();
   const { currentUser, updateUser } = useAuth();
-  const { wifiStrength, sendDeviceData } = useDevice();
+  const { sendDeviceData } = useDevice();
   
   const [isEditingId, setIsEditingId] = useState(false);
   const [newDeviceId, setNewDeviceId] = useState(currentUser?.deviceId || "ESP32_Test");
@@ -34,14 +34,7 @@ export function DeviceManagementScreen() {
   const [confirmDialog, setConfirmDialog] = useState<{isOpen: boolean, title: string, message: string, onConfirm: () => void, onCancel: () => void, isDanger?: boolean} | null>(null);
   const [alertDialog, setAlertDialog] = useState<{isOpen: boolean, title: string, message: string, isError?: boolean, onConfirm?: () => void} | null>(null);
 
-  const wifiSignalMap = {
-    strong: "강함",
-    medium: "양호",
-    weak: "약함",
-    disconnected: "연결 끊김"
-  };
 
-  const wifiSignal = wifiSignalMap[wifiStrength];
 
   const handleWifiReset = () => {
     setConfirmDialog({
@@ -200,26 +193,6 @@ export function DeviceManagementScreen() {
             )}
           </div>
           
-          <div className="flex items-center gap-6 mt-6 w-full justify-center">
-            <div className="flex flex-col items-center gap-1 group transition-transform hover:scale-105 active:scale-95">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                wifiStrength === "strong" ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400" :
-                wifiStrength === "medium" ? "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400" :
-                wifiStrength === "weak" ? "bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400" :
-                "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400"
-              }`}>
-                <Wifi className={`w-5 h-5 ${wifiStrength === "disconnected" ? "opacity-50" : ""}`} />
-              </div>
-              <span className={`text-xs font-bold ${
-                wifiStrength === "strong" ? "text-green-600 dark:text-green-400" :
-                wifiStrength === "medium" ? "text-yellow-600 dark:text-yellow-400" :
-                wifiStrength === "weak" ? "text-orange-600 dark:text-orange-400" :
-                "text-red-600 dark:text-red-400"
-              }`}>
-                신호 {wifiSignal}
-              </span>
-            </div>
-          </div>
         </motion.div>
 
         {/* Maintenance Actions */}

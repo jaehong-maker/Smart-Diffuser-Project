@@ -35,6 +35,7 @@ import { apiSendVoiceData } from "../utils/api";
 
 import { ModeButton } from "./ModeButton";
 import { TRACKS } from "../utils/tracks";
+import { toast } from "sonner";
 
 const REGION_MAP: Record<string, string> = {
   seoul: "서울",
@@ -289,7 +290,10 @@ export function ModesScreen() {
               const res = await apiSendVoiceData(base64Audio, currentUser?.deviceId, actualMimeType);
               
               if (res.transcript) {
-                setVoiceResult(`인식 결과: ${res.transcript}`);
+                // 음성 인식 결과(transcript)와 AI 분석 결과(message)를 함께 보여줍니다.
+                const messageText = res.message ? res.message.replace("음성 인식 성공: ", "") : "";
+                setVoiceResult(`인식 내용: ${res.transcript}\n${messageText}`);
+                
                 if (res.spray && res.spray > 0) {
                   if (!isOn) setIsOn(true);
                   setActiveMode("voice");
@@ -347,7 +351,7 @@ export function ModesScreen() {
       action = "AI_WEATHER";
       region = regionKorean;
     } else if (modeToStart === "ai") {
-      action = "AI_EMOTION";
+      action = "AI_REPLAY";
       region = "편안함";
     } else if (modeToStart === "noise") {
       action = "noise";
@@ -423,8 +427,13 @@ export function ModesScreen() {
     
     try {
       console.log(`Sending feedback: ${val} for ${scentId}_${context}`);
-      await sendDeviceData("FEEDBACK", val, `${scentId}_${context}`);
-      alert("피드백이 반영되었습니다. 감사합니다!");
+      const res = await sendDeviceData("FEEDBACK", val, `${scentId}_${context}`);
+      
+      if (type === "dislike" && res.success && res.spray) {
+        toast.success(`피드백이 반영되었습니다! 다른 향기(${res.spray}번)로 교체하여 분사합니다.`);
+      } else {
+        toast.success("피드백이 반영되었습니다. 감사합니다!");
+      }
     } catch (err) {
       console.error("Feedback failed", err);
     }
@@ -508,7 +517,7 @@ export function ModesScreen() {
     };
 
   return (
-    <div key="modes-screen" ref={containerRef} className="flex-1 flex flex-col bg-white dark:bg-gray-950 overflow-y-auto relative pb-24 min-h-screen transition-colors duration-300">
+    <div key="modes-screen" ref={containerRef} className="flex-1 flex flex-col bg-white dark:bg-gray-950 overflow-y-auto relative pb-32 min-h-screen transition-colors duration-300">
       <header className="px-6 pt-12 pb-4 flex justify-between items-center z-10 sticky top-0 bg-white/80 dark:bg-gray-950/80 backdrop-blur-md transition-colors duration-300">
         <div>
           <div className="flex items-center gap-2">
@@ -688,7 +697,7 @@ export function ModesScreen() {
                         <motion.p 
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
-                          className="text-sm font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-4 py-2 rounded-2xl border border-blue-100 dark:border-blue-800/50 inline-block"
+                          className="text-sm font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-4 py-2 rounded-2xl border border-blue-100 dark:border-blue-800/50 inline-block whitespace-pre-wrap text-left"
                         >
                           {voiceResult}
                         </motion.p>
@@ -701,7 +710,7 @@ export function ModesScreen() {
                   </div>
                 )}
 
-                {isOn && activeMode && activeMode !== "voice" && (
+                {isOn && activeMode && (
                   <div className="flex flex-col gap-3 w-full max-w-xs mx-auto">
                     {activeMode === "noise" && (
                       <div className="flex flex-col items-center w-full mb-2">
@@ -772,9 +781,9 @@ export function ModesScreen() {
                         e.stopPropagation();
                         handleFeedback("like");
                       }}
-                      className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border shadow-sm transition-all ${feedback === "like" ? "bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 border-gray-900 dark:border-gray-100 scale-105" : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"}`}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border shadow-sm transition-all bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
                     >
-                      <ThumbsUp className={`w-4 h-4 ${feedback === "like" ? "fill-current" : ""}`} />
+                      <ThumbsUp className="w-4 h-4" />
                       <span className="text-sm font-bold whitespace-nowrap">좋아요</span>
                     </button>
                     <button
@@ -782,9 +791,9 @@ export function ModesScreen() {
                         e.stopPropagation();
                         handleFeedback("dislike");
                       }}
-                      className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border shadow-sm transition-all ${feedback === "dislike" ? "bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 border-gray-300 dark:border-gray-600 scale-105" : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"}`}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border shadow-sm transition-all bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
                     >
-                      <ThumbsDown className={`w-4 h-4 ${feedback === "dislike" ? "fill-current" : ""}`} />
+                      <ThumbsDown className="w-4 h-4" />
                       <span className="text-sm font-bold whitespace-nowrap">별로예요</span>
                     </button>
                   </div>

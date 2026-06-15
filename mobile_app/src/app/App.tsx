@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { AuthProvider } from "./store/AuthContext";
 import { DeviceProvider } from "./store/DeviceContext";
 import { DiaryProvider } from "./store/DiaryContext";
-import { UIProvider } from "./store/UIContext";
+import { UIProvider } from "./store/UIContext";import { Toaster } from "./components/ui/sonner";
 
 export default function App() {
   useEffect(() => {
@@ -17,6 +17,7 @@ export default function App() {
         <DiaryProvider>
           <UIProvider>
             <RouterProvider router={router} />
+            <Toaster position="top-center" />
           </UIProvider>
         </DiaryProvider>
       </DeviceProvider>

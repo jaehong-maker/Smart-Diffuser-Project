@@ -83,7 +83,7 @@ export function AiTasteReportScreen() {
   };
 
   return (
-    <div key="ai-report-screen" className="flex-1 flex flex-col bg-gray-50 dark:bg-gray-950 overflow-y-auto relative pb-24 min-h-screen transition-colors duration-500">
+    <div key="ai-report-screen" className="flex-1 flex flex-col bg-gray-50 dark:bg-gray-950 overflow-y-auto relative pb-32 min-h-screen transition-colors duration-500">
       {/* 프리미엄 배경 글로우 */}
       <div className="absolute top-0 left-0 right-0 h-[60vh] overflow-hidden pointer-events-none">
         <div className="absolute inset-0 bg-gradient-to-b from-blue-100/40 dark:from-blue-900/10 to-transparent" />

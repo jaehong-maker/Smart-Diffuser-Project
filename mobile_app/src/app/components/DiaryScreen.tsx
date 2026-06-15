@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router";
 import { BottomNav } from "./BottomNav";
-import { Home as HomeIcon, Droplets, SlidersHorizontal, Settings, BookHeart, Brain, Sparkles, Search, ChevronDown, Quote } from "lucide-react";
+import { Home as HomeIcon, Droplets, SlidersHorizontal, Settings, BookHeart, Brain, Sparkles, Search, ChevronDown, Quote, ThumbsUp, ThumbsDown } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useDiary } from "../store/DiaryContext";
 import { useAuth } from "../store/AuthContext";
 import { useDevice } from "../store/DeviceContext";
+import { toast } from "sonner";
 
 export function DiaryScreen() {
   const { diaries, fetchDiaries } = useDiary();
@@ -25,6 +26,7 @@ export function DiaryScreen() {
   
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [feedback, setFeedback] = useState<"like" | "dislike" | null>(null);
 
   // 감정에 따른 시각적 테마 (색상, 그라디언트 등) 반환 함수
   const getEmotionTheme = (emotion: string) => {
@@ -89,6 +91,7 @@ export function DiaryScreen() {
 
     setIsAnalyzing(true);
     setResult(null);
+    setFeedback(null);
 
     try {
       // 인자: action, value, region(emotion tag), diaryText
@@ -143,8 +146,45 @@ export function DiaryScreen() {
     return "bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400";
   };
 
+  const handleDiaryFeedback = async (type: "like" | "dislike") => {
+    if (!result || !currentUser) return;
+    setFeedback(type);
+
+    try {
+      // 1. 서버에 피드백 전송 (서버에서 자동으로 다른 향기를 찾아 기기에 명령을 내림)
+      const val = type === "like" ? 1 : -1;
+      const res = await sendDeviceData("FEEDBACK", val, `${result.spray}_AI_DIARY`);
+
+      if (type === "dislike") {
+        if (res.success && res.spray) {
+          const newSprayCode = res.spray;
+          const newScent = scentSlots.find(s => s.id === newSprayCode) || scentSlots[0];
+          
+          // 2. UI 즉시 업데이트
+          setResult(prev => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              spray: newScent.id,
+              scentName: newScent.name,
+              scent: "다른 향기로 바로 교체해 드렸어요!",
+              reason: "추천해 드린 향기가 마음에 들지 않으셨군요. 즉시 다른 향기로 교체하여 기기에 분사 명령을 보냈습니다."
+            };
+          });
+          toast.success(`${newScent.name} 향기로 즉시 변경되었습니다!`);
+        } else {
+          toast.error("다른 향기로 변경하는 데 실패했습니다.");
+        }
+      } else {
+        toast.success("피드백이 반영되었습니다. 감사합니다!");
+      }
+    } catch (err) {
+      console.error("Feedback failed", err);
+    }
+  };
+
   return (
-    <div key="diary-screen" className="flex-1 flex flex-col bg-gray-50 dark:bg-gray-950 overflow-y-auto relative pb-24 min-h-screen transition-colors duration-300">
+    <div key="diary-screen" className="flex-1 flex flex-col bg-gray-50 dark:bg-gray-950 overflow-y-auto relative pb-32 min-h-screen transition-colors duration-300">
       <header className="px-6 pt-12 pb-4 flex justify-between items-center z-10 sticky top-0 bg-gray-50/90 dark:bg-gray-950/90 backdrop-blur-md transition-colors duration-300">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">감정 일기장</h1>
@@ -257,6 +297,24 @@ export function DiaryScreen() {
                         <Droplets className="w-6 h-6 text-white" />
                       </div>
                     </div>
+                  </div>
+
+                  {/* 피드백 버튼 영역 */}
+                  <div className="flex justify-center gap-3 mt-4 relative z-20">
+                    <button
+                      onClick={() => handleDiaryFeedback("like")}
+                      className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border shadow-sm transition-all ${feedback === "like" ? "bg-white text-gray-900 border-white scale-105" : "bg-white/10 hover:bg-white/20 text-white border-white/20"}`}
+                    >
+                      <ThumbsUp className={`w-4 h-4 ${feedback === "like" ? "fill-current" : ""}`} />
+                      <span className="text-sm font-bold whitespace-nowrap">좋아요</span>
+                    </button>
+                    <button
+                      onClick={() => handleDiaryFeedback("dislike")}
+                      className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border shadow-sm transition-all bg-white/10 hover:bg-white/20 text-white border-white/20`}
+                    >
+                      <ThumbsDown className="w-4 h-4" />
+                      <span className="text-sm font-bold whitespace-nowrap">별로예요</span>
+                    </button>
                   </div>
                 </div>
               </div>

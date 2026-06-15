@@ -188,7 +188,7 @@ export function LedSettingsScreen() {
   }, [color, brightness, isOn, effect]);
 
   return (
-    <div key="led-screen" className="flex-1 flex flex-col bg-white dark:bg-gray-950 overflow-x-hidden relative pb-24 min-h-screen transition-colors duration-500">
+    <div key="led-screen" className="flex-1 flex flex-col bg-white dark:bg-gray-950 overflow-x-hidden relative pb-32 min-h-screen transition-colors duration-500">
       <div className="absolute top-0 left-0 right-0 h-[45vh] pointer-events-none overflow-hidden">
         <motion.div 
           animate={{ 
@@ -323,35 +323,7 @@ export function LedSettingsScreen() {
             </div>
           </div>
 
-          {/* Effects Section */}
-          <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-xl rounded-[2rem] p-6 shadow-lg border border-white/40 dark:border-gray-800/40">
-            <h3 className="text-xs font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2 uppercase tracking-wider">
-              <Sparkles className="w-4 h-4 text-yellow-500" />
-              Lighting Effects
-            </h3>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { id: 0, name: "단색", icon: "●" },
-                { id: 1, name: "호흡 (Breathe)", icon: "〰" },
-                { id: 2, name: "무지개 (Rainbow)", icon: "🌈" },
-                { id: 3, name: "음악 반응", icon: "🎵" }
-              ].map(eff => (
-                <button
-                  key={eff.id}
-                  onClick={() => { markInteraction(); setEffect(eff.id); }}
-                  disabled={!isOn}
-                  className={`flex flex-col items-center justify-center py-4 rounded-[1.5rem] transition-all duration-300 border ${
-                    effect === eff.id && isOn
-                      ? "bg-gray-900 dark:bg-white text-white dark:text-gray-900 border-gray-900 dark:border-white shadow-md scale-[1.02]" 
-                      : "bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-750 disabled:opacity-40"
-                  }`}
-                >
-                  <span className="text-xl mb-1.5">{eff.icon}</span>
-                  <span className="text-[11px] font-bold">{eff.name}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+
         </div>
       </div>
 

@@ -101,7 +101,7 @@ export function MusicSettingsScreen() {
         </button>
       </header>
 
-      <div className="flex-1 px-6 py-4 flex flex-col gap-6 pb-24 overflow-y-auto">
+      <div className="flex-1 px-6 py-4 flex flex-col gap-6 pb-32 overflow-y-auto">
         <div className="mb-2">
           <p className="text-sm font-medium text-gray-500 dark:text-gray-400 leading-relaxed">
             각 향기가 분사될 때 기기(SD카드)에서 재생될 곡을 선택해 주세요.
