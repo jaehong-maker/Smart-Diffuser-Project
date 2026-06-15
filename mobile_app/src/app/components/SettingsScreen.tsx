@@ -26,7 +26,6 @@ export function SettingsScreen() {
   const navigate = useNavigate();
   const { logoutUser } = useAuth();
   const { 
-    wifiStrength, 
     intensity, 
     handleIntensityChange,
     timerEnabled,
@@ -36,7 +35,6 @@ export function SettingsScreen() {
   } = useDevice();
 
   const [darkMode, setDarkMode] = useState(() => document.documentElement.classList.contains("dark"));
-  const isConnected = wifiStrength !== "disconnected";
 
   useEffect(() => {
     if (darkMode) {
@@ -71,12 +69,6 @@ export function SettingsScreen() {
           </div>
           <div className="flex-1">
             <h2 className="text-lg font-bold text-gray-900 dark:text-white">Smart Diffuser</h2>
-            <div className="flex items-center gap-1.5 mt-1">
-              <span className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`}></span>
-              <p className={`text-sm font-medium ${isConnected ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400"}`}>
-                Wi-Fi: {isConnected ? "연결됨" : "연결 없음"}
-              </p>
-            </div>
           </div>
           <Link to="/device" className="px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-xl text-xs font-bold transition-colors">
             기기 관리

@@ -151,6 +151,14 @@ export function DiaryScreen() {
     setFeedback(type);
 
     try {
+      if (type === "dislike") {
+        // 기존 향기 분사를 확실히 멈추기 위해 정지 명령 전송
+        toast("기존 향기를 멈추고 새로운 향기를 준비 중입니다...", { icon: "⏳" });
+        await sendDeviceData("MENU_STOP", 90);
+        // 기기가 정지 명령을 가져가서 모터를 끌 수 있도록 3초 대기
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+
       // 1. 서버에 피드백 전송 (서버에서 자동으로 다른 향기를 찾아 기기에 명령을 내림)
       const val = type === "like" ? 1 : -1;
       const res = await sendDeviceData("FEEDBACK", val, `${result.spray}_AI_DIARY`);

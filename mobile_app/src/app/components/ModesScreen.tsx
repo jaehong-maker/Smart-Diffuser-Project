@@ -367,6 +367,14 @@ export function ModesScreen() {
     }
 
     try {
+      if (isOn) {
+        // 기존 향기 분사를 확실히 멈추기 위해 정지 명령 전송
+        toast("기존 모드를 멈추고 새로운 발향을 준비 중입니다...", { icon: "⏳" });
+        await sendDeviceData("MENU_STOP", 90);
+        // 기기가 정지 명령을 가져가서 모터를 끌 수 있도록 3초 대기
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+
       const result = await sendDeviceData(action, value, region);
       if (result.success) {
         if (pendingMode) setActiveMode(pendingMode);
@@ -426,6 +434,14 @@ export function ModesScreen() {
     const scentId = currentScent || (activeMode === "weather" ? "1" : activeMode === "ai" ? "1" : "4");
     
     try {
+      if (type === "dislike") {
+        // 기존 향기 분사를 확실히 멈추기 위해 정지 명령 전송
+        toast("기존 향기를 멈추고 새로운 향기를 준비 중입니다...", { icon: "⏳" });
+        await sendDeviceData("MENU_STOP", 90);
+        // 기기가 정지 명령을 가져가서 모터를 끌 수 있도록 3초 대기
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+
       console.log(`Sending feedback: ${val} for ${scentId}_${context}`);
       const res = await sendDeviceData("FEEDBACK", val, `${scentId}_${context}`);
       
