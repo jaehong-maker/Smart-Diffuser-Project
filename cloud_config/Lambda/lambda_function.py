@@ -1,6 +1,5 @@
-"""
-AWS Lambda의 진입점으로서 모든 API Gateway 요청을 최초로 수신하고 각 핸들러로 라우팅함.
-"""
+
+AWS Lambda의 진입점으로서 모든 API Gateway 요청을 최초로 수신하고 각 핸들러로 라우팅
 
 import sys
 import os
