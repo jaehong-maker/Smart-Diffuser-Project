@@ -1,3 +1,6 @@
+
+# 디퓨저 기기 자체의 상태 조회 및 제어 요청을 담당
+
 import json
 import logging
 from datetime import datetime, timedelta, timezone
