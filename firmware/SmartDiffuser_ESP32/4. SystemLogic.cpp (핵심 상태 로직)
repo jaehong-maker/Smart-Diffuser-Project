@@ -692,18 +692,32 @@ void resetScaleZero() {
 static bool stopLowFluidActiveNozzles() {
     bool hasActiveNozzle = false;
     bool blockedAnyNozzle = false;
+    static unsigned long lowFluidTime[4] = {0, 0, 0, 0};
+    int lastLowFluidCartridge = -1;
 
     for (int i = 0; i < 4; i++) {
-        if (!activeNozzles[i]) continue;
+        if (!activeNozzles[i]) {
+            lowFluidTime[i] = 0;
+            continue;
+        }
 
         float percent = calculateScentPercent(weights[i]);
         if (percent < MIN_SPRAY_SCENT_PERCENT) {
-            int pin = getPinFromCommand(i + 1);
-            if (pin != -1) digitalWrite(pin, HIGH);
-            activeNozzles[i] = false;
-            blockedAnyNozzle = true;
-            Serial.printf(C_RED "\r\n🚨 [안전 정지] %d번 카트리지 잔량 %.1f%% 미만! 분사를 중지합니다.\r\n" C_RESET, i + 1, MIN_SPRAY_SCENT_PERCENT);
+            if (lowFluidTime[i] == 0) lowFluidTime[i] = millis();
+            
+            if (millis() - lowFluidTime[i] > 2000) { // 2초 이상 지속되어야 진짜 부족한 것으로 판별
+                int pin = getPinFromCommand(i + 1);
+                if (pin != -1) digitalWrite(pin, HIGH);
+                activeNozzles[i] = false;
+                blockedAnyNozzle = true;
+                lowFluidTime[i] = 0;
+                lastLowFluidCartridge = i + 1;
+                Serial.printf(C_RED "\r\n🚨 [안전 정지] %d번 카트리지 잔량 %.1f%% 미만! 분사를 중지합니다.\r\n" C_RESET, i + 1, MIN_SPRAY_SCENT_PERCENT);
+            } else {
+                hasActiveNozzle = true; // 대기 중 (디바운스)
+            }
         } else {
+            lowFluidTime[i] = 0;
             hasActiveNozzle = true;
         }
     }
@@ -720,7 +734,7 @@ static bool stopLowFluidActiveNozzles() {
         blendSelection = "";
         blendSprayActive = false;
         updateDisplay(0, "Low Fluid! Stopped");
-        showLowFluidPage();
+        showLowFluidPage(lastLowFluidCartridge);
         return true;
     }
 
@@ -731,10 +745,13 @@ int parseAndSetNozzles(String cmdStr) {
     int activeCount = 0;
     for (int i = 0; i < 4; i++) activeNozzles[i] = false;
 
+    int lastLowFluidCartridge = -1;
+
     for (int i = 0; i < (int)cmdStr.length(); i++) {
         int cmd = cmdStr.charAt(i) - '0';
         if (cmd >= 1 && cmd <= 4) {
           if (calculateScentPercent(weights[cmd - 1]) < MIN_SPRAY_SCENT_PERCENT) {
+                lastLowFluidCartridge = cmd;
                 Serial.printf(C_RED "🚨 [안전 장치] %d번 카트리지 잔량 %.1f%% 미만! 모터 보호를 위해 분사를 차단합니다.\r\n" C_RESET, cmd, MIN_SPRAY_SCENT_PERCENT);
                 continue; 
             }
@@ -762,7 +779,17 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   if (activeCount == 0) {
       Serial.println(C_YELLOW "⚠️ 작동 가능한 카트리지가 없어 분사가 취소되었습니다." C_RESET);
       updateDisplay(0, "Low Fluid! Blocked"); 
-      showLowFluidPage();
+      
+      // 어떤 카트리지 부족으로 취소됐는지 찾아서 전달 (parseAndSetNozzles 내에서 찾은 것 중 하나)
+      int targetCart = -1;
+      for (int i = 0; i < (int)cmdStr.length(); i++) {
+          int c = cmdStr.charAt(i) - '0';
+          if (c >= 1 && c <= 4 && calculateScentPercent(weights[c - 1]) < MIN_SPRAY_SCENT_PERCENT) {
+              targetCart = c;
+              break;
+          }
+      }
+      showLowFluidPage(targetCart);
       return; 
   }
 
