@@ -1,3 +1,6 @@
+
+# 사용자 맞춤 앱/디바이스 설정의 조회 및 변경을 담당
+
 import json
 import logging
 from datetime import datetime, timedelta, timezone
