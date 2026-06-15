@@ -38,6 +38,9 @@ static int currentDisplayPage = PAGE_WEATHER_OFF;
 static unsigned long lastLocalSettingsMillis = 0;
 static const unsigned long LOCAL_SETTINGS_PROTECT_MS = 30000;
 
+static String pendingManualScent = "";
+static unsigned long lastScentTouchTime = 0;
+
 struct EncodedRegionText {
   const char *utf8;
   const uint8_t *encoded;
@@ -183,11 +186,20 @@ static void sendClockDisplayNow() {
   nexSend("t_time.txt=\"" + String(timeText) + "\"");
 }
 
+static bool isManualScentPage(int pageId);
+static bool isBlendPage(int pageId);
+
+static bool pendingPageUpdate = false;
+static unsigned long pageTransitionTime = 0;
+static int transitioningPageId = 0;
+
 static void showPage(int pageId) {
   currentDisplayPage = pageId;
   nexSend("page page" + String(pageId));
-  delay(80);
-  sendClockDisplayNow();
+  
+  pendingPageUpdate = true;
+  pageTransitionTime = millis();
+  transitioningPageId = pageId;
 }
 
 static void markLocalSettingsChanged() {
@@ -609,6 +621,11 @@ void checkNextionInput() {
     
     if (millis() - startMillis > 50) break;
   }
+
+  if (pendingManualScent.length() > 0 && millis() - lastScentTouchTime > 300) {
+    runManualMode(pendingManualScent);
+    pendingManualScent = "";
+  }
 }
 
 // =================================================================
@@ -646,7 +663,8 @@ static void handleScentButton(const String &cmd) {
   if (!blendModeEnabled) {
     lastManualPage = PAGE_MANUAL_SCENT_BASE + scent;
     showPage(lastManualPage);
-    runManualMode(String(scent));
+    pendingManualScent = String(scent);
+    lastScentTouchTime = millis();
     return;
   }
 
@@ -662,8 +680,9 @@ static void handleScentButton(const String &cmd) {
   } else if (blendSelection.length() == 2) {
     lastManualPage = blendPairPage(blendSelection);
     showPage(lastManualPage);
-    runManualMode(blendSelection);
     
+    pendingManualScent = blendSelection;
+    lastScentTouchTime = millis();
     blendSelection = "";
   }
 }
@@ -728,7 +747,7 @@ static void setDisplayLedEnabled(bool enabled) {
   persistLocalLedState();
   markLocalSettingsChanged();
   syncLocalLedToServer();
-  showPage(ledEnabled ? PAGE_LED_ON : PAGE_LED_OFF);
+  showPage(ledEnabled ? currentLedPage() : PAGE_LED_OFF);
   setLedColor(ledEnabled ? ledR : 0, ledEnabled ? ledG : 0, ledEnabled ? ledB : 0);
   Serial.printf("\r\n[Display] LED %s (R:%d G:%d B:%d brightness=%d)\r\n",
                 ledEnabled ? "ON" : "OFF", ledR, ledG, ledB, ledBrightness);
@@ -762,6 +781,20 @@ static void handleLedButton(const String &cmd) {
 void handleNextionCmd(const String &cmd) {
   // 1. 화면 터치 노이즈 및 UI 업데이트 응답(쓰레기값) 무시
   if (cmd.startsWith("p0") || cmd.startsWith("t_weather") || cmd.startsWith("j0")) return;
+
+  // ★ 2. 글로벌 UI 쿨타임 방어 (버튼 연속 터치 버그 방지)
+  static unsigned long lastValidCmdMillis = 0;
+  bool isVolumeCmd = cmd.startsWith("V"); // 볼륨 슬라이더는 연속 입력 허용
+  unsigned long cooldown = isVolumeCmd ? 50 : 1000; // 일반 버튼은 1초(1000ms) 쿨타임 적용
+
+  // 쿨타임을 무시하고 즉시 반응해야 하는 화면 전환/모드 변경 커맨드들
+  bool isNoCooldownCmd = (cmd == "ST" || cmd == "WR" || cmd == "BM" || cmd == "DS" || cmd.startsWith("M") || cmd.startsWith("Y"));
+
+  if (!isNoCooldownCmd && millis() - lastValidCmdMillis < cooldown) {
+    Serial.printf("\r\n[UI] 쿨타임 방어: %s 명령 무시됨\r\n", cmd.c_str());
+    return;
+  }
+  lastValidCmdMillis = millis();
 
   Serial.printf("\r\n[Nextion] CMD: %s\r\n", cmd.c_str());
 
@@ -812,6 +845,7 @@ void handleNextionCmd(const String &cmd) {
     SystemMode modeBeforeStop = currentMode;
     lastManualPage = PAGE_MANUAL;
     setSystemMode(MODE_READY, "Stopped");
+    pendingManualScent = "";
 
     if (modeBeforeStop == MODE_WEATHER) {
       hasWeatherSnapshot = false;
@@ -887,6 +921,16 @@ static bool volumeNeedsSave = false;
 static unsigned long lastVolumeChangeTime = 0;
 
 void updateClockDisplay() {
+  if (pendingPageUpdate && millis() - pageTransitionTime >= 80) {
+    pendingPageUpdate = false;
+    sendClockDisplayNow();
+    
+    if (transitioningPageId == PAGE_MANUAL || transitioningPageId == PAGE_DEVICE_STATUS || 
+        isManualScentPage(transitioningPageId) || isBlendPage(transitioningPageId)) {
+      updateScentProgressBars();
+    }
+  }
+
   if (volumeNeedsSave && millis() - lastVolumeChangeTime > 3000) {
     prefs.putInt("volume", currentVolume);
     volumeNeedsSave = false;
