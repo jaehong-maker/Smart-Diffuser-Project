@@ -584,6 +584,7 @@ static String processNextionChar(char c, String &buf, bool executeCmd) {
 
 void checkNextionInput() {
   static String buf = ""; 
+  unsigned long startMillis = millis();
 
   while (nexSerial.available()) {
     char c = (char)nexSerial.read();
@@ -592,15 +593,21 @@ void checkNextionInput() {
     }
 
     String cmd = processNextionChar(c, buf, false);
-    if (cmd.length() == 0) continue;
+    if (cmd.length() == 0) {
+      if (millis() - startMillis > 50) break;
+      continue;
+    }
 
     if (cmd == "WK") {
       wakeUpSystem();
+      if (millis() - startMillis > 50) break;
       continue;
     }
 
     handleNextionCmd(cmd);
     wakeUpSystem();
+    
+    if (millis() - startMillis > 50) break;
   }
 }
 
@@ -640,7 +647,6 @@ static void handleScentButton(const String &cmd) {
     lastManualPage = PAGE_MANUAL_SCENT_BASE + scent;
     showPage(lastManualPage);
     runManualMode(String(scent));
-    showPage(lastManualPage);
     return;
   }
 
@@ -657,7 +663,6 @@ static void handleScentButton(const String &cmd) {
     lastManualPage = blendPairPage(blendSelection);
     showPage(lastManualPage);
     runManualMode(blendSelection);
-    showPage(lastManualPage);
     
     blendSelection = "";
   }
@@ -878,7 +883,16 @@ void updateDisplay(int iconID, String text) {
 // =================================================================
 // 🕒 디스플레이 상단 시계(시간) 업데이트 함수
 // =================================================================
+static bool volumeNeedsSave = false;
+static unsigned long lastVolumeChangeTime = 0;
+
 void updateClockDisplay() {
+  if (volumeNeedsSave && millis() - lastVolumeChangeTime > 3000) {
+    prefs.putInt("volume", currentVolume);
+    volumeNeedsSave = false;
+    Serial.println(C_CYAN "[System] 볼륨 설정이 자동 저장되었습니다." C_RESET);
+  }
+
   static unsigned long lastClockUpdate = 0;
 
   // 1초마다 한 번씩만 업데이트 (과부하 방지)
@@ -1402,8 +1416,8 @@ void changeVolume(int vol) {
   myDFPlayer.volume(currentVolume); 
   delay(40); // DFPlayer 연속 시리얼 통신으로 인한 Lock-up 방지
   
-  // ★ 추가: 변경된 볼륨 값을 플래시 메모리(Preferences)에 영구 저장합니다!
-  prefs.putInt("volume", currentVolume); 
+  volumeNeedsSave = true;
+  lastVolumeChangeTime = millis();
   
   Serial.printf("\r\033[K" C_GREEN "🔊 볼륨: %d\r\n" C_RESET, currentVolume); 
   showPrompt(); 
