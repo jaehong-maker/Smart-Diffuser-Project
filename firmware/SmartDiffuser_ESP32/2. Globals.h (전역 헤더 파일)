@@ -273,7 +273,7 @@ void updateProgressBar(int val);
 void updateProgressBar(int barIndex, int val);
 void updateScentProgressBars();
 void showStartupReadyPage();
-void showLowFluidPage();
+void showLowFluidPage(int cartNum = -1);
 void showPrompt();
 void printMainMenu();
 void printSettingMenu();
