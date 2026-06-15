@@ -745,16 +745,11 @@ int parseAndSetNozzles(String cmdStr) {
     int activeCount = 0;
     for (int i = 0; i < 4; i++) activeNozzles[i] = false;
 
-    int lastLowFluidCartridge = -1;
-
     for (int i = 0; i < (int)cmdStr.length(); i++) {
         int cmd = cmdStr.charAt(i) - '0';
         if (cmd >= 1 && cmd <= 4) {
-          if (calculateScentPercent(weights[cmd - 1]) < MIN_SPRAY_SCENT_PERCENT) {
-                lastLowFluidCartridge = cmd;
-                Serial.printf(C_RED "🚨 [안전 장치] %d번 카트리지 잔량 %.1f%% 미만! 모터 보호를 위해 분사를 차단합니다.\r\n" C_RESET, cmd, MIN_SPRAY_SCENT_PERCENT);
-                continue; 
-            }
+            // 시작 전 즉시 차단 로직 제거 (오탐 방지). 
+            // 실제 부족 여부는 분사 시작 후 2초 디바운스를 거쳐 stopLowFluidActiveNozzles()에서 판단합니다.
             if (!activeNozzles[cmd - 1]) {
                 activeNozzles[cmd - 1] = true;
                 lastNozzleSprayTime[cmd - 1] = millis();
@@ -775,21 +770,9 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   String cmdStr = String(cmd);
   int activeCount = parseAndSetNozzles(cmdStr);
   
-  // 2. 작동 가능한 노즐이 없으면 강제 취소
+  // 2. 작동 가능한 노즐이 없으면 강제 취소 (잘못된 명령어 등)
   if (activeCount == 0) {
       Serial.println(C_YELLOW "⚠️ 작동 가능한 카트리지가 없어 분사가 취소되었습니다." C_RESET);
-      updateDisplay(0, "Low Fluid! Blocked"); 
-      
-      // 어떤 카트리지 부족으로 취소됐는지 찾아서 전달 (parseAndSetNozzles 내에서 찾은 것 중 하나)
-      int targetCart = -1;
-      for (int i = 0; i < (int)cmdStr.length(); i++) {
-          int c = cmdStr.charAt(i) - '0';
-          if (c >= 1 && c <= 4 && calculateScentPercent(weights[c - 1]) < MIN_SPRAY_SCENT_PERCENT) {
-              targetCart = c;
-              break;
-          }
-      }
-      showLowFluidPage(targetCart);
       return; 
   }
 
