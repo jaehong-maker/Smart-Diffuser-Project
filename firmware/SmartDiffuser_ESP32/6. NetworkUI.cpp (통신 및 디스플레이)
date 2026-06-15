@@ -314,7 +314,7 @@ static void showManualPageByState() {
 
 static void showWeatherPageByState() {
   showPage(PAGE_WEATHER);
-  if (currentMode == MODE_WEATHER || isRunning) {
+  if (currentMode == MODE_WEATHER) {
     updateWeatherFields();
   } else {
     showWeatherLoadingFields();
@@ -322,13 +322,12 @@ static void showWeatherPageByState() {
 }
 
 static void showHomePageByWeatherState() {
-  if (currentMode == MODE_WEATHER || isRunning) {
+  if (currentMode == MODE_WEATHER) {
     showWeatherPageByState();
   } else {
     showPage(PAGE_WEATHER_OFF);
   }
 }
-
 
 void showStartupReadyPage() {
   showPage(PAGE_WEATHER_OFF);
@@ -474,7 +473,7 @@ void rememberWeatherRegion(const String &region) {
   if (region.length() == 0 || region == lastWeatherRegion) return;
 
   lastWeatherRegion = region;
-  if (currentMode == MODE_WEATHER || isRunning) {
+  if (currentMode == MODE_WEATHER) {
     hasWeatherSnapshot = false;
     hasTempHumiSnapshot = false;
   }
@@ -762,14 +761,14 @@ void handleNextionCmd(const String &cmd) {
     showPage(PAGE_WIFI_RESET);
   }
   else if (cmd == "M2") {
-    if (currentMode == MODE_WEATHER || isRunning) {
+    if (currentMode == MODE_WEATHER) {
       showWeatherPageByState();
     } else {
       showPage(PAGE_WEATHER_OFF);
     }
   }
   else if (cmd == "Y3") {
-    if (currentMode == MODE_WEATHER || isRunning) {
+    if (currentMode == MODE_WEATHER) {
       showWeatherPageByState();
     } else {
       showPage(PAGE_WEATHER);
@@ -779,7 +778,9 @@ void handleNextionCmd(const String &cmd) {
   } 
   else if (cmd == "M1" || cmd == "Y1") {
     showManualPageByState();
-    setSystemMode(MODE_MANUAL, "Manual Mode");
+    if (currentMode != MODE_WEATHER) {
+      setSystemMode(MODE_MANUAL, "Manual Mode");
+    }
   } 
   else if (cmd == "M3" || cmd == "Y2") {
     showPage(PAGE_DEVICE_STATUS);
@@ -852,7 +853,7 @@ void updateDisplay(int iconID, String text) {
   if (currentMode == MODE_WEATHER && lastWeatherIconId >= 1 && lastWeatherIconId <= 4) iconID = lastWeatherIconId;
   nexSend("p0.pic=" + String(iconID));
 
-  if (currentMode == MODE_WEATHER || isRunning) {
+  if (currentMode == MODE_WEATHER) {
     updateWeatherFields();
     return;
   }
@@ -1148,7 +1149,7 @@ static void processServerResponse(const String& response) {
     lastWeatherLabel = weatherText;
     lastWeatherIconId = weatherIconFromText(weatherText);
     hasWeatherSnapshot = hasValidWeatherText(lastWeatherLabel);
-    if (currentMode == MODE_WEATHER || isRunning) {
+    if (currentMode == MODE_WEATHER) {
       updateDisplay(lastWeatherIconId, "");
     }
   }
@@ -1167,6 +1168,11 @@ static void processServerResponse(const String& response) {
   // 4. 분사 제어 명령 처리
   int cmd = doc["spray"] | -1;
   String resultText = doc["result_text"] | "";
+  
+  if (!doc["music_tracks"].isNull()) {
+    updateMusicMapping(doc["music_tracks"] | "");
+  }
+
   if (cmd > 0) {
     int dur = doc["duration"] | 3; 
     int music = doc["music"] | 0; 
@@ -1190,6 +1196,7 @@ static void processServerResponse(const String& response) {
     int track = doc["music"] | 0;
     if (track > 0 && track <= 20) {
       playSound(track);
+      nexSend("t_music.txt=\"" + getTrackName(track) + "\"");
       updateDisplay(0, "Music Playing");
       Serial.printf(C_GREEN "\r\n🎵 서버 단독 명령으로 %d번 오디오 트랙을 재생합니다.\r\n" C_RESET, track);
     }
