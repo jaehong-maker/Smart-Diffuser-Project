@@ -1,0 +1,147 @@
+
+#기본 대기 모드 및 기본 조명 제어를 담당하는 람다 핸들러
+
+import json
+import logging
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+
+import config
+import db_utils
+from .common import (
+    _get_kst_now, _parse_int, _build_ambient_context, _build_ambient_response
+)
+
+logger = logging.getLogger()
+
+def handle_ambient(mode, body, device_id, normalized_weights):
+
+    if mode == "ambient":
+        try:
+            now_kst = _get_kst_now()
+            
+            db_level_raw = body.get("db_level", body.get("noise_level", body.get("noise", None)))
+            if db_level_raw is None:
+                state = db_utils.get_device_state(device_id) or {}
+                db_level_raw = int(state.get('db_level', 40)) 
+                logger.info(f"[AMBIENT_APP_TRIGGER] Using hardware real-time noise: {db_level_raw}dB")
+            
+            context_key, time_slot, noise_bucket, normalized_db = _build_ambient_context(db_level_raw, now_kst)
+
+            db_utils.seed_ambient_defaults()
+            best_kind, ambient_scores = db_utils.get_ambient_recommendation(context_key, device_id)
+            spray_code = db_utils.get_spray_from_kind(device_id, best_kind)
+            if not spray_code:
+                spray_code = 1 
+            duration = _parse_int(
+                body.get("dur", body.get("duration", config.AMBIENT_DURATION_SECONDS)),
+                config.AMBIENT_DURATION_SECONDS
+            )
+
+            state = db_utils.get_device_state(device_id) or {}
+            last_time_str = state.get('last_spray_time', "2000-01-01T00:00:00")
+            current_capacity = float(state.get('current_capacity', config.MAX_CAPACITY))
+
+            state_weights = state.get('weights', normalized_weights)
+            preserved_weights = []
+            for weight in state_weights if isinstance(state_weights, list) else normalized_weights:
+                try:
+                    preserved_weights.append(float(weight))
+                except Exception:
+                    preserved_weights.append(0.0)
+            while len(preserved_weights) < 4:
+                preserved_weights.append(0.0)
+            preserved_weights = preserved_weights[:4]
+
+            is_blocked = False
+            if spray_code > 0:
+                try:
+                    last_time = datetime.fromisoformat(last_time_str)
+                    if (now_kst - last_time).total_seconds() < (config.COOLDOWN_MINUTES * 60):
+                        is_blocked = True
+                except Exception:
+                    pass
+
+            result_text = f"Ambient {context_key} -> scent {spray_code}"
+
+            if is_blocked:
+                return {
+                    "statusCode": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps(
+                        _build_ambient_response(
+                            0,
+                            duration,
+                            context_key,
+                            normalized_db,
+                            "Ambient cooldown active",
+                            device_id=device_id,
+                            scores=ambient_scores
+                        ),
+                        ensure_ascii=False
+                    )
+                }
+
+            new_capacity = current_capacity
+            if spray_code > 0:
+                usage = duration * config.CONSUMPTION_PER_SEC
+                new_capacity = round(max(0.0, current_capacity - usage), 2)
+                db_utils.update_device_state(device_id, now_kst.isoformat(), new_capacity, spray_code, preserved_weights)
+                db_utils.manage_mailbox(device_id, spray_code, context_key, duration)
+
+            try:
+                def safe_dec(v): return Decimal(str(v)) if v is not None else Decimal("0")
+
+                db_utils.log_table.put_item(Item={
+                    "deviceId": device_id,
+                    "timestamp": now_kst.isoformat(),
+                    "mode": "Ambient_Mode",
+                    "result_text": result_text,
+                    "spray_code": int(spray_code),
+                    "duration": int(duration),
+                    "region": context_key,
+                    "weight_g": safe_dec(preserved_weights[0]),
+                    "weights": [safe_dec(weight) for weight in preserved_weights],
+                    "temp": safe_dec(0),
+                    "humid": 0,
+                    "feedback": 1,
+                    "db_level": int(normalized_db)
+                })
+            except Exception as e:
+                logger.warning(f"Ambient log save failed: {e}")
+
+            response_payload = _build_ambient_response(
+                spray_code,
+                duration,
+                context_key,
+                normalized_db,
+                result_text,
+                device_id=device_id,
+                scores=ambient_scores
+            )
+            response_payload["time_slot"] = time_slot
+            response_payload["noise_bucket"] = noise_bucket
+            response_payload["remaining_capacity"] = new_capacity
+
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps(response_payload, ensure_ascii=False)
+            }
+        except Exception as e:
+            logger.error(f"[AMBIENT_MODE_CRASH] {e}")
+            return {
+                "statusCode": 500,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({
+                    "cmd": 0,
+                    "dur": int(config.AMBIENT_DURATION_SECONDS),
+                    "music": 0,
+                    "spray": 0,
+                    "duration": int(config.AMBIENT_DURATION_SECONDS),
+                    "message": f"Ambient mode error: {str(e)}",
+                    "mode": "Ambient_Mode"
+                }, ensure_ascii=False)
+            }
+    
+    return None
