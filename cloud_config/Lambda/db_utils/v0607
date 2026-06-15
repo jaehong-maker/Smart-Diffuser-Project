@@ -1,4 +1,7 @@
-# DynamoDB helpers for diffuser state, preferences, users, auth, and ambient mode.
+"""
+DynamoDB 등 데이터베이스와의 통신 및 쿼리를 담당하는 유틸리티 모듈임.
+"""
+
 
 import boto3
 import random
@@ -22,10 +25,16 @@ diary_table = dynamodb.Table("UserDiaries")
 
 
 def _get_kst_now():
+    """
+    _get_kst_now 함수: 해당 역할을 수행함.
+    """
     return datetime.now(timezone(timedelta(hours=9)))
 
 
 def save_diary(email, diary_text, emotion, scent_text):
+    """
+    save_diary 함수: 해당 역할을 수행함.
+    """
     """
     사용자의 일기와 감정 분석 결과를 UserDiaries 테이블에 저장합니다.
     """
@@ -49,6 +58,9 @@ def save_diary(email, diary_text, emotion, scent_text):
 
 def get_user_diaries(email, limit=20):
     """
+    get_user_diaries 함수: 해당 역할을 수행함.
+    """
+    """
     사용자의 일기 목록을 최신순으로 가져옵니다.
     """
     try:
@@ -64,10 +76,16 @@ def get_user_diaries(email, limit=20):
 
 
 def _kind_ids():
+    """
+    _kind_ids 함수: 해당 역할을 수행함.
+    """
     return [int(kind_id) for kind_id in getattr(config, "KIND_IDS", (1, 2, 3, 4, 5, 6))]
 
 
 def _default_spray_to_kind():
+    """
+    _default_spray_to_kind 함수: 해당 역할을 수행함.
+    """
     default_mapping = getattr(config, "DEFAULT_SPRAY_TO_KIND", None)
     if isinstance(default_mapping, dict):
         try:
@@ -78,6 +96,9 @@ def _default_spray_to_kind():
 
 
 def _parse_int(value, default=0):
+    """
+    _parse_int 함수: 해당 역할을 수행함.
+    """
     try:
         return int(float(value))
     except Exception:
@@ -85,6 +106,9 @@ def _parse_int(value, default=0):
 
 
 def _normalize_kind_slots(raw_slots):
+    """
+    _normalize_kind_slots 함수: 해당 역할을 수행함.
+    """
     if isinstance(raw_slots, list):
         source_values = raw_slots[:4]
     elif isinstance(raw_slots, str) and raw_slots.strip():
@@ -107,10 +131,16 @@ def _normalize_kind_slots(raw_slots):
 
 
 def _mapping_to_kind_slots(mapping):
+    """
+    _mapping_to_kind_slots 함수: 해당 역할을 수행함.
+    """
     return [_parse_int(mapping.get(spray_no), 0) for spray_no in range(1, 5)]
 
 
 def _parse_spray_mapping(mapping_value):
+    """
+    _parse_spray_mapping 함수: 해당 역할을 수행함.
+    """
     if isinstance(mapping_value, dict):
         return {int(k): int(v) for k, v in mapping_value.items() if 1 <= int(k) <= 4}
 
@@ -136,10 +166,16 @@ def _parse_spray_mapping(mapping_value):
 
 
 def _ambient_scent_ids():
+    """
+    _ambient_scent_ids 함수: 해당 역할을 수행함.
+    """
     return [int(scent_id) for scent_id in getattr(config, "AMBIENT_SCENT_IDS", _kind_ids())]
 
 
 def _ambient_device_scent_ids():
+    """
+    _ambient_device_scent_ids 함수: 해당 역할을 수행함.
+    """
     configured = getattr(config, "AMBIENT_DEVICE_SCENT_IDS", None)
     if configured is not None:
         return [int(scent_id) for scent_id in configured]
@@ -147,6 +183,9 @@ def _ambient_device_scent_ids():
 
 
 def _build_ambient_seed_update():
+    """
+    _build_ambient_seed_update 함수: 해당 역할을 수행함.
+    """
     assignments = [
         f"scent_{scent_id}_score = if_not_exists(scent_{scent_id}_score, :zero)"
         for scent_id in _ambient_scent_ids()
@@ -155,6 +194,9 @@ def _build_ambient_seed_update():
 
 
 def _read_ambient_scores(item):
+    """
+    _read_ambient_scores 함수: 해당 역할을 수행함.
+    """
     scores = {}
     for scent_id in _ambient_scent_ids():
         scores[scent_id] = int(item.get(f"scent_{scent_id}_score", 0))
@@ -162,6 +204,9 @@ def _read_ambient_scores(item):
 
 
 def list_ambient_context_keys():
+    """
+    list_ambient_context_keys 함수: 해당 역할을 수행함.
+    """
     context_keys = []
     for time_slot in getattr(config, "AMBIENT_TIME_SLOTS", ()):
         for noise_bucket in getattr(config, "AMBIENT_NOISE_BUCKETS", ()):
@@ -170,6 +215,9 @@ def list_ambient_context_keys():
 
 
 def ensure_ambient_context(context_key):
+    """
+    ensure_ambient_context 함수: 해당 역할을 수행함.
+    """
     normalized_key = str(context_key or "").strip()
     if not normalized_key:
         return False
@@ -183,6 +231,9 @@ def ensure_ambient_context(context_key):
 
 
 def seed_ambient_defaults():
+    """
+    seed_ambient_defaults 함수: 해당 역할을 수행함.
+    """
     seeded = 0
     for context_key in list_ambient_context_keys():
         try:
@@ -194,6 +245,9 @@ def seed_ambient_defaults():
 
 
 def get_ambient_recommendation(context_key, device_id):
+    """
+    get_ambient_recommendation 함수: 해당 역할을 수행함.
+    """
     try:
         ensure_ambient_context(context_key)
         resp = ambient_table.get_item(Key={"context_key": str(context_key)})
@@ -201,17 +255,14 @@ def get_ambient_recommendation(context_key, device_id):
 
         scores = _read_ambient_scores(item)
         
-        # 1. 기기에 장착된 향기(kind) 목록 추출
         installed_kinds = set(_active_kinds(device_id))
         if not installed_kinds:
             installed_kinds = set(_default_spray_to_kind().values())
 
-        # 2. 모든 향기를 점수 내림차순(점수가 같으면 kind 오름차순)으로 정렬
         sorted_kinds = sorted(scores.keys(), key=lambda k: (-scores[k], k))
         
         best_kind = int(getattr(config, "AMBIENT_DEFAULT_SCENT", 1))
         
-        # 3. 1위부터 순회하며 기기에 장착되어 있으면 즉시 선택 (fallback 로직 완벽 적용)
         for kind in sorted_kinds:
             if kind in installed_kinds:
                 best_kind = kind
@@ -226,6 +277,9 @@ def get_ambient_recommendation(context_key, device_id):
 
 
 def save_ambient_feedback(context_key, scent_code, weight_change):
+    """
+    save_ambient_feedback 함수: 해당 역할을 수행함.
+    """
     try:
         normalized_key = str(context_key or "").strip()
         scent_no = int(scent_code)
@@ -246,6 +300,9 @@ def save_ambient_feedback(context_key, scent_code, weight_change):
 
 
 def get_spray_mapping(device_id, email=None):
+    """
+    get_spray_mapping 함수: 해당 역할을 수행함.
+    """
     """Return {spray_no: kind_no}. Supports both spray_mapping and kind_slots."""
     try:
         if email:
@@ -259,7 +316,7 @@ def get_spray_mapping(device_id, email=None):
             except Exception as e:
                 logger.error(f"User Table Mapping Load Error: {e}")
 
-        res = state_table.get_item(Key={"deviceId": device_id})
+        res = state_table.get_item(Key={"deviceId": device_id}, ConsistentRead=True)
         item = res.get("Item") or {}
 
         if item.get("spray_mapping") is not None:
@@ -281,10 +338,16 @@ def get_spray_mapping(device_id, email=None):
 
 
 def get_kind_slots(device_id):
+    """
+    get_kind_slots 함수: 해당 역할을 수행함.
+    """
     return _mapping_to_kind_slots(get_spray_mapping(device_id))
 
 
 def save_spray_mapping(device_id, mapping, email=None):
+    """
+    save_spray_mapping 함수: 해당 역할을 수행함.
+    """
     try:
         parsed_mapping = _parse_spray_mapping(mapping)
         if not parsed_mapping:
@@ -317,12 +380,13 @@ def save_spray_mapping(device_id, mapping, email=None):
 
 
 def get_spray_from_kind(device_id, kind_code):
+    """
+    get_spray_from_kind 함수: 해당 역할을 수행함.
+    """
     try:
-        # kind_code가 단일 향기(예: 5)일 수도 있고, 블렌딩(예: 14)일 수도 있습니다.
         target_kinds = [int(k) for k in str(kind_code) if k.isdigit()]
         
         mapping = get_spray_mapping(device_id)
-        # value: key (kind: spray_no) 로 뒤집기
         kind_to_spray = {int(k): int(s) for s, k in mapping.items()}
         
         valid_sprays = []
@@ -331,7 +395,6 @@ def get_spray_from_kind(device_id, kind_code):
                 valid_sprays.append(str(kind_to_spray[tk]))
         
         if valid_sprays:
-            # 중복 제거 후 오름차순 정렬하여 반환 (예: "23")
             unique_sprays = sorted(list(set(valid_sprays)))
             return int("".join(unique_sprays))
             
@@ -350,6 +413,9 @@ _SCENT_SIMILARITY = {
 }
 
 def get_smart_spray_mapping(device_id, kind_code):
+    """
+    get_smart_spray_mapping 함수: 해당 역할을 수행함.
+    """
     try:
         target_kinds = [int(k) for k in str(kind_code) if k.isdigit()]
         if not target_kinds:
@@ -400,6 +466,9 @@ def get_smart_spray_mapping(device_id, kind_code):
 
 
 def get_kind_from_spray(device_id, spray_no):
+    """
+    get_kind_from_spray 함수: 해당 역할을 수행함.
+    """
     try:
         return get_spray_mapping(device_id).get(int(spray_no))
     except Exception as e:
@@ -408,12 +477,15 @@ def get_kind_from_spray(device_id, spray_no):
 
 
 def _active_kinds(device_id):
+    """
+    _active_kinds 함수: 해당 역할을 수행함.
+    """
     mapping = get_spray_mapping(device_id)
     valid_kinds = set(_kind_ids())
     return [int(kind) for kind in mapping.values() if int(kind) in valid_kinds]
 
 
-def get_music_track(device_id, spray_or_kind_code):
+def get_music_track(device_id, spray_or_kind_code, is_pump=False):
     """Return a music track for the resolved spray slot.
 
     The argument may be a spray number, a kind number, or a blend-like code.
@@ -422,16 +494,19 @@ def get_music_track(device_id, spray_or_kind_code):
     original_code = spray_or_kind_code
     try:
         code_str = str(spray_or_kind_code)
-        if len(code_str) >= 2 and 1 <= int(code_str) <= 89:
+        if not is_pump and len(code_str) >= 2 and 1 <= int(code_str) <= 89:
             candidates = [int(digit) for digit in code_str if int(digit) in _kind_ids()]
             spray_or_kind_code = random.choice(candidates) if candidates else int(code_str[0])
 
         code = int(spray_or_kind_code)
-        spray_no = get_spray_from_kind(device_id, code)
-        if spray_no is None and 1 <= code <= 4:
-            spray_no = code
+        if is_pump:
+            spray_no = int(str(code)[0])
+        else:
+            spray_no = get_spray_from_kind(device_id, code)
+            if spray_no is None and 1 <= code <= 4:
+                spray_no = code
 
-        res = state_table.get_item(Key={"deviceId": device_id})
+        res = state_table.get_item(Key={"deviceId": device_id}, ConsistentRead=True)
         if "Item" in res and "music_tracks" in res["Item"]:
             track_list = str(res["Item"]["music_tracks"]).split("_")
             if spray_no is not None and 1 <= int(spray_no) <= 4 and len(track_list) == 4:
@@ -450,6 +525,9 @@ def get_music_track(device_id, spray_or_kind_code):
 
 
 def _get_email_by_device_id(device_id):
+    """
+    _get_email_by_device_id 함수: 해당 역할을 수행함.
+    """
     try:
         resp = user_table.scan(
             FilterExpression=Attr("deviceId").eq(str(device_id)),
@@ -465,6 +543,9 @@ def _get_email_by_device_id(device_id):
 
 
 def save_feedback(device_id, context, kind_code, weight_change, email=None):
+    """
+    save_feedback 함수: 해당 역할을 수행함.
+    """
     try:
         kind_no = int(kind_code)
         if kind_no not in _kind_ids():
@@ -490,6 +571,9 @@ def save_feedback(device_id, context, kind_code, weight_change, email=None):
 
 
 def get_personalized_scent(device_id, context, default_kind, email=None):
+    """
+    get_personalized_scent 함수: 해당 역할을 수행함.
+    """
     try:
         target_email = email or _get_email_by_device_id(device_id)
         if not target_email:
@@ -521,6 +605,9 @@ def get_personalized_scent(device_id, context, default_kind, email=None):
 
 
 def get_user_history_text(device_id, email=None):
+    """
+    get_user_history_text 함수: 해당 역할을 수행함.
+    """
     try:
         target_email = email or _get_email_by_device_id(device_id)
         if not target_email:
@@ -555,9 +642,12 @@ def get_user_history_text(device_id, email=None):
 
 
 def manage_mailbox(device_id, save_cmd=None, save_region=None, save_duration=None, is_peek=False):
+    """
+    manage_mailbox 함수: 해당 역할을 수행함.
+    """
     try:
         if save_cmd is not None:
-            update_exp = "set pending_cmd = :c"
+            update_exp = "set pending_cmd = :c, current_spray = :c"
             exp_vals = {":c": int(save_cmd)}
 
             if save_region:
@@ -576,12 +666,14 @@ def manage_mailbox(device_id, save_cmd=None, save_region=None, save_duration=Non
             logger.info(f"[Mailbox_Write] ID:{device_id} Cmd:{save_cmd}")
             return int(save_cmd)
 
-        res = state_table.get_item(Key={"deviceId": device_id})
+        res = state_table.get_item(Key={"deviceId": device_id}, ConsistentRead=True)
         if "Item" in res:
             item = res["Item"]
             cmd = int(item.get("pending_cmd", -1))
             saved_region = item.get("pending_region", "") or item.get("last_region", "")
             saved_duration = int(item.get("pending_duration", 3))
+
+            current_spray = int(item.get("current_spray", -1))
 
             if cmd != -1:
                 if not is_peek:
@@ -596,6 +688,9 @@ def manage_mailbox(device_id, save_cmd=None, save_region=None, save_duration=Non
 
                 return cmd, saved_region, saved_duration
 
+            if is_peek and current_spray > 0:
+                return current_spray, saved_region, saved_duration
+
             if saved_region:
                 return -1, saved_region, saved_duration
 
@@ -606,6 +701,9 @@ def manage_mailbox(device_id, save_cmd=None, save_region=None, save_duration=Non
 
 
 def remember_last_region(device_id, region):
+    """
+    remember_last_region 함수: 해당 역할을 수행함.
+    """
     try:
         normalized = str(region or "").strip()
         if not normalized:
@@ -620,6 +718,9 @@ def remember_last_region(device_id, region):
 
 
 def get_saved_region(device_id):
+    """
+    get_saved_region 함수: 해당 역할을 수행함.
+    """
     try:
         resp = user_table.scan(
             FilterExpression=Attr("deviceId").eq(str(device_id)),
@@ -635,7 +736,7 @@ def get_saved_region(device_id):
         logger.error(f"User Region Load Error: {e}")
 
     try:
-        res = state_table.get_item(Key={"deviceId": device_id})
+        res = state_table.get_item(Key={"deviceId": device_id}, ConsistentRead=True)
         item = res.get("Item") or {}
         region = str(item.get("last_region", "") or "").strip()
         if region:
@@ -661,6 +762,9 @@ def get_saved_region(device_id):
 
 
 def get_latest_voice_region(device_id="SS"):
+    """
+    get_latest_voice_region 함수: 해당 역할을 수행함.
+    """
     try:
         lookup_device_id = str(device_id or "SS")
         resp = log_table.query(
@@ -680,8 +784,11 @@ def get_latest_voice_region(device_id="SS"):
 
 
 def get_device_state(device_id):
+    """
+    get_device_state 함수: 해당 역할을 수행함.
+    """
     try:
-        res = state_table.get_item(Key={"deviceId": device_id})
+        res = state_table.get_item(Key={"deviceId": device_id}, ConsistentRead=True)
         if "Item" in res:
             return res["Item"]
         return {
@@ -699,6 +806,9 @@ def get_device_state(device_id):
 
 
 def _normalize_weight_list(weights_value):
+    """
+    _normalize_weight_list 함수: 해당 역할을 수행함.
+    """
     normalized = []
 
     if isinstance(weights_value, list):
@@ -719,6 +829,9 @@ def _normalize_weight_list(weights_value):
 
 
 def update_device_state(device_id, last_time, new_capacity, spray_code, weights_value, weights_raw_value=None):
+    """
+    update_device_state 함수: 해당 역할을 수행함.
+    """
     try:
         normalized_weights = _normalize_weight_list(weights_value)
         kind_slots = get_kind_slots(device_id)

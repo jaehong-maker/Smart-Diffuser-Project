@@ -1,13 +1,14 @@
-# 설정값과 지역 좌표 등 상수
+"""
+데이터베이스 이름, 지역 좌표 등 시스템 전반의 환경 설정을 정의한 모듈임.
+"""
+
 import os
 
 
-# 기본 설정값
 COOLDOWN_MINUTES = 0.00
 CONSUMPTION_PER_SEC = 0.5
 MAX_CAPACITY = 100.0
 
-# 민감정보는 Lambda 환경변수에 넣어주세요.
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
@@ -16,11 +17,9 @@ SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "20210928pm@gmail.com")
 SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD", "")
 
 
-# 지역 정보
 REGION_COORDS = {
     "서울": {"nx": "60", "ny": "127"},
 
-    # 경기도 주요 도시
     "수원": {"nx": "60", "ny": "121"},
     "성남": {"nx": "61", "ny": "120"},
     "안양": {"nx": "60", "ny": "125"},
@@ -44,7 +43,6 @@ REGION_COORDS = {
     "가평": {"nx": "69", "ny": "133"},
     "시흥": {"nx": "56", "ny": "122"},
 
-    # 광역/도 단위
     "인천": {"nx": "55", "ny": "124"},
     "강원": {"nx": "73", "ny": "134"},
     "충북": {"nx": "69", "ny": "107"},
@@ -65,7 +63,6 @@ REGION_COORDS = {
 }
 
 
-# 향기 종류: 추천/피드백/가중치의 기준
 KIND_IDS = (1, 2, 3, 4, 5, 6, 7)
 
 SCENT_KINDS = {
@@ -79,7 +76,6 @@ SCENT_KINDS = {
 }
 
 
-# 실제 하드웨어 분사 모듈 1~4에 기본 장착된 향기 kind
 DEFAULT_SPRAY_TO_KIND = {
     1: 1,  # 1번 펌프: 시트러스
     2: 2,  # 2번 펌프: 센달우드
@@ -88,7 +84,6 @@ DEFAULT_SPRAY_TO_KIND = {
 }
 
 
-# Ambient 모드
 AMBIENT_DEFAULT_SCENT = 1
 AMBIENT_DURATION_SECONDS = 3
 AMBIENT_SCENT_IDS = KIND_IDS

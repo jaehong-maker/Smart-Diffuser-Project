@@ -1,4 +1,7 @@
-# [피드백 학습] 사용자의 '좋아요/싫어요' 피드백을 수집하여 취향 가중치를 조절합니다.
+"""
+사용자 피드백(좋아요/싫어요) 처리 및 로그를 기록하는 람다 핸들러입니다.
+"""
+
 import os
 import json
 import logging
@@ -13,6 +16,12 @@ from .common import _parse_int, _get_ambient_scent_ids
 logger = logging.getLogger()
 
 def handle_feedback(action, mode, body, device_id):
+    """
+    handle_feedback 함수: 해당 역할을 수행함.
+    """
+    """
+    handle_feedback 함수: 해당 역할을 수행함.
+    """
     if action == "FEEDBACK":
         ambient_context = str(body.get("ambient_context", "") or "").strip()
         feedback_context = str(body.get("context", "") or "").strip()
@@ -131,7 +140,14 @@ def handle_feedback(action, mode, body, device_id):
                     ExpressionAttributeValues={':t': "2000-01-01T00:00:00"}
                 )
                 
-                candidates = [s for s in [1, 2, 3, 4] if s != spray_no]
+                mapping = db_utils.get_spray_mapping(device_id)
+                valid_kinds = set(db_utils._kind_ids())
+                active_sprays = [spray for spray, kind in mapping.items() if int(kind) in valid_kinds]
+                
+                candidates = [s for s in active_sprays if s != spray_no]
+                if not candidates:
+                    candidates = active_sprays if active_sprays else [1, 2, 3, 4]
+                    
                 new_spray = random.choice(candidates)
                 new_kind = db_utils.get_kind_from_spray(device_id, new_spray) or new_spray
                 
@@ -228,7 +244,6 @@ def handle_feedback(action, mode, body, device_id):
                     }, ensure_ascii=False)
                 }
 
-            # 번역 매핑
             context_map = {
                 "Rain": "비오는 날",
                 "Sunny": "맑은 날",

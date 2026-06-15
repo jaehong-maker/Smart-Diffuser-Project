@@ -1,3 +1,7 @@
+"""
+기본 대기 모드 및 기본 조명 제어를 담당하는 람다 핸들러입니다.
+"""
+
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -12,6 +16,12 @@ from .common import (
 logger = logging.getLogger()
 
 def handle_ambient(mode, body, device_id, normalized_weights):
+    """
+    handle_ambient 함수: 해당 역할을 수행함.
+    """
+    """
+    handle_ambient 함수: 해당 역할을 수행함.
+    """
     if mode == "ambient":
         try:
             now_kst = _get_kst_now()
