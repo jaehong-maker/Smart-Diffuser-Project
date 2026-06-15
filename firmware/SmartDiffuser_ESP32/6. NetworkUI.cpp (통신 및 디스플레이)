@@ -333,9 +333,23 @@ void showStartupReadyPage() {
   showPage(PAGE_WEATHER_OFF);
 }
 
-void showLowFluidPage() {
+void showLowFluidPage(int cartNum) {
   int returnPage = currentDisplayPage;
   showPage(PAGE_LOW_FLUID);
+  
+  if (cartNum >= 1 && cartNum <= 4) {
+    // Nextion 폰트 한글 출력 지원을 위해 EUC-KR 인코딩 바이트 배열 전송
+    // "N번 부족" -> N: '0'+cartNum, 번: B9 F8, 공백: 20, 부: BA CE, 족: C1 B7
+    uint8_t encoded[8] = {
+      (uint8_t)('0' + cartNum),
+      0xB9, 0xF8, 0x20, 0xBA, 0xCE, 0xC1, 0xB7
+    };
+    nexSerial.print("t_capnum.txt=\"");
+    nexSerial.write(encoded, 8);
+    nexSerial.print("\"");
+    nexWriteTerminator();
+  }
+  
   delay(3000);
   if (returnPage == PAGE_LOW_FLUID) {
     showHomePageByWeatherState();
@@ -1386,6 +1400,7 @@ void printDashboard() { Serial.printf("\r\nWiFi: %d dBm | Weights: %.1f %.1f %.1
 void changeVolume(int vol) { 
   currentVolume = constrain(vol, 0, 30); 
   myDFPlayer.volume(currentVolume); 
+  delay(40); // DFPlayer 연속 시리얼 통신으로 인한 Lock-up 방지
   
   // ★ 추가: 변경된 볼륨 값을 플래시 메모리(Preferences)에 영구 저장합니다!
   prefs.putInt("volume", currentVolume); 
