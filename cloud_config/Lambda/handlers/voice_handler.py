@@ -1,3 +1,6 @@
+
+# 사용자의 음성 명령 데이터를 분석하여 적절한 디바이스 제어로 변환
+
 import os
 import json
 import base64
