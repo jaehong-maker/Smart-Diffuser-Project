@@ -142,6 +142,22 @@ void initSystem() {
     prefs.putInt("volume", currentVolume);
   }
   myDFPlayer.volume(currentVolume);
+
+  // 🎵 저장된 음악 매핑 복구
+  String savedMusic = prefs.getString("music_tracks", "1_6_11_16");
+  int idx = 0;
+  int start = 0;
+  while (idx < 4) {
+    int end = savedMusic.indexOf('_', start);
+    if (end == -1) {
+      musicMapping[idx] = savedMusic.substring(start).toInt();
+      break;
+    }
+    musicMapping[idx] = savedMusic.substring(start, end).toInt();
+    start = end + 1;
+    idx++;
+  }
+
   SprayIntensity(prefs.getInt("intensity", currentIntensity));
 
   // initSystem() 함수 내부 로드셀 초기화 부분 수정
@@ -778,14 +794,20 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   
   // 6. 상황에 맞는 스피커 음악 자동 재생
   if (currentMode != MODE_AMBIENT) {
-    int track = 1;
-    if (music > 0 && music <= 20) {
-        track = music; // 서버에서 지정해준 특정 곡
-    } else {
-        track = (cmd >= 10) ? 1 : cmd; // 수동 분사일 때 번호에 맞춤 (혼합이면 1번 곡)
-    }
-    playSound(track);
-    Serial.printf(C_GREEN "[Audio] 재생 시도: %d번 트랙\r\n" C_RESET, track);
+  int track = 1;
+  if (music > 0 && music <= 20) {
+      track = music; // 서버에서 지정해준 특정 곡
+  } else {
+      // 🚀 수정: 수동 분사 시에도 앱에서 설정한 매핑된 곡을 재생!
+      if (cmd >= 1 && cmd <= 4) {
+          track = musicMapping[cmd - 1];
+      } else {
+          track = 1; // 혼합 향 등은 1번 곡으로 고정
+      }
+  }
+  playSound(track);
+
+  Serial.printf(C_GREEN "[Audio] 재생 시도: %d번 트랙 (%s)\r\n" C_RESET, track, getTrackName(track).c_str());
   }
 
   // 7. 디스플레이 및 웹 로그 업데이트
@@ -798,6 +820,32 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   if (currentMode != MODE_SLEEP && currentMode != MODE_VOICE && !isWaitingForTestDb) {
       showPrompt();
   }
+}
+
+/**
+ * @brief 서버에서 받은 음악 매핑 데이터를 파싱하고 저장합니다.
+ */
+void updateMusicMapping(String data) {
+    if (data.length() == 0) return;
+    
+    Serial.printf("\r\n🎵 음악 매핑 업데이트 수신: %s\r\n", data.c_str());
+    
+    int idx = 0;
+    int start = 0;
+    while (idx < 4) {
+        int end = data.indexOf('_', start);
+        if (end == -1) {
+            musicMapping[idx] = data.substring(start).toInt();
+            break;
+        }
+        musicMapping[idx] = data.substring(start, end).toInt();
+        start = end + 1;
+        idx++;
+    }
+    
+    // Preferences에 저장
+    prefs.putString("music_tracks", data);
+    Serial.println("💾 음악 매핑 정보가 저장되었습니다.");
 }
 
 /**

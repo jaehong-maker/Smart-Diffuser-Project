@@ -314,7 +314,7 @@ static void showManualPageByState() {
 
 static void showWeatherPageByState() {
   showPage(PAGE_WEATHER);
-  if (currentMode == MODE_WEATHER) {
+  if (currentMode == MODE_WEATHER || isRunning) {
     updateWeatherFields();
   } else {
     showWeatherLoadingFields();
@@ -322,12 +322,13 @@ static void showWeatherPageByState() {
 }
 
 static void showHomePageByWeatherState() {
-  if (currentMode == MODE_WEATHER) {
+  if (currentMode == MODE_WEATHER || isRunning) {
     showWeatherPageByState();
   } else {
     showPage(PAGE_WEATHER_OFF);
   }
 }
+
 
 void showStartupReadyPage() {
   showPage(PAGE_WEATHER_OFF);
@@ -473,7 +474,7 @@ void rememberWeatherRegion(const String &region) {
   if (region.length() == 0 || region == lastWeatherRegion) return;
 
   lastWeatherRegion = region;
-  if (currentMode == MODE_WEATHER) {
+  if (currentMode == MODE_WEATHER || isRunning) {
     hasWeatherSnapshot = false;
     hasTempHumiSnapshot = false;
   }
@@ -761,14 +762,14 @@ void handleNextionCmd(const String &cmd) {
     showPage(PAGE_WIFI_RESET);
   }
   else if (cmd == "M2") {
-    if (currentMode == MODE_WEATHER) {
+    if (currentMode == MODE_WEATHER || isRunning) {
       showWeatherPageByState();
     } else {
       showPage(PAGE_WEATHER_OFF);
     }
   }
   else if (cmd == "Y3") {
-    if (currentMode == MODE_WEATHER) {
+    if (currentMode == MODE_WEATHER || isRunning) {
       showWeatherPageByState();
     } else {
       showPage(PAGE_WEATHER);
@@ -851,7 +852,7 @@ void updateDisplay(int iconID, String text) {
   if (currentMode == MODE_WEATHER && lastWeatherIconId >= 1 && lastWeatherIconId <= 4) iconID = lastWeatherIconId;
   nexSend("p0.pic=" + String(iconID));
 
-  if (currentMode == MODE_WEATHER) {
+  if (currentMode == MODE_WEATHER || isRunning) {
     updateWeatherFields();
     return;
   }
@@ -1147,7 +1148,7 @@ static void processServerResponse(const String& response) {
     lastWeatherLabel = weatherText;
     lastWeatherIconId = weatherIconFromText(weatherText);
     hasWeatherSnapshot = hasValidWeatherText(lastWeatherLabel);
-    if (currentMode == MODE_WEATHER) {
+    if (currentMode == MODE_WEATHER || isRunning) {
       updateDisplay(lastWeatherIconId, "");
     }
   }

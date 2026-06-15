@@ -1,12 +1,10 @@
-"""
-AWS Lambda의 진입점으로서 모든 API Gateway 요청을 최초로 수신하고 각 핸들러로 라우팅함.
-"""
-
+# [메인 라우터] AWS Lambda의 진입점. 들어오는 요청을 분석하여 각 기능별 핸들러로 전달합니다.
 import sys
 import os
 import json
 import logging
 
+# 현재 폴더(lambda_function)를 sys.path에 추가하여 handlers 모듈을 찾을 수 있게 함
 sys.path.append(os.path.dirname(__file__))
 
 from handlers.common import _normalize_weights
@@ -25,9 +23,6 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 def lambda_handler(event, context):
-    """
-    lambda_handler 함수: 해당 역할을 수행함.
-    """
     logger.info("============== [REQUEST START] ==============")
 
     try:
@@ -79,6 +74,7 @@ def lambda_handler(event, context):
         logger.warning(f"[JSON_PARSE_ERROR] {e}")
         body = {}
 
+    # 카카오톡 챗봇 웹훅 감지 및 라우팅
     if "userRequest" in body:
         return kakao_bot_handler.handle_kakao_bot(body)
 

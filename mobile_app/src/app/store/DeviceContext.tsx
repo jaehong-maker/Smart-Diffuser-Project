@@ -30,8 +30,11 @@ interface DeviceContextType {
   isDiffuserOn: boolean;
   setIsDiffuserOn: (val: boolean) => void;
   ledColor: string;
+  setLedColor: (val: string) => void;
   ledBrightness: number;
+  setLedBrightness: (val: number) => void;
   isLedOn: boolean;
+  setIsLedOn: (val: boolean) => void;
   activeMode: "manual" | "weather" | "voice" | "ai" | "noise" | null;
   setActiveMode: (mode: "manual" | "weather" | "voice" | "ai" | "noise" | null) => void;
   isDeviceActionLoading: boolean;
@@ -330,7 +333,7 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       activeTimerMinutes, handleTimerChange,
       timerEnabled, timerStart, timerEnd, updateTimerSettings,
       currentScent, isDiffuserOn, setIsDiffuserOn, 
-      ledColor, ledBrightness, isLedOn,
+      ledColor, setLedColor, ledBrightness, setLedBrightness, isLedOn, setIsLedOn,
       activeMode, setActiveMode,
       isDeviceActionLoading,
       sendDeviceData,

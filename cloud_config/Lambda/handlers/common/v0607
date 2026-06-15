@@ -1,7 +1,3 @@
-"""
-여러 핸들러에서 공통으로 사용되는 모드별 로직(날씨/감정)을 정의한 공통 모듈입니다.
-"""
-
 import os
 import json
 import base64
@@ -18,12 +14,6 @@ import api_utils
 logger = logging.getLogger()
 
 def logic_weather_mode(weather, humidity):
-    """
-    logic_weather_mode 함수: 해당 역할을 수행함.
-    """
-    """
-    logic_weather_mode 함수: 해당 역할을 수행함.
-    """
     spray_code = 1
     try:
         if float(humidity) >= 50.0:
@@ -37,12 +27,6 @@ def logic_weather_mode(weather, humidity):
     return spray_code, weather, "Weather_Mode", 3
 
 def logic_emotion_mode(user_emotion_input):
-    """
-    logic_emotion_mode 함수: 해당 역할을 수행함.
-    """
-    """
-    logic_emotion_mode 함수: 해당 역할을 수행함.
-    """
     now = datetime.now(timezone(timedelta(hours=9)))
     is_daytime = (9 <= now.hour < 18)
     time_label = "Day" if is_daytime else "Night"
@@ -63,12 +47,6 @@ def logic_emotion_mode(user_emotion_input):
     return spray_code, f"{emotion_name}/{time_label}", "Emotion_Mode", (3 if is_daytime else 2)
 
 def _normalize_weights(body_dict):
-    """
-    _normalize_weights 함수: 해당 역할을 수행함.
-    """
-    """
-    _normalize_weights 함수: 해당 역할을 수행함.
-    """
     normalized = []
     weights_data = body_dict.get("weights")
 
@@ -94,42 +72,18 @@ def _normalize_weights(body_dict):
     return normalized[:4]
 
 def _to_decimal_list(values):
-    """
-    _to_decimal_list 함수: 해당 역할을 수행함.
-    """
-    """
-    _to_decimal_list 함수: 해당 역할을 수행함.
-    """
     return [Decimal(str(value)) for value in values]
 
 def _get_kst_now():
-    """
-    _get_kst_now 함수: 해당 역할을 수행함.
-    """
-    """
-    _get_kst_now 함수: 해당 역할을 수행함.
-    """
     return datetime.now(timezone(timedelta(hours=9)))
 
 def _parse_int(value, default=0):
-    """
-    _parse_int 함수: 해당 역할을 수행함.
-    """
-    """
-    _parse_int 함수: 해당 역할을 수행함.
-    """
     try:
         return int(float(value))
     except Exception:
         return default
 
 def _get_ambient_time_slot(now_kst=None):
-    """
-    _get_ambient_time_slot 함수: 해당 역할을 수행함.
-    """
-    """
-    _get_ambient_time_slot 함수: 해당 역할을 수행함.
-    """
     now_kst = now_kst or _get_kst_now()
     hour = int(now_kst.hour)
 
@@ -142,12 +96,6 @@ def _get_ambient_time_slot(now_kst=None):
     return "Night"
 
 def _get_ambient_noise_bucket(db_level):
-    """
-    _get_ambient_noise_bucket 함수: 해당 역할을 수행함.
-    """
-    """
-    _get_ambient_noise_bucket 함수: 해당 역할을 수행함.
-    """
     normalized_db = max(0, _parse_int(db_level, 0))
 
     for noise_bucket in getattr(config, "AMBIENT_NOISE_BUCKETS", ()):
@@ -161,24 +109,12 @@ def _get_ambient_noise_bucket(db_level):
     return "Loud", normalized_db
 
 def _build_ambient_context(db_level, now_kst=None):
-    """
-    _build_ambient_context 함수: 해당 역할을 수행함.
-    """
-    """
-    _build_ambient_context 함수: 해당 역할을 수행함.
-    """
     now_kst = now_kst or _get_kst_now()
     time_slot = _get_ambient_time_slot(now_kst)
     noise_bucket, normalized_db = _get_ambient_noise_bucket(db_level)
     return f"{time_slot}_{noise_bucket}", time_slot, noise_bucket, normalized_db
 
 def _build_ambient_response(scent_code, duration, context_key, db_level, result_text, device_id=None, scores=None):
-    """
-    _build_ambient_response 함수: 해당 역할을 수행함.
-    """
-    """
-    _build_ambient_response 함수: 해당 역할을 수행함.
-    """
     music_code = 0
     if device_id and scent_code > 0:
         music_code = db_utils.get_music_track(device_id, scent_code)
@@ -201,10 +137,4 @@ def _build_ambient_response(scent_code, duration, context_key, db_level, result_
     return payload
 
 def _get_ambient_scent_ids():
-    """
-    _get_ambient_scent_ids 함수: 해당 역할을 수행함.
-    """
-    """
-    _get_ambient_scent_ids 함수: 해당 역할을 수행함.
-    """
     return [int(scent_id) for scent_id in getattr(config, "AMBIENT_SCENT_IDS", (1, 2, 3, 4))]

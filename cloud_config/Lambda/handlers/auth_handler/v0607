@@ -1,7 +1,3 @@
-"""
-사용자 인증, 로그인, 회원가입 관련 로직을 처리하는 람다 핸들러입니다.
-"""
-
 import json
 import random
 import logging
@@ -13,12 +9,6 @@ import api_utils
 logger = logging.getLogger()
 
 def handle_auth(action, body, device_id):
-    """
-    handle_auth 함수: 해당 역할을 수행함.
-    """
-    """
-    handle_auth 함수: 해당 역할을 수행함.
-    """
     if action == "SEND_AUTH":
         try:
             u_email = body.get("email")
