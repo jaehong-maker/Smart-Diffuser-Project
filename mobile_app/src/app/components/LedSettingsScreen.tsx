@@ -5,14 +5,20 @@ import { BottomNav } from "./BottomNav";
 import { useDevice } from "../store/DeviceContext";
 import { useAuth } from "../store/AuthContext";
 
-// Hex to RGB 변환 유틸리티
 function hexToRgb(hex: string) {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : { r: 255, g: 255, b: 255 };
+  if (!result) return { r: 255, g: 255, b: 255 };
+  
+  // LED의 물빠진 색을 방지하고 진하게(vivid) 출력하기 위해 간단한 감마 보정(Gamma 2.0) 적용
+  const rawR = parseInt(result[1], 16);
+  const rawG = parseInt(result[2], 16);
+  const rawB = parseInt(result[3], 16);
+  
+  return {
+    r: Math.round(Math.pow(rawR / 255, 2.0) * 255),
+    g: Math.round(Math.pow(rawG / 255, 2.0) * 255),
+    b: Math.round(Math.pow(rawB / 255, 2.0) * 255)
+  };
 }
 
 // HSL to Hex 변환 유틸리티 함수
@@ -64,7 +70,8 @@ function ColorWheel({ color, thumbPos, setThumbPos, onChange, disabled, onIntera
     if (angle < 0) angle += 360;
 
     const distNormalized = distance / cx;
-    const lightness = 100 - (distNormalized * 50); 
+    // 기존 100~50 범위보다 훨씬 진한 색(원색)을 내기 위해 Lightness 범위를 100~40으로 확장
+    const lightness = 100 - (distNormalized * 60); 
     const hue = angle;
     
     const constrainedX = cx + Math.sin(angle * Math.PI / 180) * distance;

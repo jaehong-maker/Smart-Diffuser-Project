@@ -279,6 +279,10 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     if (response.result === "SUCCESS" || response.result_text || response.spray !== undefined) {
+      if (response.spray !== undefined && response.spray > 0 && response.spray !== 90) {
+        setCurrentScent(String(response.spray));
+        setIsDiffuserOn(true);
+      }
       setTimeout(() => refreshDeviceState(), 500);
       return { 
         ...response,

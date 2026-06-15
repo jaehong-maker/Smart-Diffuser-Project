@@ -209,12 +209,25 @@ export function ModesScreen() {
     }
   }, [pendingMode, currentUser, sendDeviceData, regionKorean]);
 
+  const isInitialized = React.useRef(false);
+
   React.useEffect(() => {
-    if (manualScents.length === 0 && scentSlots[0]) {
+    if (!isInitialized.current && scentSlots.length > 0) {
+      if (currentScent && currentScent !== "0" && currentScent !== "90") {
+        const ids = currentScent.split("").map(Number);
+        const names = ids.map(id => scentSlots.find(s => s.id === id)?.name).filter(Boolean) as string[];
+        if (names.length > 0) {
+          setManualScents(names);
+          setAppliedManualScents(names);
+          isInitialized.current = true;
+          return;
+        }
+      }
       setManualScents([scentSlots[0].name]);
       setAppliedManualScents([scentSlots[0].name]);
+      isInitialized.current = true;
     }
-  }, [scentSlots]);
+  }, [scentSlots, currentScent]);
 
   const handlePowerOff = async () => {
     setLoading(true);
