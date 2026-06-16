@@ -546,6 +546,16 @@ void runSprayLogic() {
   // 시스템이 분사 중이 아닐 때는 연산을 즉시 건너뛰어 CPU 리소스를 절약합니다.
   if (!isRunning) return;
 
+  if (currentMode != MODE_AMBIENT && millis() - startTimeMillis > 4000) {
+    // 재생 중인 음악이 끝났는지 확인 (DFPlayer BUSY 핀 상태 확인)
+    if (digitalRead(Config::PIN_DF_BUSY) == HIGH) {
+      Serial.println(C_GREEN "\r\n🎵 [Audio] 노래 재생이 완료되어 시스템을 정지합니다." C_RESET);
+      stopSystem();
+      updateDisplay(0, "Music Finished");
+      return;
+    }
+  }
+
   if (stopLowFluidActiveNozzles()) return;
 
   if (isSpraying) {
@@ -764,14 +774,32 @@ int parseAndSetNozzles(String cmdStr) {
 // 🚿 [통합 분사 제어 컨트롤러] 모든 분사(수동, 서버, 날씨, 음성) 전담
 // =================================================================
 void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
+  // 🚨 [핵심 버그 수정] 어떤 명령이 들어오든, 일단 기존 작동을 완벽히 정지시키고 초기화합니다.
+  // 이렇게 해야 이전 향기가 멈추지 않고 계속 분사되는 버그(무한 분사)를 막을 수 있습니다.
   forceAllOff();
+  myDFPlayer.stop();
+  isRunning = false;
+  isSpraying = false;
   
-  // 1. 명령어 파싱 및 잔량(9% 미만) 안전 검사
+  // 1. 명령어 파싱
   String cmdStr = String(cmd);
   int activeCount = parseAndSetNozzles(cmdStr);
   
-  // 2. 작동 가능한 노즐이 없으면 강제 취소 (잘못된 명령어 등)
-  if (activeCount == 0) {
+  // 2. 15% 미만 잔량 노즐 개별 필터링 (혼합 분사 시 15% 이상인 것만 살림)
+  bool hasValidNozzle = false;
+  for (int i = 0; i < 4; i++) {
+      if (activeNozzles[i]) {
+          if (calculateScentPercent(weights[i]) < 15.0f) {
+              Serial.printf(C_YELLOW "\r\n[Warning] %d번 향기 잔량이 15%% 미만이어서 작동에서 제외됩니다.\r\n" C_RESET, i + 1);
+              activeNozzles[i] = false; // 해당 향기만 분사 취소
+          } else {
+              hasValidNozzle = true;
+          }
+      }
+  }
+
+  // 3. 작동 가능한 노즐이 아예 없으면 (모두 15% 미만이거나 잘못된 명령) 그대로 종료
+  if (!hasValidNozzle) {
       Serial.println(C_YELLOW "⚠️ 작동 가능한 카트리지가 없어 분사가 취소되었습니다." C_RESET);
       return; 
   }
