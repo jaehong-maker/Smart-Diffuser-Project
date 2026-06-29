@@ -842,7 +842,7 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   // 6. 상황에 맞는 스피커 음악 자동 재생
   if (currentMode != MODE_AMBIENT) {
   int track = 1;
-  if (music > 0 && music <= 20) {
+  if (music > 0 && music <= 25) {
       track = music; // 서버에서 지정해준 특정 곡
   } else {
       // 🚀 수정: 수동 분사 시에도 앱에서 설정한 매핑된 곡을 재생!
