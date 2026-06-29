@@ -1,5 +1,5 @@
 
-외부 API(날씨, Gemini 등) 호출을 담당하는 유틸리티 모듈
+외부 API(날씨, Gemini 등) 호출을 담당하는 유틸리티 모듈.
 
 import os
 import json
