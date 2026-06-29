@@ -787,15 +787,24 @@ void triggerSpray(int cmd, int dur, int music, String txt, bool isWeatherMode) {
   
   // 2. 15% 미만 잔량 노즐 개별 필터링 (혼합 분사 시 15% 이상인 것만 살림)
   bool hasValidNozzle = false;
+  bool blockedLowFluidNozzle = false;
+  int lastLowFluidCartridge = -1;
   for (int i = 0; i < 4; i++) {
       if (activeNozzles[i]) {
-          if (calculateScentPercent(weights[i]) < 15.0f) {
+          if (calculateScentPercent(weights[i]) < MIN_SPRAY_SCENT_PERCENT) {
               Serial.printf(C_YELLOW "\r\n[Warning] %d번 향기 잔량이 15%% 미만이어서 작동에서 제외됩니다.\r\n" C_RESET, i + 1);
               activeNozzles[i] = false; // 해당 향기만 분사 취소
+              blockedLowFluidNozzle = true;
+              lastLowFluidCartridge = i + 1;
           } else {
               hasValidNozzle = true;
           }
       }
+  }
+
+  if (blockedLowFluidNozzle) {
+      updateScentProgressBars();
+      showLowFluidPage(lastLowFluidCartridge);
   }
 
   // 3. 작동 가능한 노즐이 아예 없으면 (모두 15% 미만이거나 잘못된 명령) 그대로 종료
