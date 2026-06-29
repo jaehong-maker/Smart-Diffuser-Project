@@ -30,11 +30,8 @@ interface DeviceContextType {
   isDiffuserOn: boolean;
   setIsDiffuserOn: (val: boolean) => void;
   ledColor: string;
-  setLedColor: (val: string) => void;
   ledBrightness: number;
-  setLedBrightness: (val: number) => void;
   isLedOn: boolean;
-  setIsLedOn: (val: boolean) => void;
   activeMode: "manual" | "weather" | "voice" | "ai" | "noise" | null;
   setActiveMode: (mode: "manual" | "weather" | "voice" | "ai" | "noise" | null) => void;
   isDeviceActionLoading: boolean;
@@ -46,6 +43,7 @@ interface DeviceContextType {
   noiseType: string;
   dbChange: number;
   deviceStatus: string;
+  currentMusicCode: number;
 }
 
 const DeviceContext = createContext<DeviceContextType | undefined>(undefined);
@@ -70,6 +68,7 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [timerEnd, setTimerEnd] = useState<number>(22);
   
   const [currentScent, setCurrentScent] = useState<string>("1");
+  const [currentMusicCode, setCurrentMusicCode] = useState<number>(0);
   const [isDiffuserOn, setIsDiffuserOn] = useState<boolean>(false);
   const [ledColor, setLedColor] = useState<string>("#FBBF24");
   const [ledBrightness, setLedBrightness] = useState<number>(80);
@@ -259,6 +258,10 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setCurrentScent(String(response.spray));
         setIsDiffuserOn(true);
       }
+      
+      if (response.music !== undefined) {
+        setCurrentMusicCode(response.music);
+      }
     } catch (err) {
       console.error("Failed to refresh device state", err);
     }
@@ -333,7 +336,7 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       activeTimerMinutes, handleTimerChange,
       timerEnabled, timerStart, timerEnd, updateTimerSettings,
       currentScent, isDiffuserOn, setIsDiffuserOn, 
-      ledColor, setLedColor, ledBrightness, setLedBrightness, isLedOn, setIsLedOn,
+      ledColor, ledBrightness, isLedOn,
       activeMode, setActiveMode,
       isDeviceActionLoading,
       sendDeviceData,
@@ -343,7 +346,8 @@ export const DeviceProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       dbStdDev,
       noiseType,
       dbChange,
-      deviceStatus
+      deviceStatus,
+      currentMusicCode
     }}>
       {children}
     </DeviceContext.Provider>

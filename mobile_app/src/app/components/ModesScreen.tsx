@@ -105,7 +105,8 @@ export function ModesScreen() {
     isDiffuserOn: isOn,
     setIsDiffuserOn: setIsOn,
     activeMode,
-    setActiveMode
+    setActiveMode,
+    currentMusicCode
   } = useDevice();
 
   const regionKorean = currentUser?.region ? (REGION_MAP[currentUser.region] || currentUser.region) : "서울";
@@ -170,11 +171,13 @@ export function ModesScreen() {
       .filter(Boolean);
     const finalScentName = scentNames.length > 0 ? scentNames.join(" + ") : "알 수 없는 향";
 
-    // 2. 음악 이름 찾기 (첫 번째 분사되는 노즐 기준)
+    // 2. 음악 이름 찾기 (무조건 앞번호(작은 숫자) 기준)
     let finalMusicName = "재생 안 함";
     if (currentUser?.musicTracks) {
       const userTrackIds = currentUser.musicTracks.split("_");
-      const firstScentId = scentIds[0];
+      // 서버나 기기에서 "31"처럼 순서가 다르게 오더라도 무조건 번호가 앞선 향기 기준
+      const sortedIds = [...scentIds].sort((a, b) => a - b);
+      const firstScentId = sortedIds[0];
       const trackIdx = firstScentId - 1;
       
       if (trackIdx >= 0 && trackIdx < userTrackIds.length) {
@@ -439,12 +442,14 @@ export function ModesScreen() {
       context = "AI_EMOTION"; // 백엔드에서 감정 태그와 결합됨
     } else if (activeMode === "weather") {
       context = "AI_WEATHER"; // 백엔드에서 날씨/시간대와 결합됨
+    } else if (activeMode === "voice") {
+      context = "AI_VOICE";
     } else {
       context = "NOISE_ANALYSIS";
     }
 
     // 현재 분사 중인 향기 ID (기본값은 모드별 기본값)
-    const scentId = currentScent || (activeMode === "weather" ? "1" : activeMode === "ai" ? "1" : "4");
+    const scentId = currentScent || (activeMode === "weather" ? "1" : activeMode === "ai" ? "1" : activeMode === "voice" ? "1" : "4");
     
     try {
       if (type === "dislike") {
@@ -803,7 +808,7 @@ export function ModesScreen() {
                   </p>
                 )}
 
-                {isOn && activeMode && (activeMode === "ai" || activeMode === "noise" || activeMode === "weather") && (
+                {isOn && activeMode && (activeMode === "ai" || activeMode === "noise" || activeMode === "weather" || activeMode === "voice") && (
                   <div className="flex justify-center gap-3 mt-4 relative z-20">
                     <button
                       onClick={(e) => {
