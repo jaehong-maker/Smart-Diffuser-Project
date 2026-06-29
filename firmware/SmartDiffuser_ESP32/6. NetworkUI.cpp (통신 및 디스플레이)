@@ -1300,7 +1300,7 @@ static void processServerResponse(const String& response) {
   }
   else if (!doc["music"].isNull()) {
     int track = doc["music"] | 0;
-    if (track > 0 && track <= 20) {
+    if (track > 0 && track <= 25) {
       playSound(track);
       nexSend("t_music.txt=\"" + getTrackName(track) + "\"");
       updateDisplay(0, "Music Playing");
