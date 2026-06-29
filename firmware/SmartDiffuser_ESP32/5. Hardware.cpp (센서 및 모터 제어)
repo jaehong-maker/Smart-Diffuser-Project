@@ -357,15 +357,6 @@ void checkBackgroundNoise() {
   static float smoothed_db = 0;
   smoothed_db = (0.3 * current_db) + (0.7 * smoothed_db);
   
-  unsigned long currentTime = millis();
-  static int trigger_count = 0;
-  if ((int)smoothed_db >= soundThreshold) trigger_count++;
-  else trigger_count = 0;
-  
-  if (currentMode != MODE_VISUAL && trigger_count >= 3 && (currentTime - lastReactionTime > 5000)) { 
-    lastReactionTime = currentTime; trigger_count = 0; 
-    int eventCode = 1; xQueueSend(audioEventQueue, &eventCode, 0); 
-  }
 }
 
 void sensorTaskLoop(void *parameter) {
