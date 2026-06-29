@@ -267,7 +267,7 @@ void printCalibrationInfo() {
 // ===================================================================================
 
 void playSound(int trackNum) {
-  int safeTrack = constrain(trackNum, 1, 20);
+  int safeTrack = constrain(trackNum, 1, 25);
   int safeVolume = constrain(currentVolume, 0, 30);
 
   // --- [오버랩 방지 로직] ---
