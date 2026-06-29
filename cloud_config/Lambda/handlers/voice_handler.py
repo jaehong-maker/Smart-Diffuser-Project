@@ -1,6 +1,3 @@
-
-# 사용자의 음성 명령 데이터를 분석하여 적절한 디바이스 제어로 변환
-
 import os
 import json
 import base64
@@ -62,7 +59,52 @@ def handle_voice(event, device_id):
         api_utils.s3.put_object(Bucket=bucket, Key=key, Body=wav_bytes, ContentType=actual_mime)
         
         audio_b64_str = base64.b64encode(wav_bytes).decode('utf-8')
-        kind_code, duration, result_text, led_dict, transcript = api_utils.ask_gemini_audio_analysis(audio_b64_str, actual_mime)
+        
+        # --- API Quota Protection (Rate Limiter) ---
+        now_kst = datetime.now(timezone(timedelta(hours=9)))
+        state = db_utils.get_device_state(device_id) or {}
+        last_voice_time_str = state.get('last_voice_request_time')
+        if last_voice_time_str:
+            try:
+                last_voice_time = datetime.fromisoformat(last_voice_time_str)
+                if (now_kst - last_voice_time).total_seconds() < 30:
+                    logger.warning(f"Voice Request Rate Limited for {device_id}")
+                    return {
+                        "statusCode": 200,
+                        "body": json.dumps({"spray": 0, "message": "음성 인식 쿨타임 중입니다.", "transcript": "SILENCE"}, ensure_ascii=False)
+                    }
+            except Exception as e:
+                logger.error(f"Rate Limiter Time parse error: {e}")
+        
+        try:
+            db_utils.state_table.update_item(
+                Key={'deviceId': device_id},
+                UpdateExpression="set last_voice_request_time = :t",
+                ExpressionAttributeValues={':t': now_kst.isoformat()}
+            )
+        except Exception as e:
+            logger.error(f"RateLimit DB Update error: {e}")
+        # -------------------------------------------
+
+        user_history_str = db_utils.get_user_history_text(device_id)
+        active_kinds = db_utils._active_kinds(device_id)
+        kind_descriptions = {
+            1: "1번(시트러스: 상쾌/에너지/우울감 극복)",
+            2: "2번(센달우드: 차분/집중/안정)",
+            3: "3번(패츄리: 자연/깊은휴식/명상)",
+            4: "4번(페퍼민트: 시원/피로해소/답답함 해소)",
+            5: "5번(라벤더: 진정/수면/스트레스 완화)",
+            6: "6번(바닐라: 포근/위로/외로움 해소)",
+            7: "7번(무향)"
+        }
+        if active_kinds:
+            active_kinds_str = "\n".join([kind_descriptions.get(int(k), f"{k}번(알 수 없는 향기)") for k in active_kinds])
+        else:
+            active_kinds_str = "장착된 향기가 없습니다."
+            
+        kind_code, duration, result_text, led_dict, transcript = api_utils.ask_gemini_audio_analysis(
+            audio_b64_str, actual_mime, user_history_text=user_history_str, slot_info_str=active_kinds_str
+        )
 
         normalized_transcript = (transcript or "").strip()
         logger.info(f"[TRANSCRIPT] {normalized_transcript}")
@@ -111,7 +153,7 @@ def handle_voice(event, device_id):
         except: pass
 
         if spray_code >= 0:
-            target_cmd = spray_code if spray_code > 0 else 90
+            target_cmd = spray_code if spray_code > 0 else 0
             db_utils.manage_mailbox(device_id, target_cmd, save_duration=duration)
             
             if spray_code > 0:

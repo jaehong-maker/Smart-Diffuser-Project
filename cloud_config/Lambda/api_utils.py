@@ -1,5 +1,7 @@
+"""
+외부 API(날씨, Gemini 등) 호출을 담당하는 유틸리티 모듈임.
+"""
 
-외부 API(날씨, Gemini 등) 호출을 담당하는 유틸리티 모듈
 
 import os
 import json
@@ -46,8 +48,8 @@ def ask_gemini_recommendation(diary_text, user_history_text, slot_info_str="1번
     
     이 일기를 분석하여 기분 전환에 가장 도움이 될만한 향기를 추천해줘.
     중요한 조건: 
-    1. 사용자가 과거에 '비선호'했던 향기나 향기 조합은 어울리더라도 가급적 피할 것.
-    2. 과거에 '선호'했던 향기를 우선적으로 고려할 것.
+    1. [절대 규칙] 과거의 선호도(취향 데이터)는 무시하셔도 좋습니다. "오늘 사용자가 작성한 일기의 감정(스트레스, 분노, 우울함 등)"을 해소하는 것이 100배 더 중요합니다.
+    2. 과거에 '선호'했던 향기라도 오늘 감정 해소에 적합하지 않다면 **절대로** 추천하지 마세요. 감정 해소에 완벽한 향기를 최우선으로 고르세요.
     3. 단일 향기가 어울리면 1개만 고르고 시너지가 나면 2개를 블렌딩해라.
     4. 반드시 [현재 디퓨저에 장착된 향기 목록]에 명시된 향기 고유 번호 중에서만 골라주어야 한다. 장착되지 않은 향기는 절대 추천 금지.
     5. 추천할 향기의 고유 번호를 숫자로 대답해줘. (예: 1번 향기 1개면 1, 1번 향기와 3번 향기를 블렌딩하면 13, 2번과 4번이면 24). 그 숫자를 'kind' 필드에 넣어!! (슬롯 번호가 아니라 향기 고유 번호야!)
@@ -283,13 +285,14 @@ def send_verification_email(receiver_email, code):
         return False
 
 
-def ask_gemini_audio_analysis(audio_b64, mime_type):
+def ask_gemini_audio_analysis(audio_b64, mime_type, user_history_text="", slot_info_str=""):
     """
     ask_gemini_audio_analysis 함수: 해당 역할을 수행함.
     """
     """
     사용자의 음성(오디오 데이터)을 Gemini 멀티모달로 직접 전달하여
     STT 변환(transcript)과 문맥 분석(kind, duration 등)을 동시에 수행합니다.
+    과거 취향 데이터와 현재 장착된 향기 목록을 함께 분석합니다.
     """
     api_key = getattr(config, "GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", "")).strip()
     if not api_key:
@@ -298,19 +301,30 @@ def ask_gemini_audio_analysis(audio_b64, mime_type):
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
 
-    prompt = """
+    prompt = f"""
     [역할: 스마트 디퓨저 음성 비서]
     제공된 오디오 데이터를 정밀하게 분석하여 다음 규칙에 따라 JSON으로만 응답해줘.
 
+    [참고용: 사용자의 과거 향기 취향 데이터]
+    {user_history_text}
+    (주의: 이 데이터는 단순 참고용입니다. 오늘 기분에 더 완벽히 맞는 향기가 있다면 철저히 무시하세요.)
+
+    [현재 디퓨저에 장착된 향기 목록]
+    {slot_info_str}
+
     1. **음성 인식 (STT)**: 사용자가 말한 내용을 정확히 'transcript'에 적어줘.
-       - 만약 오디오에 사람의 목소리가 들리지 않거나, 배경 소음만 있다면 반드시 'transcript'를 "SILENCE"라고 적어줘. (절대 상상해서 적지 말 것)
+       - 만약 오디오에 사람의 목소리가 들리지 않거나, 배경 소음만 있다면 반드시 'transcript'를 "SILENCE"라고 적어줘. (이 경우 동작은 0)
     2. **향기 분석 (kind)**: 발화 내용(기분, 장소, 직접 요청 등)에 따라 가장 어울리는 향기 번호를 선택해.
-       - 0: 정지 / 1: 시트러스 / 2: 센달우드 / 3: 패츄리 / 4: 페퍼민트 / 5: 라벤더 / 6: 바닐라 / 7: 물
+       - [절대 규칙] 과거 취향 데이터보다 "사용자가 방금 음성으로 말한 기분이나 상태"를 해소하는 것이 100배 더 중요합니다. 과거 취향은 잊어버리셔도 좋습니다. 현재 감정에 가장 완벽한 향기를 고르세요.
+       - 0: 정지 명령 (꺼, 멈춰 등)
+       - 단일 향기가 어울리면 1개만 고르고 시너지가 나면 2개를 블렌딩해라.
+       - 반드시 [현재 디퓨저에 장착된 향기 목록]에 명시된 향기 고유 번호 중에서만 골라주어야 한다. 장착되지 않은 향기는 절대 추천 금지.
+       - 추천할 향기의 고유 번호를 숫자로 대답해줘. (예: 1번 향기 1개면 1, 1번 향기와 3번 향기를 블렌딩하면 13). 그 숫자를 'kind' 필드에 넣어!!
     3. **작동 시간 (duration)**: 언급된 시간이 있으면 초 단위로, 없으면 기본값 5를 넣어줘.
-    4. **조명 추천**: 상황에 어울리는 LED 색상(led_r, g, b: 0~255)과 밝기(led_bright: 0~255)를 정해줘.
+    4. **조명 추천**: 상황에 어울리는 LED 색상(led_r, g, b: 0~255)과 밝기(led_bright: 0~255)를 정해줘. 파스텔톤 말고 원색 위주로!
 
     [주의] 절대 다른 설명 없이 아래 JSON 형식만 출력해:
-    {"transcript": "발화 내용 또는 SILENCE", "kind": 번호, "duration": 초, "led_r": 0~255, "led_g": 0~255, "led_b": 0~255, "led_bright": 0~255, "reason": "추천 이유"}
+    {{"transcript": "발화 내용 또는 SILENCE", "kind": 번호, "duration": 초, "led_r": 0~255, "led_g": 0~255, "led_b": 0~255, "led_bright": 0~255, "reason": "추천 이유"}}
     """
 
     payload_dict = {
@@ -362,7 +376,7 @@ def ask_gemini_audio_analysis(audio_b64, mime_type):
         logger.error(f"[Gemini Audio 예외 에러] {e}")
         return 0, 3, f"음성 분석 실패: {str(e)}", {}, "ERROR"
 
-def ask_gemini_voice_analysis(transcript):
+def ask_gemini_voice_analysis(transcript, user_history_text="", slot_info_str=""):
     """
     ask_gemini_voice_analysis 함수: 해당 역할을 수행함.
     """
@@ -378,28 +392,31 @@ def ask_gemini_voice_analysis(transcript):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
 
     prompt = f"""
-    사용자의 스마트 디퓨저 음성 명령(STT 결과): "{transcript}"
+    [역할: 스마트 디퓨저 음성 비서]
+    사용자의 스마트 디퓨저 음성 명령(STT 결과)을 정밀하게 분석하여 JSON으로만 응답해줘.
+    
+    명령 내용: "{transcript}"
 
-    이 텍스트의 문맥(날씨, 기분, 오늘 있었던 일 등)을 분석하여 어떤 조치를 취할지 JSON 형식으로 대답해 줘.
+    [참고용: 사용자의 과거 향기 취향 데이터]
+    {user_history_text}
+    (주의: 이 데이터는 단순 참고용입니다. 오늘 기분에 더 완벽히 맞는 향기가 있다면 철저히 무시하세요.)
 
-    [향기 옵션 (kind)]
-    0: 기기 정지 (명령: 꺼, 멈춰, 그만 등)
-    1: 시트러스 (문맥: 상쾌함, 맑음, 기분 전환, 신남)
-    2: 센달우드 (문맥: 집중, 숲, 차분함)
-    3: 패츄리 (문맥: 흙내음, 비, 자연, 깊은 휴식)
-    4: 페퍼민트 (문맥: 시원함, 눈, 답답함 해소, 피로 회복)
-    5: 라벤더 (문맥: 피곤함, 흐림, 스트레스, 수면)
-    6: 바닐라 (문맥: 달콤함, 포근함, 위로)
-    7: 물 (문맥: 무향 가습 필요, 건조함)
+    [현재 디퓨저에 장착된 향기 목록]
+    {slot_info_str}
 
     [규칙]
-    1. 사용자의 감정, 상황, 날씨 언급 등을 종합적으로 파악하여 가장 알맞은 향기 번호(0~7)를 'kind'에 넣을 것.
+    1. 사용자의 감정, 상황, 직접 요청 등을 파악하여 가장 어울리는 향기 번호를 'kind'에 넣을 것.
+       - [절대 규칙] 과거 취향 데이터보다 "사용자가 방금 말한 기분이나 상태"를 해소하는 것이 100배 더 중요합니다. 과거 취향은 잊어버리셔도 좋습니다. 현재 감정에 가장 완벽한 향기를 고르세요.
+       - 단일 향기가 어울리면 1개만 고르고 시너지가 나면 2개를 블렌딩해라.
+       - 반드시 [현재 디퓨저에 장착된 향기 목록]에 명시된 향기 고유 번호 중에서만 골라주어야 한다. 장착되지 않은 향기는 절대 추천 금지.
+       - 추천할 향기의 고유 번호를 숫자로 대답해줘. (예: 1번 향기 1개면 1, 1번 향기와 3번 향기를 블렌딩하면 13). 그 숫자를 'kind' 필드에 넣어!!
+       - 만약 정지 명령(꺼, 멈춰 등)이거나 침묵이면 0을 넣을 것.
     2. 시간(초, 분)에 대한 직접적인 언급이 있으면 'duration'에 초 단위로 반영하고, 없으면 기본값 3을 넣을 것.
-    3. 분위기에 어울리는 무드등 조명 색상(led_r, led_g, led_b)과 밝기(led_bright, 0~255)도 함께 추천할 것.
+    3. 분위기에 어울리는 무드등 조명 색상(led_r, led_g, led_b)과 밝기(led_bright, 0~255)도 함께 추천할 것. 파스텔톤 말고 진한 색상으로!
     4. 다른 말은 절대 쓰지 말고 오직 순수 JSON만 반환할 것.
 
     예시 응답:
-    {{"kind": 5, "duration": 3, "led_r": 0, "led_g": 0, "led_b": 255, "led_bright": 180, "reason": "오늘 회사에서 짜증이 났다고 하여 마음을 진정시켜주는 라벤더와 차분한 파란 조명을 추천함"}}
+    {{"kind": 13, "duration": 5, "led_r": 0, "led_g": 0, "led_b": 255, "led_bright": 180, "reason": "오늘 회사에서 짜증이 났다고 하여 1번 시트러스와 3번 패츄리를 섞어 차분한 분위기를 연출함"}}
     """
 
     payload = json.dumps({
