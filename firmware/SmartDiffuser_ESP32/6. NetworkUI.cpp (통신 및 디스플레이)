@@ -28,6 +28,7 @@ static const int PAGE_LED_DIM = 25;
 static const int PAGE_LED_NORMAL = 26;
 static const int PAGE_LED_BRIGHT = 27;
 static const int PAGE_INTENSITY_HOME = 28;
+static const int PAGE_OFFLINE = 29;
 static const int PAGE_INTENSITY_LOW = 30;
 static const int PAGE_INTENSITY_MEDIUM = 31;
 static const int PAGE_INTENSITY_HIGH = 32;
@@ -35,6 +36,7 @@ static const int PAGE_LOW_FLUID = 80;
 
 static int lastManualPage = PAGE_MANUAL;
 static int currentDisplayPage = PAGE_WEATHER_OFF;
+static bool offlineModeActive = false;
 static unsigned long lastLocalSettingsMillis = 0;
 static const unsigned long LOCAL_SETTINGS_PROTECT_MS = 30000;
 
@@ -333,6 +335,13 @@ static void showWeatherPageByState() {
   }
 }
 
+static void clearWeatherState() {
+  hasWeatherSnapshot = false;
+  hasTempHumiSnapshot = false;
+  lastWeatherLabel = "";
+  lastWeatherIconId = 0;
+}
+
 static void showHomePageByWeatherState() {
   if (currentMode == MODE_WEATHER) {
     showWeatherPageByState();
@@ -342,7 +351,25 @@ static void showHomePageByWeatherState() {
 }
 
 void showStartupReadyPage() {
+  if (offlineModeActive) {
+    showPage(PAGE_OFFLINE);
+    return;
+  }
   showPage(PAGE_WEATHER_OFF);
+}
+
+static void setOfflineModeActive(bool active) {
+  offlineModeActive = active;
+
+  if (offlineModeActive) {
+    if (currentMode == MODE_WEATHER) {
+      clearWeatherState();
+      setSystemMode(MODE_READY, "Offline Mode");
+    }
+    showPage(PAGE_OFFLINE);
+  } else {
+    showPage(PAGE_WEATHER_OFF);
+  }
 }
 
 void showLowFluidPage(int cartNum) {
@@ -788,7 +815,7 @@ void handleNextionCmd(const String &cmd) {
   unsigned long cooldown = isVolumeCmd ? 50 : 1000; // 일반 버튼은 1초(1000ms) 쿨타임 적용
 
   // 쿨타임을 무시하고 즉시 반응해야 하는 화면 전환/모드 변경 커맨드들
-  bool isNoCooldownCmd = (cmd == "ST" || cmd == "WR" || cmd == "BM" || cmd == "DS" || cmd.startsWith("M") || cmd.startsWith("Y"));
+  bool isNoCooldownCmd = (cmd == "ST" || cmd == "WR" || cmd == "BM" || cmd == "DS" || cmd == "OF" || cmd.startsWith("M") || cmd.startsWith("Y"));
 
   if (!isNoCooldownCmd && millis() - lastValidCmdMillis < cooldown) {
     Serial.printf("\r\n[UI] 쿨타임 방어: %s 명령 무시됨\r\n", cmd.c_str());
@@ -800,6 +827,9 @@ void handleNextionCmd(const String &cmd) {
 
   if (cmd == "MM" || cmd == "MO" || cmd == "MD") {
     showPage(PAGE_MODE_SELECT);
+  }
+  else if (cmd == "OF") {
+    setOfflineModeActive(!offlineModeActive);
   }
   else if (cmd == "DS") {
     showPage(PAGE_DEVICE_STATUS);
@@ -813,14 +843,18 @@ void handleNextionCmd(const String &cmd) {
     showPage(PAGE_WIFI_RESET);
   }
   else if (cmd == "M2") {
-    if (currentMode == MODE_WEATHER) {
+    if (offlineModeActive) {
+      showPage(PAGE_WEATHER_OFF);
+    } else if (currentMode == MODE_WEATHER) {
       showWeatherPageByState();
     } else {
       showPage(PAGE_WEATHER_OFF);
     }
   }
   else if (cmd == "Y3") {
-    if (currentMode == MODE_WEATHER) {
+    if (offlineModeActive) {
+      showPage(PAGE_OFFLINE);
+    } else if (currentMode == MODE_WEATHER) {
       showWeatherPageByState();
     } else {
       showPage(PAGE_WEATHER);
@@ -1042,7 +1076,7 @@ void connectWiFi() {
     prefs.putBool("force_offline", false); 
     
     Serial.println(C_YELLOW "\r\n[Offline] 사용자의 요청으로 Wi-Fi 설정을 건너뛰고 수동 모드로 진입합니다!" C_RESET);
-    updateDisplay(0, "Offline Mode");
+    setOfflineModeActive(true);
     
     esp_task_wdt_add(NULL);
     return; // 와이파이매니저 자체를 실행하지 않고 여기서 바로 함수를 빠져나갑니다!
